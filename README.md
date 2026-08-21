@@ -120,6 +120,24 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.5（UI 数据面 + 展示审计修复）
+
+### 投影数据层（此前 UI 拿不到这些数据）
+- **[致命] asset type enum 缺 5 种新类型**：投影 schema 只认 6 种资产，出现 ai-surface/threat-intel/mini-program/client/firmware 时 `schema.parse` 直接抛错 → **整个 src 投影崩溃、UI 全挂**。已补全 10 种。
+- **[严重] finding 7 字段被 zod strip**：entryPoint/discoveryPath/rawRequest/rawResponse 在投影 view 输出时被静默剥离，UI 与导出报告永远拿不到。schema 已补。
+- intent/fact/finding 节点补 `createdAt`（fold 时写入），时间线按真实时间排序（此前全部 at:0 按 id 排，非时间序）。
+- 投影 view 补 `apiDiscovery` 统计（API 发现/schema/GraphQL/未推进），header 的 API 发现行从死代码变为真实数据。
+
+### UI 展示
+- FindingsView：渲染 漏洞接口来源/前端功能点/原始请求/原始响应（=== Request === / === Response === pre 块）。
+- report tab 导出报告补齐与服务端 buildReport 一致的 7 字段结构（数据包优先 raw 请求/响应，无则回退 pocEvidence）。
+- AssetsView：显示 状态（待确认/已排除）/来源/方式(非 passive)/置信度%；AI 服务面/威胁情报资产行 🤖 高亮+橙色。
+- 资产类型徽标与分组补全 10 种（小程序/客户端/固件/AI 服务面/威胁情报此前在列表和图模式直接消失）。
+- tab 徽标：时间线计数含 observations；待办 tab 显示 `(n 待处理)`。
+- header counts 行追加 探测次数/pending 待办数（zh/en 字典同步）。
+- TodoListView：pending 排最前，done/abandoned 沉底（组内按创建时间倒序）。
+- ExploreView 详情抽屉：fact 显示 目标/置信度；finding 追加 危害/修复建议/POC 证据。
+
 ## 0.1.0-local.4（全库审计修复）
 
 ### 存储
