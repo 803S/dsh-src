@@ -1,0 +1,287 @@
+# The `src` agent preset: penetration-testing commander mode.
+#
+# A copy of the shipped `standard` preset with one addition — the
+# @deepseek-ai/dsh-src row — and a commander persona. Everything else
+# (shell, fs, skills, goals, delegation, workflows, ask-user, todo, web) is
+# inherited unchanged, so the decision agent can delegate proposal and
+# execution to subagents and keep every fact in the src_* records.
+#
+# AGENT-PLANE composition: the roster mounts this once under a standing
+# scope; every session naming it joins by scope parentage. Service rows must
+# sit inside an `isolate` realm; `dsh-src` publishes nothing (it registers
+# model tools on the host `tools` registry, a `src:protocol` system-prompt
+# section, and a `src` session-projection unit), and it consumes the host
+# `storageDomain` facility — so the row sits loose, exactly like tool-bash.
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The preset's own persona, shadowing the deployment default for this agent.
+# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+# The 提案→决策→执行 protocol itself arrives from the `src:protocol`
+# system-prompt section contributed by the dsh-src package.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are the penetration-testing commander (decision agent), powered by the {{model}} model.
+      Your working directory is {{cwd}}. You decide and create exploration intents; proposal generation
+      and execution are delegated to subagents, which submit confirmed results directly to their assigned intent.
+      Follow the src:protocol system-prompt section exactly.
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset, and
+# `tool-skill` gives them the catalog and loader; the merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# Only the model-facing tool. The goal SERVICE, its session driver, and the
+# `/goal` command stay on the host plane: the Gateway serves the goal domain as
+# Remote endpoints whose receiver comes from a generated descriptor, so it
+# resolves `goals` on the host and an entry-local realm here would hide it. The
+# registry is keyed by session anyway, so one host instance serves every
+# session. What a preset chooses is whether its agent can call the goal tool.
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      # Web sessions should start in normal execution mode, not PTC/plan mode.
+      disabled: true
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry.
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+#
+# `tool-subagent-report` is host-plane for the same reason as the registry,
+# not because a preset may not want it: it registers a CONTINUABLE SETUP on
+# that singleton rather than a tool this agent calls, and the setup list is
+# not scope-aware — one copy per mounted preset means every child gets
+# `report` registered once per live session, which throws on the second.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: src-recon-agent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: src_recon
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC 资产测绘执行 agent。只处理明确授权范围内的被动与低影响信息收集：域名/子域、IP、端口、服务、指纹、证书、公开页面与 JS 接口。禁止漏洞利用、账号爆破、拒绝服务和扩大范围。委派必须包含真实父 intentId；每发现一组新资产或事实立即调用 src_submit 检查点提交，不重复提交；提交资产时必须带 source（crt.sh/DNS/官网导航/JS bundle/手工确认等）、method、confidence 和 status（被动发现默认 candidate）。全程使用中文。中途异常或无法继续时，先把已完成的发现通过 src_submit 提交（stage=blocked/failed，summary 写明原因），再返回结论，不得静默退出。最终只返回结论、证据摘要、提交计数和未完成事项。
+        toolFilter: &src-recon-filter
+          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_test_bypass, src_test_credential, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
+
+    - id: src-audit-agent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: src_audit
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC Web 漏洞检测执行 agent。只验证父 agent 指定的资产、漏洞假设与停止条件，重点关注越权、注入、SSRF、XSS、上传、业务逻辑与信息泄露；使用最小影响的 POC。未复现的内容只能作为 fact/hypothesis，不能写 finding。确认漏洞必须附可复现步骤，并立即通过 src_submit 提交检查点；finding 的 pocEvidence 必须包含可直接复现的 raw 请求/响应文本（至少含接口地址），不得仅给截图或描述。SRC 要求真实危害漏洞：纯版本指纹/banner/信息暴露类只能作为 fact，不得作为 finding 提交。全程使用中文。中途异常或无法继续时，先把已完成发现通过 src_submit 提交（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。禁止继续委派、扩大范围、拒绝服务、大规模凭证测试和数据外传。
+        toolFilter: &src-audit-filter
+          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
+
+    - id: src-verify-agent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: src_verify
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC 漏洞复核 agent。独立复核父 agent 提供的漏洞假设或初步证据，确认可重复性、影响范围、严重度和误报可能。不得扩展到未授权资产，不得把不可重复结果写成 finding。发现独立证据后立即用 src_submit 提交；finding 的 pocEvidence 必须含可直接复现的 raw 请求/响应（至少含接口地址）。SRC 要求真实危害：信息泄露/指纹类不得作为可接受 finding 复核通过。全程使用中文。中途异常或无法继续时，先通过 src_submit 提交已完成部分（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。最终只返回复核结论、证据摘要、建议等级、提交计数和剩余疑点。
+        toolFilter: &src-verify-filter
+          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_test_credential, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
+
+    # Product providers are host-plane singletons. Copy this preset, then
+    # remove `disabled` from either ordinary tool row to expose that product
+    # only to agents composed from the copy.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
+    searchTimeoutMs: 60000
+
+# ── penetration mode ────────────────────────────────────────────────────────
+
+# The single src plugin: eight model-facing src_* tools on the host
+# tools registry, the src:protocol system-prompt section (the 提案→决策→
+# 执行 protocol, injected automatically — the user only sends target +
+# objective), and the standing src session-projection unit for the Web
+# panel. It publishes no service and consumes the host `storageDomain`
+# facility, so it needs no realm.
+- id: src
+  name: '@howmp/dsh-src/src'

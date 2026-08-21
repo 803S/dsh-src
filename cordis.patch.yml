@@ -1,0 +1,39 @@
+# The dsh-src bundle patch: the penetration-testing surface over
+# dsh-base + dsh-web-app. The bundle is one self-contained package — every
+# row resolves to a subpath of the bundle package itself, so the whole thing
+# installs from a single tarball via `dsh plugin add`.
+#
+# The patch contributes three things:
+# 1. the sqlite backend row, as a subpath of this package;
+# 2. the Web surface row (the per-session 渗透 view tab), whose client face is
+#    the package's `./client` export;
+# 3. a storage-domain route selecting the sqlite backend for the `src`
+#    domain only — the override replaces the targeted row's whole config, so
+#    the host default backend is restated here.
+#
+# The host src plugin belongs exclusively to the `src-hunter` agent preset.
+# Registering it here as well duplicates its scoped tool catalog whenever that
+# preset is selected, causing client command invalidation loops.
+
+- insert:
+    - id: ui-src
+      name: '@howmp/dsh-src/ui-src'
+
+    - id: storage-src-sqlite
+      name: '@howmp/dsh-src/storage-sqlite'
+      config:
+        path: !!js dshHomePath('storages', 'src-sessions.db')
+
+- id: storage-domain
+  config:
+    backend: json
+    routes:
+      pentest: sqlite
+      src: src-sqlite
+
+# DSH rc.6 replaces this row's configured roots with its bundled preset root
+# during profile composition. `preset-root` adds this package's read-only root
+# after `agent-presets` is constructed, without copying files into DSH_HOME.
+- insert:
+    - id: src-preset-root
+      name: '@howmp/dsh-src/preset-root'

@@ -1,0 +1,9 @@
+/node_modules
+# macOS
+.DS_Store
+
+# working snapshots (history lives in git now)
+backups/
+
+# pack artifacts
+*.tgz
