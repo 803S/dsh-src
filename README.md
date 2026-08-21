@@ -120,6 +120,25 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.4（全库审计修复）
+
+### 存储
+- **v6→v7 原地迁移**：`SqliteStorageBackend.materializeUnit` 对旧版本库自动升级版本戳（新表由 CREATE IF NOT EXISTS 确保旧行由 zod default 补齐字段），不再抛 version-mismatch；更新版本（降级）明确拒绝。
+- **WAL 收缩**：backend close 时 `PRAGMA wal_checkpoint(TRUNCATE)`，不再残留膨胀 WAL 文件。
+
+### 投影（UI 数据面修复）
+- 投影 schema/view/fold 补齐 `observations`/`userTodos`（此前 UI 时间线 observation 事件与"待办"tab 恒为空）+ counts 两项；checkpoint 投影补 `decision` 字段；stateVersion 4→5。
+- `src_submit` 合成投影事件透传 decision（此前时间线决策标签丢失）。
+- `src_import_traffic` 每条 observation 落库后补合成 `src_record_observation` 投影事件（Burp MCP/HAR 导入流量�� UI 时间线可见）。
+- `src_state` render 文本提示 pending 用户待办。
+
+### preset filter
+- 三个子 agent deny 列表补 `src_record_observation`；recon 子 agent 额外收窄 `src_collect_passive/src_collect_dorks/src_import_traffic/src_scan_surface`（被动收集与流量导入是主 agent 编排职责）。
+
+### 工程化
+- `"test"` 脚本修正为 `node --test tests/src.integration.test.mjs`（原 vitest 未安装必失败）；移除未使用的 devDependencies。
+- peerDependencies 放宽为 `>=0.1.0-rc.6`（钉死 rc.6 且镜像无此版本导致任何 install 失败）。
+
 ## 0.1.0-local.3（批次2-5 整改落地）
 
 ### 新工具

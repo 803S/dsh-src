@@ -36,7 +36,15 @@ function harness() {
     }
   };
   apply(ctx);
-  const exec = (sessionId, parentSession) => ({ agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {} } } });
+  const exec = (sessionId, parentSession) => {
+    let s = sessions.get(sessionId);
+    if (s === void 0) {
+      const events = [];
+      s = { events, append(type, data) { events.push({ type, data }); } };
+      sessions.set(sessionId, s);
+    }
+    return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
+  };
   const run = (name, args, execution) => tools.get(name).execute(args, execution);
   return { domain, tools, sessions, projections, prompts, exec, run };
 }
@@ -385,7 +393,7 @@ test("projection replay mirrors semantic deduplication", () => {
   const replayed = projection.view(state);
   assert.equal(replayed.coverage.some((c) => c.category === "bypass-verification" && c.phase === "method-bypass"), true);
   assert.equal(replayed.coverage.some((c) => c.category === "passive-collection" && c.phase === "discovery"), true);
-  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0 });
+  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0 });
 });
 
 test("full SRC engagement end-to-end: scope → passive → research → coverage → bypass → finalize → report", async () => {
@@ -546,6 +554,8 @@ test("src_collect_dorks rejects out-of-scope domains", async () => {
 
 test("src_import_traffic parses HAR, records full auth profiles and skips out-of-scope", async () => {
   const h = harness();
+  const parentEvents = [];
+  h.sessions.set("p", { append(type, data) { parentEvents.push({ type, data }); } });
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "https://example.test", objective: "导入", authorization: "SRC" }, parent);
   await h.run("src_add_intent", { title: "流量导入", goalId: "goal-1" }, parent);
@@ -555,6 +565,7 @@ test("src_import_traffic parses HAR, records full auth profiles and skips out-of
   ] } };
   const result = await h.run("src_import_traffic", { intentId: "intent-1", mode: "har", data: JSON.stringify(har), authProfileNote: "学生账号 student001 已授权" }, parent);
   assert.equal(result.observations, 1);
+  assert.equal(parentEvents.some((e) => e.type === "tool/call" && e.data.name === "src_record_observation"), true);
   assert.equal(result.outOfScope, 1);
   assert.equal(result.authFacts, 1);
   const state = await h.run("src_state", {}, parent);
@@ -643,4 +654,28 @@ test("checkpoint 记录 decision 决策理由（时间线决策字段）", async
   assert.equal(result.duplicateCheckpoint, false);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.checkpoints[0].decision, "撞 WAF 403，拟先做 UA 变体绕过试探再决定");
+});
+
+test("projection 回放 observation/user_todo 并在 view 输出（UI 数据面）", async () => {
+  const h = harness();
+  const parent = h.exec("pproj");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "投影", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "侦察", goalId: "goal-1" }, parent);
+  await h.run("src_record_observation", { intentId: "intent-1", method: "GET", path: "/admin", httpStatus: 403, protectionSignal: true, wafBypassed: false, source: "scan", decision: "WAF 拦截" }, parent);
+  const todo = await h.run("src_user_todo", { title: "提供已登录 Burp 请求", detail: "登录态获取", kind: "auth-session" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.observations.length, 1);
+  assert.equal(state.userTodos.length, 1);
+  // 折叠面单测：fold 工具事件后 view 应输出 observations/userTodos（UI 数据面）
+  const mod = await import("../lib/src.js");
+  let st = JSON.parse(JSON.stringify(mod.srcInitialState));
+  st = { ...st, goal: { id: "goal-1", target: "https://example.test", objective: "投影", authorization: "SRC" } };
+  const call = (name, args) => mod.applySrcEvent(st, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  st = call("src_add_intent", { title: "侦察", goalId: "goal-1" });
+  st = call("src_record_observation", { intentId: "intent-1", method: "GET", path: "/admin", httpStatus: 403, protectionSignal: true, source: "scan", decision: "WAF 拦截" });
+  st = call("src_user_todo", { title: "提供已登录 Burp 请求", detail: "登录态获取", kind: "auth-session" });
+  const proj = mod.viewSrcState(st);
+  assert.equal(proj.observations.length, 1);
+  assert.equal(proj.userTodos.length, 1);
+  assert.equal(proj.counts.observations, 1);
 });

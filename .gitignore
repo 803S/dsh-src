@@ -7,3 +7,4 @@ backups/
 
 # pack artifacts
 *.tgz
+pnpm-lock.yaml
