@@ -120,6 +120,34 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.7（修复：待办 tab 崩溃 + SRC 视图入口标签）
+
+- **[严重] 修复点击「待办」tab 后整个 SRC 视图崩溃变空白**：local.6 的 SrcView JSX 引用了 `runCommand` 但函数签名漏了解构该 prop，渲染待办列表时抛 `ReferenceError: runCommand is not defined`，被 slot ErrorBoundary 接住后整个视图替换为空 div。已补上签名；新增完整 SrcView 渲染回归测试（含 todos tab + 有/无 runCommand 两分支）。
+- **[UI] 头部视图标签错标修正**：zh 字典 `view.src` 从「渗透」改为「SRC」——此前 src-hunter 会话头部第三个 tab 显示为"渗透"，实际是 SRC 漏洞挖掘视图，用户无法辨认入口。
+
+## dsh web 启动 / 停止（部署后的进程管理）
+
+本机 + 局域网共用一个实例（绑 `*:3080`）：
+
+```bash
+# 停止：找到监听 3080 的进程并结束
+kill $(lsof -ti TCP:3080 -sTCP:LISTEN)
+
+# 启动（后台常驻，日志落 /tmp/dsh-web-local7.log；必须用绝对路径——nohup 不继承 shell 的 export PATH）
+nohup /Users/lihua-dis/Library/pnpm/bin/dsh web \
+  --host 0.0.0.0 --port 3080 \
+  --trusted-host 192.168.10.7:3080 --no-open \
+  > /tmp/dsh-web-local7.log 2>&1 &
+
+# 验证
+lsof -nP -iTCP:3080 -sTCP:LISTEN
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/
+```
+
+- 本机访问 http://127.0.0.1:3080 ；局域网访问 http://192.168.10.7:3080
+- 日志里的 `Failed to connect to SSE server at https://localhost:9876` 是 Burp MCP 代理在等 Burp 的 MCP Server 扩展（Burp 未开时属正常噪音，不影响其他功能）。
+- 注意不要同时跑两个实例指向同一 profile（会并发写同一个 sqlite）。
+
 ## 0.1.0-local.6（时间线 observation 详情 + 待办 UI 写回通道）
 
 ### 时间线 observation 请求详情（点击展开）
