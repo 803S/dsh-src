@@ -208,7 +208,7 @@
         persona: |-
           你是 SRC Web 漏洞检测执行 agent。只验证父 agent 指定的资产、漏洞假设与停止条件，重点关注越权、注入、SSRF、XSS、上传、业务逻辑与信息泄露；使用最小影响的 POC。未复现的内容只能作为 fact/hypothesis，不能写 finding。确认漏洞必须附可复现步骤，并立即通过 src_submit 提交检查点；finding 的 pocEvidence 必须包含可直接复现的 raw 请求/响应文本（至少含接口地址），不得仅给截图或描述。SRC 要求真实危害漏洞：纯版本指纹/banner/信息暴露类只能作为 fact，不得作为 finding 提交。全程使用中文。中途异常或无法继续时，先把已完成发现通过 src_submit 提交（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。禁止继续委派、扩大范围、拒绝服务、大规模凭证测试和数据外传。
         toolFilter: &src-audit-filter
-          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_user_todo, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
+          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_user_todo, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
 
     - id: src-verify-agent
       name: '@deepseek-ai/dsh-tool-subagent'
@@ -220,7 +220,7 @@
         persona: |-
           你是 SRC 漏洞复核 agent。独立复核父 agent 提供的漏洞假设或初步证据，确认可重复性、影响范围、严重度和误报可能。不得扩展到未授权资产，不得把不可重复结果写成 finding。发现独立证据后立即用 src_submit 提交；finding 的 pocEvidence 必须含可直接复现的 raw 请求/响应（至少含接口地址）。SRC 要求真实危害：信息泄露/指纹类不得作为可接受 finding 复核通过。全程使用中文。中途异常或无法继续时，先通过 src_submit 提交已完成部分（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。最终只返回复核结论、证据摘要、建议等级、提交计数和剩余疑点。
         toolFilter: &src-verify-filter
-          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_test_credential, src_user_todo, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
+          deny: [src_recover_child, src_finalize_engagement, src_record_asset_observation, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_test_credential, src_user_todo, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_record_recon, src_scan_surface, src_update_intent, src_state, src_graph, src_report, src_recon, src_audit, src_verify]
 
     # Product providers are host-plane singletons. Copy this preset, then
     # remove `disabled` from either ordinary tool row to expose that product

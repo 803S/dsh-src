@@ -119,3 +119,33 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 ## 参考项目
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
+
+## 0.1.0-local.3（批次2-5 整改落地）
+
+### 新工具
+- `src_collect_dorks`：五类 Google dorks 被动收集（凭据/敏感文件/目录/历史/云端），尽力抓取 DuckDuckGo，受阻时落 fact 附 `web_search` 指令，只对授权域名执行。
+- `src_import_traffic`：三模式流量导入 `mcp`（Burp MCP 预取流量）/`har`（HAR 文件）/`raw`（HTTP 文本）→ observations + 认证画像 fact（auth 头 2+2 脱敏）+ endpoint 资产。
+- `src_test_credential`：泄露凭据复现（配额豁免：不受≤50/低RPS约束；红线：只测凭据对应账户自身越权面，不横向）。
+- `src_record_observation`：时间线观察层（method/path/status/protectionSignal/wafBypassed/source/decision）。
+- `src_user_todo`：用户待办清单（仅主 agent 可创建；pending/done/abandoned；用户完成后 agent 继续）。
+
+### 报告 7 字段（批次4）
+- finding 新增 `entryPoint`（前端功能点）/`discoveryPath`（漏洞接口来源）/`rawRequest`/`rawResponse`。
+- `src_report` 输出：漏洞描述/危害描述/域名/完整URL/漏洞接口来源/前端功能点/数据包（=== Request === / === Response ===）/POC/影响范围/修复建议/影响资产/复现步骤。
+- finalize 门禁：rawRequest 非空（Burp 格式数据包必填）。
+
+### UI（批次3）
+- 时间线新增 observation 事件（橙色：method/path/status/WAF/bypassed/decision）。
+- 新增“待办”tab：用户待办面板（⚠pending/✅done/❌abandoned + kind + detail + 用户备注）。
+
+### AI/威胁情报资产识别（批次5）
+- `src_collect_passive` 自动识别 AI 站点（openai/deepseek/qwen/kimi/gemini 等）→ `ai-surface` 资产 + `ai-abuse` 研究骨架（manual-recommended）；威胁情报平台（fofa/shodan/censys/奇安信等）→ `threat-intel` 资产。
+- 定级指南对齐小米 SRC 四档（严重/高/中/低），impact 需注明定级依据。
+
+### 外部依赖（需用户协助，均可通过 `src_user_todo` 登记）
+1. **Burp MCP jar 路径**：下载后告知路径，真机验证后接入 `src_import_traffic` mode=mcp。
+2. **wedecode**：小程序反编译工具，确认已装后迁移小程序 skill。
+3. **App 下载方式**：应用商店 URL/二维码，落 asset meta。
+
+### checkpoint 决策字段
+- `src_submit` 新增 `decision` 参数：为何继续/停止/换向/绕过，进时间线。
