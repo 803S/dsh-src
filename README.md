@@ -142,10 +142,19 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 - `src_collect_passive` 自动识别 AI 站点（openai/deepseek/qwen/kimi/gemini 等）→ `ai-surface` 资产 + `ai-abuse` 研究骨架（manual-recommended）；威胁情报平台（fofa/shodan/censys/奇安信等）→ `threat-intel` 资产。
 - 定级指南对齐小米 SRC 四档（严重/高/中/低），impact 需注明定级依据。
 
-### 外部依赖（需用户协助，均可通过 `src_user_todo` 登记）
-1. **Burp MCP jar 路径**：下载后告知路径，真机验证后接入 `src_import_traffic` mode=mcp。
-2. **wedecode**：小程序反编译工具，确认已装后迁移小程序 skill。
-3. **App 下载方式**：应用商店 URL/二维码，落 asset meta。
+### Burp MCP 接入（已完成配置）
+- 架构：`dsh-mcp-client(stdio) → mcp-proxy.jar → Burp Pro MCP 扩展(SSE 127.0.0.1:9876)`
+- jar 已固定到 `~/.dsh/tools/mcp-proxy.jar`；profile patch 已写 `mcp-burp`（failOnStartupError:false，Burp 未开不影响其他工具）
+- **用户侧一次性步骤**：Burp Pro → Extender/插件市场装 "MCP Server" 扩展 → Start
+- agent 工具面多出 `mcp__burp__*`（get_proxy_history/send_to_repeater 等）；协议【Burp MCP 工具面】段已写明用法（proxy history→src_import_traffic 落库→认证画像→Repeater 回写）
+
+### AI 面识别两层漏斗
+- 第一层（代码粗筛）：22 个关键词 + 路径特征（/api/chat、/v1/completions、event-stream）+ 置信分档（0.5-0.9），命中才进漏斗
+- 第二层（agent 语义复核）：audit 子 agent persona 要求拉页面判断"是否真 AI 服务"（对话入口/模型 API 调用/流式响应），排除营销文案误报；复核为假置 false-positive
+
+### 剩余外部依赖
+1. **wedecode**：小程序反编译工具，确认已装后迁移小程序 skill。
+2. **App 下载方式**：应用商店 URL/二维码，落 asset meta。
 
 ### checkpoint 决策字段
 - `src_submit` 新增 `decision` 参数：为何继续/停止/换向/绕过，进时间线。
