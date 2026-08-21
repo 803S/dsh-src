@@ -22,6 +22,43 @@ dsh plugin --profile web add file:C:\path\to\dsh-src.tar.gz
 
 重启 dsh 后，在新会话中选择自动注册的「SRC 专业模式」。
 
+## 接入你自己的 Burp MCP（可选）
+
+插件包本身**不包含任何 Burp 配置**——连接信息在你本机的 profile 补丁文件
+`$DSH_HOME/profiles/<profile>/cordis.patch.yml` 中声明，每台机器各自维护。
+不接 Burp 时插件照常工作：agent 会走 HAR/raw 文件导入兑底（`src_import_traffic mode=har/raw`），
+并在需要时创建「启用 Burp」用户待办提醒你。
+
+### 接入步骤（一次性）
+
+1. Burp Suite Pro 安装 "MCP Server" BApp 扩展并点 Start（扩展设置里可查看/修改监听端口，默认 `127.0.0.1:9876`）。
+2. 获取 PortSwigger 配套的桥接器 `mcp-proxy.jar`，放到任意位置（如 `~/.dsh/tools/mcp-proxy.jar`）。
+   它负责 stdio ↔ HTTP+SSE 协议转换（`dsh-mcp-client` 只说 stdio/streamable-http，Burp 扩展暴露的是旧版 SSE 协议）。
+3. 编辑你本机的 profile 补丁文件 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`：
+
+```yaml
+- insert:
+    - id: mcp-burp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: burp          # 必须叫 burp —— 工具名才是 mcp__burp__*，与 src 插件协议匹配
+        transport: stdio
+        command: java
+        args: ['-jar', '/你的路径/mcp-proxy.jar', '--sse-url', 'https://localhost:9876']
+        failOnStartupError: false # Burp 未开时不阻塞其它功能
+        toolCallTimeoutMs: 120000
+```
+
+重启 dsh 后 agent 工具面多出 `mcp__burp__get_proxy_history` / `mcp__burp__send_to_repeater` 等，
+配合 `src_import_traffic(mode=mcp)` 把真实浏览流量落库。
+
+### 不同端口 / 主机 / 认证
+
+- **换端口**：只改 `--sse-url` 的端口即可，如扩展改为 9877 → `'--sse-url', 'https://localhost:9877'`。
+- **远端主机**：写完整 URL，如 `'--sse-url', 'https://192.168.1.50:9876'`。
+- **环境变量方式**：`mcp-proxy.jar` 同样识别 `MCP_SSE_URL`（地址）、`MCP_AUTH_TOKEN` / `MCP_API_KEY`（认证）、
+  `MCP_OAUTH21_ENABLED` 等，可用 `env:` 字段传入而不写死在 args 里。
+
 ## 界面预览
 
 ### 模式选择
