@@ -498,3 +498,85 @@ test("src_test_credential stops on captcha unless bypass noted", async () => {
     assert.equal(result.stopReason, "captcha-detected-unverifiable");
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("src_record_observation and src_user_todo lifecycle", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "时间线", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "探测", goalId: "goal-1" }, parent);
+  const obs = await h.run("src_record_observation", { intentId: "intent-1", path: "/admin", httpStatus: 403, protectionSignal: true, source: "scan", decision: "UA变换绕过成功" }, parent);
+  assert.equal(obs.protectionSignal, true);
+  const todo = await h.run("src_user_todo", { title: "提供已登录 Burp 请求", kind: "auth-session", detail: "在 Burp 代理下登录后导出任意一条请求" }, parent);
+  assert.equal(todo.status, "pending");
+  const done = await h.run("src_user_todo", { userTodoId: todo.id, title: "提供已登录 Burp 请求", status: "done", note: "已导出发你" }, parent);
+  assert.equal(done.status, "done");
+  assert.equal(done.note, "已导出发你");
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.counts.observations, 1);
+  assert.equal(state.counts.userTodos, 1);
+  assert.equal(state.userTodos[0].status, "done");
+});
+
+test("src_collect_dorks generates five-category queries and records facts", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "dorks", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "dorks侦察", goalId: "goal-1" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('<a class="result__a" href="https://github.com/x/y/blob/main/.env">github.com/x/y .env leak</a>', { status: 200, headers: { "content-type": "text/html" } });
+    const result = await h.run("src_collect_dorks", { intentId: "intent-1", domain: "example.test" }, parent);
+    assert.equal(result.queries >= 15, true);
+    assert.equal(result.fetched, 6);
+    assert.equal(result.facts, result.queries);
+    const state = await h.run("src_state", {}, parent);
+    assert.equal(state.facts.some((f) => /dorks\[credential\] 查询/.test(f.detail)), true);
+    assert.equal(state.facts.some((f) => /dorks\[credential\] 命中.*github\.com/.test(f.detail)), true);
+    assert.equal(state.coverage.some((c) => c.category === "dorks" && c.status === "completed"), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("src_collect_dorks rejects out-of-scope domains", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "dorks", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "dorks侦察", goalId: "goal-1" }, parent);
+  await assert.rejects(() => h.run("src_collect_dorks", { intentId: "intent-1", domain: "evil-elsewhere.com" }, parent), /outside the authorized goal host/);
+});
+
+test("src_import_traffic parses HAR, masks auth headers and skips out-of-scope", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "导入", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "流量导入", goalId: "goal-1" }, parent);
+  const har = { log: { entries: [
+    { request: { method: "GET", url: "https://app.example.test/resume?page=2", headers: [{ name: "Cookie", value: "SESSION=abcdef123456; Path=/" }] }, response: { status: 200, headers: [{ name: "Content-Type", value: "text/html" }], content: { text: "<html>简历页</html>" } } },
+    { request: { method: "POST", url: "https://evil-elsewhere.com/x", headers: [] }, response: { status: 200, headers: [], content: { text: "" } } }
+  ] } };
+  const result = await h.run("src_import_traffic", { intentId: "intent-1", mode: "har", data: JSON.stringify(har), authProfileNote: "学生账号 student001 已授权" }, parent);
+  assert.equal(result.observations, 1);
+  assert.equal(result.outOfScope, 1);
+  assert.equal(result.authFacts, 1);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.observations.some((o) => o.path === "/resume?page=2" && o.httpStatus === 200), true);
+  assert.equal(state.assets.some((a) => a.type === "endpoint" && a.value === "app.example.test/resume"), true);
+  const authFact = state.facts.find((f) => /认证画像\[cookie\]/.test(f.detail));
+  assert.ok(authFact, "auth fact recorded");
+  assert.match(authFact.detail, /SE\*\*\*=/);
+  assert.equal(authFact.detail.includes("abcdef123456"), false, "明文 Cookie 不得入库");
+});
+
+test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "导入", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "流量导入", goalId: "goal-1" }, parent);
+  const result = await h.run("src_import_traffic", { intentId: "intent-1", mode: "mcp", flows: [{ method: "GET", url: "https://example.test/api/user", status: 200, reqHeaders: "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9xyz", respHeaders: "Content-Type: application/json", body: "{\"id\":1}" }] }, parent);
+  assert.equal(result.observations, 1);
+  assert.equal(result.authFacts, 1);
+  const state = await h.run("src_state", {}, parent);
+  const mcpObs = state.observations.find((o) => o.source === "burp-mcp");
+  assert.ok(mcpObs, "burp-mcp observation recorded");
+  const authFact = state.facts.find((f) => /认证画像\[authorization\]/.test(f.detail));
+  assert.match(authFact.detail, /Be\*\*\*yz/);
+});
