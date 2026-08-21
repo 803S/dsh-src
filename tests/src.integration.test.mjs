@@ -580,3 +580,32 @@ test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
   const authFact = state.facts.find((f) => /认证画像\[authorization\]/.test(f.detail));
   assert.match(authFact.detail, /Be\*\*\*yz/);
 });
+
+test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + finalize rawRequest 门禁", async () => {
+  const h = harness();
+  // 门禁部分：缺 rawRequest 被 finalize 拦截
+  const p1 = h.exec("gate");
+  await h.run("src_add_goal", { target: "https://app.example.test", objective: "门禁", authorization: "SRC" }, p1);
+  await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, p1);
+  await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p1);
+  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取简历", severity: "high", impact: "泄露", affectedScope: "全站", remediation: "鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"] }, p1);
+  await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p1);
+  const blocked = await h.run("src_finalize_engagement", {}, p1);
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.blockers.some((b) => /rawRequest/.test(b)), true);
+  // 通过部分：独立 session，带全字段
+  const p2 = h.exec("full");
+  await h.run("src_add_goal", { target: "https://app.example.test", objective: "通过", authorization: "SRC" }, p2);
+  await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, p2);
+  await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p2);
+  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}" }, p2);
+  await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p2);
+  const ok = await h.run("src_finalize_engagement", {}, p2);
+  assert.equal(ok.ready, true);
+  const report = await h.run("src_report", {}, p2);
+  assert.match(report.markdown, /前端功能点: 简历查看页-详情/);
+  assert.match(report.markdown, /漏洞接口来源: Burp proxy history/);
+  assert.match(report.markdown, /=== Request ===/);
+  assert.match(report.markdown, /GET \/resume\?id=2 HTTP\/1\.1/);
+  assert.match(report.markdown, /=== Response ===/);
+});
