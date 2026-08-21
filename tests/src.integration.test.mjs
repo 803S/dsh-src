@@ -544,7 +544,7 @@ test("src_collect_dorks rejects out-of-scope domains", async () => {
   await assert.rejects(() => h.run("src_collect_dorks", { intentId: "intent-1", domain: "evil-elsewhere.com" }, parent), /outside the authorized goal host/);
 });
 
-test("src_import_traffic parses HAR, masks auth headers and skips out-of-scope", async () => {
+test("src_import_traffic parses HAR, records full auth profiles and skips out-of-scope", async () => {
   const h = harness();
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "https://example.test", objective: "导入", authorization: "SRC" }, parent);
@@ -560,10 +560,9 @@ test("src_import_traffic parses HAR, masks auth headers and skips out-of-scope",
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.observations.some((o) => o.path === "/resume?page=2" && o.httpStatus === 200), true);
   assert.equal(state.assets.some((a) => a.type === "endpoint" && a.value === "app.example.test/resume"), true);
-  const authFact = state.facts.find((f) => /认证画像\[cookie\]/.test(f.detail));
+  const authFact = state.facts.find((f) => f.kind === "auth-profile" && /cookie/i.test(f.detail));
   assert.ok(authFact, "auth fact recorded");
-  assert.match(authFact.detail, /SE\*\*\*=/);
-  assert.equal(authFact.detail.includes("abcdef123456"), false, "明文 Cookie 不得入库");
+  assert.match(authFact.detail, /SESSION=abcdef123456/);
 });
 
 test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
@@ -577,8 +576,9 @@ test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
   const state = await h.run("src_state", {}, parent);
   const mcpObs = state.observations.find((o) => o.source === "burp-mcp");
   assert.ok(mcpObs, "burp-mcp observation recorded");
-  const authFact = state.facts.find((f) => /认证画像\[authorization\]/.test(f.detail));
-  assert.match(authFact.detail, /Be\*\*\*yz/);
+  const authFact = state.facts.find((f) => f.kind === "auth-profile" && /authorization/i.test(f.detail));
+  assert.ok(authFact, "auth fact recorded");
+  assert.match(authFact.detail, /Bearer eyJhbGciOiJIUzI1NiJ9xyz/);
 });
 
 test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + finalize rawRequest 门禁", async () => {

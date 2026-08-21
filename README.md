@@ -124,7 +124,7 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 ### 新工具
 - `src_collect_dorks`：五类 Google dorks 被动收集（凭据/敏感文件/目录/历史/云端），尽力抓取 DuckDuckGo，受阻时落 fact 附 `web_search` 指令，只对授权域名执行。
-- `src_import_traffic`：三模式流量导入 `mcp`（Burp MCP 预取流量）/`har`（HAR 文件）/`raw`（HTTP 文本）→ observations + 认证画像 fact（auth 头 2+2 脱敏）+ endpoint 资产。
+- `src_import_traffic`：三模式流量导入 `mcp`（Burp MCP 预取流量）/`har`（HAR 文件）/`raw`（HTTP 文本）→ observations + 认证画像 fact（认证头完整入库）+ endpoint 资产。
 - `src_test_credential`：泄露凭据复现（配额豁免：不受≤50/低RPS约束；红线：只测凭据对应账户自身越权面，不横向）。
 - `src_record_observation`：时间线观察层（method/path/status/protectionSignal/wafBypassed/source/decision）。
 - `src_user_todo`：用户待办清单（仅主 agent 可创建；pending/done/abandoned；用户完成后 agent 继续）。
