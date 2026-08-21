@@ -102,9 +102,13 @@ test("finalize engagement reports blockers and supports documented interruption"
   const blocked = await h.run("src_finalize_engagement", {}, parent);
   assert.equal(blocked.ready, false);
   assert.match(blocked.blockers[0], /未完成 intent/);
-  const allowed = await h.run("src_finalize_engagement", { allowIncomplete: true }, parent);
+  const allowed = await h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "测试用：模拟用户指示停止" }, parent);
   assert.equal(allowed.ready, true);
-  assert.match(allowed.warnings.join(" "), /覆盖率/);
+  assert.match(allowed.warnings.join(" "), /受限完成/);
+  const stateAfter = await h.run("src_state", {}, parent);
+  const decl = stateAfter.coverage.find((row) => row.phase === "report" && row.category === "受限完成声明");
+  assert.notEqual(decl, void 0);
+  assert.match(decl.limitation, /用户指示停止/);
 });
 
 test("asset observations, research matrix, and coverage survive state and report", async () => {
@@ -112,9 +116,12 @@ test("asset observations, research matrix, and coverage survive state and report
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "example.test", objective: "coverage", authorization: "ticket" }, parent);
   const intent = await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
-  const asset = await h.run("src_record_asset_observation", { intentId: intent.id, type: "subdomain", value: "api.example.test", source: "crt.sh", method: "passive", confidence: 0.9, status: "candidate" }, parent);
+  assert.equal(h.tools.has("src_record_asset_observation"), false);
+  assert.equal(h.tools.has("src_record_recon"), false);
+  const asset = await h.run("src_add_asset", { type: "subdomain", value: "api.example.test", source: "crt.sh", method: "passive", confidence: 0.9, status: "candidate" }, parent);
+  assert.match(asset.id, /^asset-/);
   const research = await h.run("src_record_research", { intentId: intent.id, category: "authorization", hypothesis: "Object IDs may be cross-tenant accessible", preconditions: ["two test accounts"], status: "blocked", stopReason: "no approved second account", evidence: ["scope restriction"] }, parent);
-  const coverage = await h.run("src_record_coverage", { assetId: asset.assetId, phase: "web", category: "authentication", status: "blocked", limitation: "WAF challenge", evidence: ["preflight 403"] }, parent);
+  const coverage = await h.run("src_record_coverage", { assetId: asset.id, phase: "web", category: "authentication", status: "blocked", limitation: "WAF challenge", evidence: ["preflight 403"] }, parent);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.assets[0].source, "crt.sh");
   assert.equal(state.research[0].id, research.id);
@@ -122,7 +129,7 @@ test("asset observations, research matrix, and coverage survive state and report
   const report = await h.run("src_report", {}, parent);
   assert.match(report.markdown, /资产与测试覆盖率/);
   assert.match(report.markdown, /漏洞研究矩阵/);
-  await h.run("src_record_asset_observation", { intentId: intent.id, type: "subdomain", value: "API.EXAMPLE.TEST", source: "DNS", method: "low-impact", confidence: 1, status: "confirmed" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "API.EXAMPLE.TEST", source: "DNS", method: "low-impact", confidence: 1, status: "confirmed" }, parent);
   const updated = await h.run("src_state", {}, parent);
   assert.equal(updated.assets.length, 1);
   assert.equal(updated.assets[0].status, "confirmed");
@@ -280,7 +287,7 @@ test("finalize engagement warns on discovered API endpoints with no follow-up", 
     };
     await h.run("src_collect_passive", { intentId: intent.id, baseUrl: "https://example.test" }, parent);
     await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
-    const result = await h.run("src_finalize_engagement", { allowIncomplete: true }, parent);
+    const result = await h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "范围耗尽" }, parent);
     assert.equal(result.ready, true);
     assert.match(result.warnings.join(" "), /API\/接口资产尚未进入研究或覆盖推进/);
     assert.match(result.warnings.join(" "), /仍停留在自动生成骨架/);
@@ -436,9 +443,11 @@ test("full SRC engagement end-to-end: scope → passive → research → coverag
 
     // 5) mark intent completed, run finalize, and produce report
     await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
-    const finalize = await h.run("src_finalize_engagement", { allowIncomplete: true }, parent);
+    const finalize = await h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "e2e 演练停止" }, parent);
     assert.equal(finalize.ready, true);
     const report = await h.run("src_report", {}, parent);
+    assert.match(report.markdown, /受限完成声明/);
+    assert.match(report.markdown, /e2e 演练停止/);
     assert.match(report.markdown, /## API 发现摘要/);
     assert.match(report.markdown, /## 漏洞研究矩阵/);
 
@@ -452,17 +461,50 @@ test("full SRC engagement end-to-end: scope → passive → research → coverag
 
 
 
-test("finalize blocks info/low-only findings as insufficient real harm", async () => {
+test("finalize allowIncomplete without reason throws; reason lands in report declaration", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  await h.run("src_add_goal", { target: "example.test", objective: "g", authorization: "t" }, parent);
+  await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
+  await assert.rejects(() => h.run("src_finalize_engagement", { allowIncomplete: true }, parent), /allowIncompleteReason/);
+  await assert.rejects(() => h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "   " }, parent), /allowIncompleteReason/);
+  const ok = await h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "WAF 全程拦截，用户指示停止" }, parent);
+  assert.equal(ok.ready, true);
+  assert.match(ok.warnings.join(" "), /受限完成/);
+  const report = await h.run("src_report", {}, parent);
+  assert.match(report.markdown, /受限完成声明[\s\S]*WAF 全程拦截，用户指示停止/);
+});
+
+test("legacy src_record_recon/src_record_asset_observation events still replay in projection after tool removal", () => {
+  const h = harness();
+  assert.equal(h.tools.has("src_record_recon"), false);
+  assert.equal(h.tools.has("src_record_asset_observation"), false);
+  const projection = h.projections.get("src");
+  const call = (state, name, args) => projection.apply(state, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  let state = projection.init();
+  state = call(state, "src_add_goal", { target: "example.test", objective: "test", authorization: "ticket" });
+  state = call(state, "src_add_intent", { title: "recon", detail: "", goalId: "goal-1" });
+  state = call(state, "src_record_recon", { intentId: "intent-1", source: "crt.sh", method: "passive", assets: [{ type: "subdomain", value: "api.example.test" }], facts: [{ kind: "info", detail: "wildcard cert" }] });
+  state = call(state, "src_record_asset_observation", { intentId: "intent-1", type: "subdomain", value: "vpn.example.test", source: "DNS", method: "passive", confidence: 0.9, status: "candidate" });
+  const view = projection.view(state);
+  assert.equal(view.assets.some((a) => a.value === "api.example.test"), true);
+  assert.equal(view.assets.some((a) => a.value === "vpn.example.test"), true);
+});
+
+
+test("finalize downgrades info/low-only findings to warning (SRC accepts real-harm low findings)", async () => {
   const h = harness();
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "https://example.test", objective: "找到真实危害漏洞", authorization: "SRC" }, parent);
   await h.run("src_add_intent", { title: "audit", detail: "x", goalId: "goal-1" }, parent);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
-  await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"] }, parent);
+  await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"] }, parent);
   await h.run("src_record_research", { intentId: "intent-1", category: "info-leak", hypothesis: "版本泄露", status: "verified", findingId: "finding-1" }, parent);
-  const blocked = await h.run("src_finalize_engagement", {}, parent);
-  assert.equal(blocked.ready, false);
-  assert.equal(blocked.blockers.some((b) => /真实危害/.test(b)), true);
+  // rawRequest 门禁仍会阻断；但「仅 info/low」不再是 blocker，降级为 warning
+  const result = await h.run("src_finalize_engagement", {}, parent);
+  assert.equal(result.ready, false);
+  assert.equal(result.blockers.some((b) => /真实危害|info\/low/.test(b)), false);
+  assert.match(result.warnings.join(" "), /仅存在 info\/low/);
 });
 
 test("src_test_credential performs bounded credential verification and records hit", async () => {

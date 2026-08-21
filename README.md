@@ -157,6 +157,13 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.8（质量标准修正 + finalize 门禁收紧 + 冗余工具清理）
+
+- **[政策] 漏洞质量标准修正**：撤回"信息泄露/指纹类只能作 fact 不得作 finding"的一刀切禁令——SRC 平台接受一切有实际危害的真实漏洞（如版本暴露可匹配已知 CVE 定向利用），关键改为如实论证危害、severity 如实定级、不夸大不虚构；finalize 里对应的「仅 info/low 不构成真实危害」从 blocker 降级为 warning。同步修正 audit/verify 子代理 persona 措辞。
+- **[门禁] allowIncomplete 收紧**：`src_finalize_engagement` 带 `allowIncomplete=true` 时必须提供 `allowIncompleteReason`（为何带限制出报告：WAF 全程拦截/范围耗尽/用户指示停止等）；理由作为 coverage 声明行写入报告的「资产与测试覆盖率」一节，不再是无痕逃生门。
+- **[门禁] unverified finding 阻断消息给出可执行路径**：明确要求先委派 src_verify 子代理独立复核并以 `src_record_research(status=verified, findingId=…)` 关联后再 finalize。
+- **[清理] 删除冗余工具 `src_record_recon` / `src_record_asset_observation` 注册**：与 src_add_asset/src_add_fact 完全重叠且实测服从率为零；两者 fold case 保留，旧会话投影回放不受影响（顺带修复 legacy record_recon 回放的 ReferenceError——replay 助手误定义在 src/submit 分支内）。
+
 ## 0.1.0-local.7（修复：待办 tab 崩溃 + SRC 视图入口标签）
 
 - **[严重] 修复点击「待办」tab 后整个 SRC 视图崩溃变空白**：local.6 的 SrcView JSX 引用了 `runCommand` 但函数签名漏了解构该 prop，渲染待办列表时抛 `ReferenceError: runCommand is not defined`，被 slot ErrorBoundary 接住后整个视图替换为空 div。已补上签名；新增完整 SrcView 渲染回归测试（含 todos tab + 有/无 runCommand 两分支）。
