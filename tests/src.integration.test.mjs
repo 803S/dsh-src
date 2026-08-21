@@ -631,3 +631,16 @@ test("src_collect_passive 识别 AI 站点并落 ai-surface 资产 + 研究骨�
     assert.equal(state.research.some((r) => r.category === "ai-abuse" && r.status === "hypothesis"), true);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("checkpoint 记录 decision 决策理由（时间线决策字段）", async () => {
+  const h = harness();
+  h.sessions.set("pdec", { append() {} });
+  const parent = h.exec("pdec");
+  const child = h.exec("cdec", "pdec");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "决策", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, parent);
+  const result = await h.run("src_submit", { intentId: "intent-1", stage: "blocked", summary: "WAF 拦截需绕过", facts: [{ kind: "http", target: "https://example.test", detail: "/admin 403", confidence: 0.7 }], assets: [], findings: [], decision: "撞 WAF 403，拟先做 UA 变体绕过试探再决定" }, child);
+  assert.equal(result.duplicateCheckpoint, false);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.checkpoints[0].decision, "撞 WAF 403，拟先做 UA 变体绕过试探再决定");
+});
