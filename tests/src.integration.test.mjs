@@ -68,7 +68,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, 5, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2 });
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0 });
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
