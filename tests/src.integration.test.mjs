@@ -609,3 +609,25 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   assert.match(report.markdown, /GET \/resume\?id=2 HTTP\/1\.1/);
   assert.match(report.markdown, /=== Response ===/);
 });
+
+test("src_collect_passive 识别 AI 站点并落 ai-surface 资产 + 研究骨架", async () => {
+  const h = harness();
+  const parent = h.exec("ai");
+  await h.run("src_add_goal", { target: "https://ai.example.test", objective: "AI 面收集", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "被动侦察", goalId: "goal-1" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    let call = 0;
+    globalThis.fetch = async (url) => {
+      const p = new URL(url).pathname;
+      call++;
+      if (p === "/" && call <= 2) return new Response("<html><title>AI 助手 powered by deepseek</title>大模型对话</html>", { status: 200, headers: { "content-type": "text/html" } });
+      return new Response("", { status: 404, headers: { "content-type": "text/plain" } });
+    };
+    const result = await h.run("src_collect_passive", { intentId: "intent-1", baseUrl: "https://ai.example.test", hostnames: ["ai.example.test"], maxHints: 5 }, parent);
+    assert.equal(result.requiresDecision, false);
+    const state = await h.run("src_state", {}, parent);
+    assert.equal(state.assets.some((a) => a.type === "ai-surface" && a.value === "https://ai.example.test"), true);
+    assert.equal(state.research.some((r) => r.category === "ai-abuse" && r.status === "hypothesis"), true);
+  } finally { globalThis.fetch = originalFetch; }
+});
