@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { apply } from "../lib/src.js";
+import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState } from "../lib/src.js";
 
 class MemoryTable {
   rows = new Map();
@@ -678,4 +678,49 @@ test("projection 回放 observation/user_todo 并在 view 输出（UI 数据面�
   assert.equal(proj.observations.length, 1);
   assert.equal(proj.userTodos.length, 1);
   assert.equal(proj.counts.observations, 1);
+});
+
+test("/src-todo feedback parser validates id/status and keeps note", () => {
+	const good = parseTodoFeedback(" todo-2   done 已用 Burp 抓包 ");
+	assert.equal(good.ok, true);
+	assert.equal(good.userTodoId, "todo-2");
+	assert.equal(good.status, "done");
+	assert.equal(good.note, "已用 Burp 抓包");
+	const reopened = parseTodoFeedback("todo-3 pending");
+	assert.equal(reopened.ok, true);
+	assert.equal(reopened.note, "");
+	for (const [input, reason] of [
+		["", "缺少参数"],
+		["todo-x done", "不合法"],
+		["todo-1 finished", "必须是"]
+	]) {
+		const bad = parseTodoFeedback(input);
+		assert.equal(bad.ok, false);
+		assert.match(bad.error, new RegExp(reason));
+	}
+});
+
+test("observation projection carries truncated response headers/snippet for the timeline", () => {
+	let state = JSON.parse(JSON.stringify(srcInitialState));
+	state = { ...state, goal: { id: "goal-1", target: "https://x.test", objective: "t", authorization: "SRC" } };
+	state = { ...state, nodes: [...state.nodes, { id: "intent-1", kind: "intent", title: "i", detail: "d", status: "running", createdAt: 1 }] };
+	state = applySrcEvent(state, { type: "tool/call", data: { name: "src_record_observation", arguments: JSON.stringify({
+		intentId: "intent-1",
+		assetId: "asset-9",
+		method: "GET",
+		path: "/admin",
+		httpStatus: 403,
+		respHeaders: "S".repeat(2000),
+		respBodySnippet: "B".repeat(5000),
+		protectionSignal: true,
+		source: "burp-mcp",
+		decision: "waf-blocked"
+	}) } });
+	const view = viewSrcState(state);
+	const obs = view.observations.find((row) => row.path === "/admin");
+	assert.ok(obs, "observation in view");
+	assert.equal(obs.assetId, "asset-9");
+	assert.equal(obs.respHeaders.length, 600);
+	assert.equal(obs.respBodySnippet.length, 1200);
+	assert.equal(obs.decision, "waf-blocked");
 });

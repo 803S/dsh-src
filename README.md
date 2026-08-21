@@ -120,6 +120,18 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.6（时间线 observation 详情 + 待办 UI 写回通道）
+
+### 时间线 observation 请求详情（点击展开）
+- 投影 observation 补 `respHeaders`/`respBodySnippet`/`assetId`：fold 时截断（响应头 ≤600 字符、响应体片段 ≤1200 字符），避免直接 tool/call 参数无上限把投影撑爆；store 仍保留完整 ≤2000 片段。
+- 时间线中带响应数据的 observation 行显示「▸ 点击展开响应详情」，点击展开 响应头 / 响应体片段 pre 块（等宽字体、限高滚动、可收起）。无 snippet 的行不显示展开提示。
+
+### 待办面板 UI 勾选写回通道（UI → agent）
+- 新增人机命令 `/src-todo <todoId> <done|abandoned|pending> [备注]`（注册在 src 插件的 agent 作用域，仅 src 会话可见）。
+- 命令不直接写状态，而是 `agent.followup(createUserMessage(...))` 把用户操作转成一条对话消息并**唤醒空闲 agent**——由 agent 自己调 `src_user_todo` 落库+投影，单一写路径，且 agent 明确知道待办状态变化、可继续解除阻塞的工作。
+- Web 面板「待办」tab 的 pending 项新增「✓ 我已完成」「✗ 放弃此项」按钮：经 `ctx.remote.commands.execute(sessionId, line)` 调用命令，按钮态（发送中/已转达/失败原因)就地反馈；投影更新后列表自动刷新。
+- package.json dsh.client.inject 增加 `@deepseek-ai/dsh-api-remotes`（客户端 remote 调用面）。
+
 ## 0.1.0-local.5（UI 数据面 + 展示审计修复）
 
 ### 投影数据层（此前 UI 拿不到这些数据）
