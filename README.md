@@ -157,6 +157,15 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.9（真实测试 7 问题修复：脏目标 / 待办异步化 / 基础设施页 / 时间线重设计 / 全程中文）
+
+- **[修复] 脏目标解析**：`src_add_goal` 的 target 带中文说明（如 `mi.com（小米在线服务主域，含 *.mi.com 子域）`）时，六个出站工具（scan_surface/test_bypass/test_credential/import_traffic/collect_dorks/collect_passive）直接 `new URL()` 抛错。新增 `parseGoalHost()`：非 ASCII 输入跳过 URL 直解（防 IDNA punycode 出乱码主机名），依次尝试「带 scheme 直解 → 加 https:// 直解 → 正则提取首个域名 token」，全部失败给出中文可行动报错。新增 `src_set_goal_target` 工具让 agent 在目标带杂质时就地修正而不清空探��图。
+- **[新工具] `src_get_infra` / `src_set_infra`**：会话级基础设施设置（proxyUrl/burpMcpPort/burpProxyJarPath/testAccount/testPhone/httpTimeoutMs），存 sqlite 新表 infra（domain version 7→8，旧库自动迁移）。出站请求统一走 `makeHttpFetch(infra)`：手写 CONNECT 隧道支持 HTTP(S) 代理（不引入 undici 依赖）、永不跟随重定向、超时与 4MB 上限可控；进程级代理用 Node 24 `--use-env-proxy` 文档化。
+- **[UI] 待办按钮异步化 + 备注**：✓完成/✗放弃点击后先展开 inline 备注输入框（Enter 发送/Esc 取消），备注随 `/src-todo <id> <status> <note>` 转达给 agent；修复模块导出 inject 缺 `"remote"` 导致点击报错的问题（boot manifest inject 是包加载顺序，模块导出的 inject 才是 cordis 服务名——runCommand 依赖 ctx.remote.commands.execute）。
+- **[UI] 新增「基础设施」tab**：表单读写六项设置（保存经 `/src-infra <key> <value>` 人机命令写回，value 为 `-` 表示恢复默认）；附 Burp MCP 接线示例与进程级代理说明。子代理 deny 列表追加 src_set_infra/src_set_goal_target（src_get_infra 允许读取）。
+- **[UI] 时间线重设计为「时间轴 + 详情」双栏**：左列色点+时间+单行摘要+按类型过滤 chips（全部/意图/事实/漏洞/检查点/探测），右侧详情面板按类型渲染完整字段——observation 含响应头/响应体原文与决策理由，finding 含七字段+原始请求响应，checkpoint 含阶段小结与决策；顺带修复事实事件从未显示的潜伏 bug（facts 在 projection nodes 里而非顶层 facts 数组）。
+- **[纪律] 协议新增【用户待办】【基础设施】两章**：待办标题≤30字含完整登录 URL、detail≤120字分步指引；auth-session 必须走 Burp 三步流程并用 mcp__burp__get_proxy_history 取包、禁索要 HAR 原始包；短信/越权测试前必须先 src_get_infra。全程中文纪律���化（禁 let me/I'll 等英文插入语）；ask_user_question 仅限开场唯一阻塞时机。
+
 ## 0.1.0-local.8（质量标准修正 + finalize 门禁收紧 + 冗余工具清理）
 
 - **[政策] 漏洞质量标准修正**：撤回"信息泄露/指纹类只能作 fact 不得作 finding"的一刀切禁令——SRC 平台接受一切有实际危害的真实漏洞（如版本暴露可匹配已知 CVE 定向利用），关键改为如实论证危害、severity 如实定级、不夸大不虚构；finalize 里对应的「仅 info/low 不构成真实危害」从 blocker 降级为 warning。同步修正 audit/verify 子代理 persona 措辞。

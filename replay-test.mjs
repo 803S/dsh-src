@@ -23,6 +23,7 @@ try {
 	console.log("✓ view 构建成功 | observations:", view.observations.length, "| userTodos:", view.userTodos.length, "| counts:", JSON.stringify(view.counts));
 	const obs0 = view.observations[0];
 	if (obs0) console.log("obs[0] keys:", Object.keys(obs0).join(","));
+	console.log("infra resolved:", JSON.stringify(view.infra));
 } catch (err) {
 	console.log("✗ viewSrcState CRASH:", err?.message ?? err);
 	console.log(err?.stack?.split("\n").slice(0, 8).join("\n"));

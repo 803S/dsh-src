@@ -742,6 +742,82 @@ test("/src-todo feedback parser validates id/status and keeps note", () => {
 	}
 });
 
+test("[local.9] parseGoalHost: dirty target normalized at src_add_goal and all URL tools", async () => {
+  const h = harness();
+  const parent = h.exec("p");
+  const goal = await h.run("src_add_goal", { target: "mi.com（小米在线服务主域，含 *.mi.com 子域）", objective: "脏目标归一化" }, parent);
+  assert.equal(goal.target, "mi.com");
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.goal.target, "mi.com");
+});
+
+test("[local.9] parseGoalHost rejects unparseable targets with actionable error; src_set_goal_target fixes in place", async () => {
+  const h = harness();
+  const parent = h.exec("p9b");
+  await assert.rejects(() => h.run("src_add_goal", { target: "！！！不是���名", objective: "x" }, parent), /无法解析出目标域名/);
+  const goal = await h.run("src_add_goal", { target: "example.test", objective: "fix-target" }, parent);
+  await h.run("src_add_intent", { title: "i1", goalId: goal.id }, parent);
+  const updated = await h.run("src_set_goal_target", { target: "sub.example.test（主域）" }, parent);
+  assert.equal(updated.target, "sub.example.test");
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.goal.target, "sub.example.test");
+  assert.equal(state.counts.intents, 1, "graph NOT reset by target fix");
+});
+
+test("[local.9] src_record_coverage treats empty assetId as absent instead of throwing", async () => {
+  const h = harness();
+  const parent = h.exec("p9c");
+  await h.run("src_add_goal", { target: "example.test", objective: "cov" }, parent);
+  const record = await h.run("src_record_coverage", { assetId: "", phase: "recon", category: "dorks", status: "completed" }, parent);
+  assert.ok(record.id);
+  const state = await h.run("src_state", {}, parent);
+  const row = state.coverage.find((c) => c.category === "dorks");
+  assert.ok(row, "coverage row recorded");
+});
+
+test("[local.9] src_state output includes observations/userTodos/infra without schema rejection", async () => {
+  const h = harness();
+  const parent = h.exec("p9d");
+  await h.run("src_add_goal", { target: "example.test", objective: "schema" }, parent);
+  await h.run("src_user_todo", { title: "登录 example.test 提供会话", kind: "auth-session" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(Array.isArray(state.observations), true);
+  assert.equal(Array.isArray(state.userTodos), true);
+  assert.equal(state.userTodos.length, 1);
+  assert.equal(typeof state.infra.proxyUrl, "string");
+});
+
+test("[local.9] infra settings: defaults, setInfra validation, projection fold and view resolution", async () => {
+  const h = harness();
+  const parent = h.exec("p9e");
+  await h.run("src_add_goal", { target: "example.test", objective: "infra" }, parent);
+  const before = await h.run("src_get_infra", {}, parent);
+  assert.equal(before.infra.burpMcpPort, "9876");
+  await assert.rejects(() => h.run("src_set_infra", { key: "nope", value: "1" }, parent), /key 必须是/);
+  await assert.rejects(() => h.run("src_set_infra", { key: "proxyUrl", value: "not-a-proxy" }, parent), /proxyUrl 格式/);
+  const saved = await h.run("src_set_infra", { key: "testPhone", value: "13800138000" }, parent);
+  assert.equal(saved.value, "13800138000");
+  const after = await h.run("src_get_infra", {}, parent);
+  assert.equal(after.infra.testPhone, "13800138000");
+  assert.equal(after.processEnvProxy !== void 0, true);
+
+  // clearing an override restores the built-in default
+  await h.run("src_set_infra", { key: "burpMcpPort", value: "" }, parent);
+  const cleared = await h.run("src_get_infra", {}, parent);
+  assert.equal(cleared.infra.burpMcpPort, "9876", "cleared override must fall back to default");
+
+  // projection: synthesize the same tool-call events and check resolved view
+  let state = JSON.parse(JSON.stringify(srcInitialState));
+  state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "example.test", objective: "infra" }) } });
+  state = applySrcEvent(state, { type: "tool/call", data: { name: "src_set_infra", arguments: JSON.stringify({ key: "testPhone", value: "13800138000" }) } });
+  const view = viewSrcState(state);
+  assert.equal(view.infra.testPhone, "13800138000");
+  assert.equal(view.infra.burpMcpPort, "9876");
+  // infra survives a goal reset in the projection
+  state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "other.test", objective: "reset" }) } });
+  assert.equal(viewSrcState(state).infra.testPhone, "13800138000");
+});
+
 test("observation projection carries truncated response headers/snippet for the timeline", () => {
 	let state = JSON.parse(JSON.stringify(srcInitialState));
 	state = { ...state, goal: { id: "goal-1", target: "https://x.test", objective: "t", authorization: "SRC" } };
