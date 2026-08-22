@@ -850,17 +850,54 @@ test("observation projection carries truncated response headers/snippet for the 
 });
 
 
-test("[local.10] /src-burp-test command registers and relays a Burp MCP connectivity followup", () => {
+test("[local.11] panel commands: /src-infra direct-writes storage + synthetic event; probes registered; burp TCP pre-check gates the AI relay", async () => {
   const h = harness();
-  assert.equal(h.commands.has("src-burp-test"), true);
-  assert.equal(h.commands.has("src-todo"), true);
-  assert.equal(h.commands.has("src-infra"), true);
+  for (const name of ["src-todo", "src-infra", "src-proxy-test", "src-burp-test"]) assert.equal(h.commands.has(name), true, `${name} registered`);
+
+  // --- /src-infra: direct write, no followup, synthetic tool/call appended ---
+  const parent = h.exec("pcmd");
   let followed = null;
-  const invocation = { rawInput: "", agent: { followup(message) { followed = message; } } };
-  const result = h.commands.get("src-burp-test").handler(invocation);
-  assert.equal(result.kind, "success");
-  assert.ok(followed, "followup message must be sent");
-  const text = followed.content[0].text;
-  assert.match(text, /Burp MCP 连通性测试/);
-  assert.match(text, /mcp__burp__get_proxy_history/);
+  parent.agent.followup = (message) => { followed = message; };
+  const saved = await h.commands.get("src-infra").handler({ rawInput: "testPhone 13800138000,13900139000", agent: parent.agent });
+  assert.equal(saved.kind, "success");
+  assert.equal(followed, null, "/src-infra must NOT wake the agent");
+  const sessionLog = h.sessions.get("pcmd").events;
+  const callEvents = sessionLog.filter((event) => event.type === "tool/call");
+  assert.equal(callEvents.length, 1, "synthetic tool/call appended exactly once");
+  assert.deepEqual(callEvents[0].data, { name: "src_set_infra", arguments: JSON.stringify({ key: "testPhone", value: "13800138000,13900139000" }) });
+  const infraAfter = await h.run("src_get_infra", {}, parent);
+  assert.equal(infraAfter.infra.testPhone, "13800138000,13900139000", "direct write landed in storage");
+
+  // projection fold sees the synthetic event too (goal first: viewSrcState needs a goal)
+  let state = JSON.parse(JSON.stringify(srcInitialState));
+  state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "example.test", objective: "cmd" }) } });
+  state = applySrcEvent(state, { type: "tool/call", data: callEvents[0].data });
+  assert.equal(viewSrcState(state).infra.testPhone, "13800138000,13900139000");
+
+  // clearing via "-" restores default and still appends the event
+  followed = null;
+  sessionLog.length = 0;
+  const cleared = await h.commands.get("src-infra").handler({ rawInput: "testPhone -", agent: parent.agent });
+  assert.equal(cleared.kind, "success");
+  assert.equal(followed, null);
+  assert.equal((await h.run("src_get_infra", {}, parent)).infra.testPhone, "");
+
+  // unknown key -> error text
+  const bad = await h.commands.get("src-infra").handler({ rawInput: "nope x", agent: parent.agent });
+  assert.equal(bad.kind, "error");
+
+  // --- /src-burp-test with nothing listening on the configured port -> direct error, no AI ---
+  await h.run("src_set_infra", { key: "burpMcpPort", value: "9499" }, parent);
+  let burpFollowed = null;
+  const burpResult = await h.commands.get("src-burp-test").handler({ rawInput: "", agent: { session: { id: "pcmd" }, followup: (m) => { burpFollowed = m; } } });
+  assert.equal(burpResult.kind, "error", "closed port must fail fast host-side");
+  assert.match(burpResult.text, /不可达|MCP Server/);
+  assert.equal(burpFollowed, null, "closed port must not wake the agent");
+
+  // --- /src-proxy-test without proxy configured -> direct answer, no AI ---
+  let proxyFollowed = null;
+  const proxyResult = await h.commands.get("src-proxy-test").handler({ rawInput: "", agent: { session: { id: "pcmd" }, followup: (m) => { proxyFollowed = m; } } });
+  assert.equal(proxyResult.kind, "success");
+  assert.match(proxyResult.text, /未配置 HTTP 代理/);
+  assert.equal(proxyFollowed, null, "proxy probe must not wake the agent");
 });

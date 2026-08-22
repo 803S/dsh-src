@@ -157,6 +157,14 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.11（真实测试第三轮 3 问题修复：infra 表漏声明 / 面板直写不打扰 AI / 代理测活 / 备注换行）
+
+- **[修复·关键] `domain 'src' declares no table 'infra'`**：local.9 引入 infra 设置时只改了 `SESSION_SCOPED_TABLES` 与迁移注释，**忘了在 `defineDomain` 的 spec 里声明 `infra` 表、也没把 domain version 提到 8**——storage-domain 是严格声明白名单，`domain.table("infra")` 直接抛错；面板保存经 agent 调 src_set_infra 时全部失败，值从未落库（这就是「填了再去看变成空」的原因）。已补 `srcInfraSchema` + spec.tables.infra + version 7→8，下次打开自动迁移并建表。单测没抓住是因为 harness 的 MemoryDomain 对任意表名自动建表（掩蔽 bug），真实环境是严格白名单。
+- **[行为] `/src-infra` 改为面板直写**：不再 followup 打扰 agent——命令处理器直接调 SrcStore.setInfra 落库，并合成一条 `tool/call src_set_infra` 会话事件保持投影/时间线同步；返回文本带生效值，立即生效。协议同步改为「每次相关测试前必须重新 src_get_infra」。
+- **[新功能] `/src-proxy-test` 代理测活**：服务端用现有 CONNECT 隧道直接经配置代理请求探针地址（gstatic generate_204），结果（HTTP 状态+耗时/失败原因）直接显示在基础设施页，全程不经过 agent。UI 新增「测试代理连通」按钮。
+- **[改进] `/src-burp-test` 两段式**：先 host 侧 TCP 探测 burpMcpPort（3s 超时）——端口不通时直接给出中文诊断（扩展未装/未 Start/端口不符），完全不打扰 agent；端口可达才 wake agent 做 MCP 层验证。
+- **[UI] 待办备注框改 textarea**：支持多行备注，Enter 发送、Shift+Enter 换行、Esc 取消。
+
 ## 0.1.0-local.10（真实测试第二轮 5 问题修复：remote.commands 注入 / 对照账号语义 / 多手机号 / Burp 测试按钮 / 待办备注框美化）
 
 - **[修复·关键] `cannot get property "remote.commands" without inject`**：待办发送与基础设施保存全部报此错。根因：cordis 把每个 Remote 命名空间挂为字面量服务名 `"remote.<namespace>"`（`RemoteNamespaceService extends Service`，`super(ctx, "remote.commands")`），而 traceable 代理把 `ctx.remote.commands` 转成 `ctx["remote.commands"]` 查找——模块导出 inject 只写 `"remote"` 不够，必须同时声明 `"remote.commands"`（对照 dsh-client-ui-commands 的 CommandUiRuntime inject 列表确认）。ui-src.client.js 的 inject 数组已补上，待办与基础设施两条链路共用此修复。
