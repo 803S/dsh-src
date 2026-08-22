@@ -15,6 +15,21 @@
 # Registering it here as well duplicates its scoped tool catalog whenever that
 # preset is selected, causing client command invalidation loops.
 
+# Burp MCP 接线（默认注释：Burp 未运行时 mcp-proxy.jar 会反复退出拖垮启动）。
+# 启用方法：复制下面整段到 profile 的 cordis.patch.yml（如 ~/.dsh/profiles/web/）并取消注释。
+# [local.13 实测] PortSwigger "MCP Server" 扩展的 SSE 端点在根路径 "/" 且仅支持 HTTP：
+# --sse-url 必须写 http://localhost:9876/（https 会报 Invalid TLS record type code）。
+# - insert:
+#     - id: mcp-burp
+#       name: '@deepseek-ai/dsh-mcp-client'
+#       config:
+#         serverName: burp
+#         transport: stdio
+#         command: java
+#         args: ['-jar', '~/.dsh/tools/mcp-proxy.jar', '--sse-url', 'http://localhost:9876/']
+#         failOnStartupError: false
+#         toolCallTimeoutMs: 120000
+
 - insert:
     - id: ui-src
       name: '@howmp/dsh-src/ui-src'
