@@ -31,6 +31,7 @@ function harness() {
     storageDomain: { open: async () => domain },
     tools: { register(tool) { tools.set(tool.name, tool); } },
     sessions: { get(id) { return sessions.get(id); } },
+    subagents: { followupCalls: [], async followup(parent, sessionId, content) { this.followupCalls.push({ parent: parent.id, childSessionId: String(sessionId), content }); return `msg-${this.followupCalls.length}`; } },
     effect() {},
     inject(names, callback) {
       if (names.includes("sessionProjections")) callback({ sessionProjections: { register(spec) { projections.set(spec.key, spec); } } });
@@ -49,7 +50,7 @@ function harness() {
     return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
   };
   const run = (name, args, execution) => tools.get(name).execute(args, execution);
-  return { domain, tools, sessions, projections, prompts, commands, exec, run };
+  return { domain, ctx, tools, sessions, projections, prompts, commands, exec, run };
 }
 
 test("SRC workflow persists, deduplicates checkpoints", async () => {
@@ -1055,4 +1056,78 @@ test("[local.14] /src-infra-copy copies latest other session's infra overrides; 
   assert.match(again.text, /proxyUrl=http:\/\/192\.168\.10\.88:7893/, "re-copy stays sourced from the other session");
   const eventsAfter = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
   assert.ok(eventsAfter.length >= 2, "each copy appends its synthetic events");
+});
+
+test("[local.15] finalize 受限完成声明后 src_state/src_graph 输出仍是 lossless JSON（undefined 属性被剥离）", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("ll1");
+  await h.run("src_add_goal", { target: "example.test", objective: "lossless gate" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: state.goal.id }, parent);
+  await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
+  // allowIncomplete=true 触发 upsertCoverage({ assetId: void 0, ... }) —— 此前会把 undefined 写进内存记录，
+  // 污染后续 src_state/src_graph 的 lossless 输出（真实事故：session-349ed2ec turn3 两工具连续失败）。
+  await h.run("src_finalize_engagement", { allowIncomplete: true, allowIncompleteReason: "用户指示停止" }, parent);
+  // 直接检查内存表里的受限完成声明行不含值为 undefined 的自有属性
+  const covTable = h.domain.table("coverage");
+  for (const [, row] of covTable.entries()) {
+    for (const [key, value] of Object.entries(row)) assert.notEqual(value, void 0, `coverage row key ${key} must not be undefined`);
+  }
+  // 且两个读路径的完整输出都通过官方 lossless 校验
+  const { isJsonValue } = await import("@deepseek-ai/dsh-session");
+  const after = await h.run("src_state", {}, parent);
+  assert.equal(isJsonValue(after), true, "src_state output must be lossless after restricted-completion coverage");
+  const graph = await h.run("src_graph", {}, parent);
+  assert.equal(isJsonValue(graph), true, "src_graph output must be lossless after restricted-completion coverage");
+});
+
+test("[local.15] 智能代理路由：非名单域名直连、名单域名走代理", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("route1");
+  // 本地目标服务：若请求到达则证明走了直连（代理地址必败）
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end("direct-hit"); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  // 配置一个必然连不上的代理
+  await h.run("src_set_infra", { key: "proxyUrl", value: "http://127.0.0.1:1" }, parent);
+  // 非名单域名（127.0.0.1）：直连成功，不受必败代理影响
+  const fetched = await h.run("src_fetch_policy", { url: `http://127.0.0.1:${port}/policy` }, parent);
+  assert.equal(fetched.status, 200);
+  assert.match(fetched.text, /direct-hit/);
+  // 名单域名（github.com → PROXY_REQUIRED_HOST_SUFFIXES 命中）：必须经代理 → 必败代理导致失败，证明代理生效
+  await assert.rejects(
+    () => h.run("src_fetch_policy", { url: "https://github.com/robots.txt" }, parent),
+    /ECONNREFUSED|CONNECT|fetch failed|aggregate error/i,
+  );
+  server.close();
+});
+
+test("[local.15] src_recover_child 无 checkpoint 子代理也可唤醒；额度限制与 intent 状态回写不变", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("rec1");
+  await h.run("src_add_goal", { target: "example.test", objective: "recover" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "短信轰炸验证", detail: "d", goalId: state.goal.id }, parent);
+  // 关键回归：子代理从未提交 checkpoint（首轮就因 API 失败）也能唤醒——此前报
+  // "requires a child checkpoint linked to the specified parent intent"
+  const first = await h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "继续短信轰炸验证" }, parent);
+  assert.equal(first.attempt, 1);
+  assert.ok(first.messageId, "followup queued");
+  const second = await h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "再次尝试" }, parent);
+  assert.equal(second.attempt, 2);
+  assert.equal(h.ctx.subagents.followupCalls.length, 2, "two followups queued for the same child");
+  await assert.rejects(
+    () => h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "第三次" }, parent),
+    /recovery limit reached/,
+  );
+  // 唤醒把 intent 从 failed 拉回 running
+  const after = await h.run("src_state", {}, parent);
+  assert.equal(after.intents.find((row) => row.id === intent.id).status, "running");
 });
