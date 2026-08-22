@@ -1005,3 +1005,54 @@ test("[local.13] src_fetch_policy fetches and strips HTML; finalize warns on pen
   assert.match(allWarnings, /impact 危害论证过短/, "thin impact warning present");
 });
 
+
+test("[local.14] /src-infra-copy copies latest other session's infra overrides; no source -> friendly message", async () => {
+  /* SrcStore caches the opened domain in a module-level map shared across harnesses; drop it so this
+     test's fresh MemoryDomain is actually adopted instead of a previous test's tables. */
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  assert.equal(h.commands.has("src-infra-copy"), true, "src-infra-copy registered");
+  const source = h.exec("sess-old");
+  const target = h.exec("sess-new");
+
+  // 本用例独享新打开的 MemoryDomain，无历史遗留数据；无任何来源 -> 友好提示
+  const none = await h.commands.get("src-infra-copy").handler({ rawInput: "", agent: target.agent });
+  assert.equal(none.kind, "success");
+  assert.match(none.text, /没有可复用的基础设施/);
+
+  // 源会话保存两项（其中一项随后清空恢复默认，不应被复制）
+  await h.commands.get("src-infra").handler({ rawInput: "proxyUrl http://192.168.10.88:7893", agent: source.agent });
+  await h.commands.get("src-infra").handler({ rawInput: "testPhone 13800138000", agent: source.agent });
+  await h.commands.get("src-infra").handler({ rawInput: "testPhone -", agent: source.agent });
+
+  // 目标会话一键沿用：直写 + 合成投影事件 + 不打扰 agent
+  let followed = null;
+  target.agent.followup = (message) => { followed = message; };
+  const copied = await h.commands.get("src-infra-copy").handler({ rawInput: "", agent: target.agent });
+  assert.equal(copied.kind, "success");
+  assert.match(copied.text, /已沿用上次会话的基础设施（1 项）/);
+  assert.match(copied.text, /proxyUrl=http:\/\/192\.168\.10\.88:7893/);
+  assert.doesNotMatch(copied.text, /testPhone/, "cleared override must not be copied");
+  assert.equal(followed, null, "/src-infra-copy must NOT wake the agent");
+  const infra = await h.run("src_get_infra", {}, target);
+  assert.equal(infra.infra.proxyUrl, "http://192.168.10.88:7893", "override landed in storage");
+  assert.equal(infra.infra.testPhone, "", "untouched key stays default");
+
+  // 合成 tool/call 与直写一致（投影 fold 可见）
+  const callEvents = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
+  assert.equal(callEvents.length, 1);
+  assert.deepEqual(callEvents[0].data, { name: "src_set_infra", arguments: JSON.stringify({ key: "proxyUrl", value: "http://192.168.10.88:7893" }) });
+
+  // 投影视图端到端：目标会话视图里能看到沿用来的值
+  let state = JSON.parse(JSON.stringify(srcInitialState));
+  state = applySrcEvent(state, { type: "tool/call", data: callEvents[0].data });
+  assert.equal(viewSrcState(state).infra.proxyUrl, "http://192.168.10.88:7893");
+
+  // 再沿用一次：仍以 sess-old 为源（自己不算来源），幂等无害
+  const again = await h.commands.get("src-infra-copy").handler({ rawInput: "", agent: target.agent });
+  assert.equal(again.kind, "success");
+  assert.match(again.text, /proxyUrl=http:\/\/192\.168\.10\.88:7893/, "re-copy stays sourced from the other session");
+  const eventsAfter = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
+  assert.ok(eventsAfter.length >= 2, "each copy appends its synthetic events");
+});
