@@ -157,6 +157,14 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.10（真实测试第二轮 5 问题修复：remote.commands 注入 / 对照账号语义 / 多手机号 / Burp 测试按钮 / 待办备注框美化）
+
+- **[修复·关键] `cannot get property "remote.commands" without inject`**：待办发送与基础设施保存全部报此错。根因：cordis 把每个 Remote 命名空间挂为字面量服务名 `"remote.<namespace>"`（`RemoteNamespaceService extends Service`，`super(ctx, "remote.commands")`），而 traceable 代理把 `ctx.remote.commands` 转成 `ctx["remote.commands"]` 查找——模块导出 inject 只写 `"remote"` 不够，必须同时声明 `"remote.commands"`（对照 dsh-client-ui-commands 的 CommandUiRuntime inject 列表确认）。ui-src.client.js 的 inject 数组已补上，待办与基础设施两条链路共用此修复。
+- **[语义] 越权对照账号 testAccount**：明确为凭据格式 user:pass 或用户名。协议规定 agent 优先脚本登录构造低权会话做 A/B 对照；无法自动登录时创建用户待办请用户提供登录态，禁止臆造凭据。UI 标签/占位符同步。
+- **[功能] testPhone 支持多个号码**：src_set_infra 校验放宽为逗号/顿号/分号/空白分隔的号码列表（逐个验证格式）；UI 占位符、工具描述、协议同步说明。
+- **[UI] 基础设施页 Burp MCP 说明重写**：新增说明卡片——三步接线清单（装扩展并 Start → 核对 cordis.patch.yml 的 jar 路径 → 点「测试 Burp MCP 连接」按钮）、显示本机 patch 文件路径、明示端口/jar 两项仅是记录不改配置。新增 `/src-burp-test` 人机命令：转达 agent 立即调用 mcp__burp__get_proxy_history 实测连接并中文汇报结果。
+- **[UI] 待办备注框美化**：改为卡片式容器（圆角+浅底色+边框，跟随深色模式），顶部灰色说明行（✓已完成/✗放弃 + 备注可选提示），全宽输入框，右对齐「发送/取消」按钮。
+
 ## 0.1.0-local.9（真实测试 7 问题修复：脏目标 / 待办异步化 / 基础设施页 / 时间线重设计 / 全程中文）
 
 - **[修复] 脏目标解析**：`src_add_goal` 的 target 带中文说明（如 `mi.com（小米在线服务主域，含 *.mi.com 子域）`）时，六个出站工具（scan_surface/test_bypass/test_credential/import_traffic/collect_dorks/collect_passive）直接 `new URL()` 抛错。新增 `parseGoalHost()`：非 ASCII 输入跳过 URL 直解（防 IDNA punycode 出乱码主机名），依次尝试「带 scheme 直解 → 加 https:// 直解 → 正则提取首个域名 token」，全部失败给出中文可行动报错。新增 `src_set_goal_target` 工具让 agent 在目标带杂质时就地修正而不清空探��图。

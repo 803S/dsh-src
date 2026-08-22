@@ -25,6 +25,7 @@ function harness() {
   const sessions = new Map();
   const projections = new Map();
   const prompts = [];
+  const commands = new Map();
   const ctx = {
     storageDomain: { open: async () => domain },
     tools: { register(tool) { tools.set(tool.name, tool); } },
@@ -33,6 +34,7 @@ function harness() {
     inject(names, callback) {
       if (names.includes("sessionProjections")) callback({ sessionProjections: { register(spec) { projections.set(spec.key, spec); } } });
       if (names.includes("systemPrompt")) callback({ systemPrompt: { section(spec) { prompts.push(spec); } } });
+      if (names.includes("commands")) callback({ commands: { register(def) { commands.set(def.name, def); } } });
     }
   };
   apply(ctx);
@@ -46,7 +48,7 @@ function harness() {
     return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
   };
   const run = (name, args, execution) => tools.get(name).execute(args, execution);
-  return { domain, tools, sessions, projections, prompts, exec, run };
+  return { domain, tools, sessions, projections, prompts, commands, exec, run };
 }
 
 test("SRC workflow persists, deduplicates checkpoints", async () => {
@@ -797,8 +799,12 @@ test("[local.9] infra settings: defaults, setInfra validation, projection fold a
   await assert.rejects(() => h.run("src_set_infra", { key: "proxyUrl", value: "not-a-proxy" }, parent), /proxyUrl 格式/);
   const saved = await h.run("src_set_infra", { key: "testPhone", value: "13800138000" }, parent);
   assert.equal(saved.value, "13800138000");
+  // [local.10] testPhone accepts a comma-separated list; garbage still rejected
+  const multi = await h.run("src_set_infra", { key: "testPhone", value: "13800138000，13900139000 15012345678" }, parent);
+  assert.equal(multi.value, "13800138000，13900139000 15012345678");
+  await assert.rejects(() => h.run("src_set_infra", { key: "testPhone", value: "13800138000,abc" }, parent), /多个用逗号分隔/);
   const after = await h.run("src_get_infra", {}, parent);
-  assert.equal(after.infra.testPhone, "13800138000");
+  assert.equal(after.infra.testPhone, "13800138000，13900139000 15012345678");
   assert.equal(after.processEnvProxy !== void 0, true);
 
   // clearing an override restores the built-in default
@@ -841,4 +847,20 @@ test("observation projection carries truncated response headers/snippet for the 
 	assert.equal(obs.respHeaders.length, 600);
 	assert.equal(obs.respBodySnippet.length, 1200);
 	assert.equal(obs.decision, "waf-blocked");
+});
+
+
+test("[local.10] /src-burp-test command registers and relays a Burp MCP connectivity followup", () => {
+  const h = harness();
+  assert.equal(h.commands.has("src-burp-test"), true);
+  assert.equal(h.commands.has("src-todo"), true);
+  assert.equal(h.commands.has("src-infra"), true);
+  let followed = null;
+  const invocation = { rawInput: "", agent: { followup(message) { followed = message; } } };
+  const result = h.commands.get("src-burp-test").handler(invocation);
+  assert.equal(result.kind, "success");
+  assert.ok(followed, "followup message must be sent");
+  const text = followed.content[0].text;
+  assert.match(text, /Burp MCP 连通性测试/);
+  assert.match(text, /mcp__burp__get_proxy_history/);
 });
