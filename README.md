@@ -186,11 +186,12 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 # 停止：找到监听 3080 的进程并结束
 kill $(lsof -ti TCP:3080 -sTCP:LISTEN)
 
-# 启动（后台常驻，日志落 /tmp/dsh-web-local7.log；必须用绝对路径——nohup 不继承 shell 的 export PATH）
+# 启动（后台常驻，日志落 /tmp/dsh-web-local9.log；必须用绝对路径——nohup 不继承 shell 的 export PATH；
+# < /dev/null 不能省：stdin 挂在管道上时父进程退出会让 dsh 读到 EOF 静默退出）
 nohup /Users/lihua-dis/Library/pnpm/bin/dsh web \
   --host 0.0.0.0 --port 3080 \
   --trusted-host 192.168.10.7:3080 --no-open \
-  > /tmp/dsh-web-local7.log 2>&1 &
+  > /tmp/dsh-web-local9.log 2>&1 < /dev/null &
 
 # 验证
 lsof -nP -iTCP:3080 -sTCP:LISTEN
