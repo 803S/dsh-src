@@ -917,3 +917,91 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   assert.equal(isJsonValue({ stopped: void 0 }), false);
   assert.equal(isJsonValue([{ status: void 0, error: "x" }]), false);
 });
+
+test("[local.13] burp SSE handshake probe: closed port fails fast; live SSE endpoint passes without AI", async () => {
+  const h = harness();
+  const parent = h.exec("sse1");
+  // 端口上没有任何东西：TCP 阶段直接失败，文本带 ① 编号
+  await h.run("src_set_infra", { key: "burpMcpPort", value: "9553" }, parent);
+  let woke = null;
+  const closed = await h.commands.get("src-burp-test").handler({ rawInput: "", agent: { session: { id: "sse1" }, followup: (m) => { woke = m; } } });
+  assert.equal(closed.kind, "error");
+  assert.match(closed.text, /①TCP 探测失败/);
+  assert.equal(woke, null);
+
+  // 起一个假 SSE 服务：HTTP 200 + text/event-stream + 立即发 endpoint 事件
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    if (req.url === "/sse") {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("event: endpoint\ndata: \"session\\n\"\n\n");
+    } else {
+      res.writeHead(404); res.end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  await h.run("src_set_infra", { key: "burpMcpPort", value: String(port) }, parent);
+  const okResult = await h.commands.get("src-burp-test").handler({ rawInput: "", agent: { session: { id: "sse1" }, followup: (m) => { woke = m; } } });
+  assert.equal(okResult.kind, "success");
+  assert.match(okResult.text, /②MCP SSE 端点 http:\/\/127\.0\.0\.1:\d+\/sse 握手通过/);
+  assert.ok(woke, "SSE pass wakes the agent for tool-layer verification");
+  const wokeText = JSON.stringify(woke);
+  assert.match(wokeText, /get_proxy_history/);
+  server.close();
+
+  // 非 SSE 服务（普通 404 页）：TCP 过但握手败，不扰 AI
+  const server2 = http.createServer((req, res) => { res.writeHead(404, { "content-type": "text/html" }); res.end("<html>nope</html>"); });
+  await new Promise((resolve) => server2.listen(0, "127.0.0.1", resolve));
+  const port2 = server2.address().port;
+  await h.run("src_set_infra", { key: "burpMcpPort", value: String(port2) }, parent);
+  let woke2 = null;
+  const sseFail = await h.commands.get("src-burp-test").handler({ rawInput: "", agent: { session: { id: "sse1" }, followup: (m) => { woke2 = m; } } });
+  assert.equal(sseFail.kind, "error");
+  assert.match(sseFail.text, /②SSE 握手失败/);
+  assert.equal(woke2, null, "SSE failure must not wake the agent");
+  server2.close();
+});
+
+test("[local.13] src_fetch_policy fetches and strips HTML; finalize warns on pending todos and thin impact", async () => {
+  const h = harness();
+  const parent = h.exec("pol1");
+  assert.equal(h.tools.has("src_fetch_policy"), true, "src_fetch_policy registered");
+
+  // 假规则页
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end("<html><head><script>var x=1;</script></head><body><h1>评分规则</h1><p>严重：RCE；&nbsp;高：敏感数据泄露</p><!--comment--></body></html>");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const result = await h.run("src_fetch_policy", { url: `http://127.0.0.1:${port}/rules` }, parent);
+  assert.equal(result.status, 200);
+  assert.match(result.text, /评分规则/);
+  assert.match(result.text, /严重：RCE/);
+  assert.doesNotMatch(result.text, /<h1>|<p>|script>/);
+  assert.equal(result.text.includes("var x"), false, "script content dropped");
+  server.close();
+
+  // finalize：pending 待办 + impact <40 字 都要出 warning
+  await h.run("src_add_goal", { target: "example.test", objective: "policy gate" }, parent);
+  const goalState = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: goalState.goal.id }, parent);
+  const intentId = intent.id;
+  await h.run("src_update_intent", { intentId, status: "completed" }, parent);
+  // pending 用户待办
+  await h.run("src_user_todo", { title: "请登录提供会话", kind: "auth-session" }, parent);
+  // 一个 finding（impact 只有 5 字，触发 thin-impact warning）
+  await h.run("src_add_finding", { intentId, title: "CORS 配置错误", severity: "medium", impact: "配置不安全", affectedScope: "https://example.test", remediation: "修复 CORS", pocEvidence: ["raw poc"], reproducibleSteps: ["step1"], rawRequest: "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n" }, parent);
+  const state1 = await h.run("src_state", {}, parent);
+  const findingId = state1.findings[0]?.id;
+  assert.ok(findingId, "finding recorded");
+  await h.run("src_record_research", { intentId, category: "web", hypothesis: "cors misconfig on example.test", findingId, status: "verified" }, parent);
+  const fin = await h.run("src_finalize_engagement", {}, parent);
+  assert.equal(fin.ready, true, "blockers cleared via verified research");
+  const allWarnings = fin.warnings.join("\n");
+  assert.match(allWarnings, /未完成的用户待办/, "pending todo warning present");
+  assert.match(allWarnings, /impact 危害论证过短/, "thin impact warning present");
+});
+
