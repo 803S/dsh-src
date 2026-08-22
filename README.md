@@ -157,6 +157,12 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 0.1.0-local.12（真实测试第四轮 2 问题：scan_surface lossless JSON 报错 / 新会话无基础设施页）
+
+- **[修复·关键] `tool "src_scan_surface" returned invalid output: value is not lossless JSON`**：工具返回值会经过 dsh-session 的 lossless JSON 快照校验，**任何值为 `undefined` 的自有属性都会让整体判失败**。src_scan_surface 正常完成路径的返回里写了 `stopped: stopped ? "protection-signal" : void 0`——未触发停机时 stopped 为 undefined，整个输出被拒。之前没暴露是因为真实目标多��� WAF 提前 return；扫无防护目标必炸。同款炸弹还有 src_test_bypass 错误路径 `{ ...req, status: void 0, ... }`（spread 覆盖产生 undefined 自有属性），一并修复：改为条件展开/解构剔除，绝不产出 undefined 值属性。
+- **[修复] 新会话看不到基础设施页**：投影 view 在 `goal === null` 时整体返回 null，客户端只渲染空态文案——agent 建 goal 之前用户无法配置代理/Burp 端口等启动期就要用的参数。现在 viewSrcState 恒返回完整视图（goal 字段可为 null），投影 schema 同步放宽 goal 可空、stateVersion 6→7（自动重算）；UI 各处本就处理 goal===null（头部空名、报告显示未初始化）。新会话打开即可直接配置基础设施。
+- 测试 40/40 绿（新增 viewSrcState 无 goal 断言 + isJsonValue 对两种旧炸弹形状的失败守卫）+ SSR 回归 23/23（新增新会话渲染用例）。
+
 ## 0.1.0-local.11（真实测试第三轮 3 问题修复：infra 表漏声明 / 面板直写不打扰 AI / 代理测活 / 备注换行）
 
 - **[修复·关键] `domain 'src' declares no table 'infra'`**：local.9 引入 infra 设置时只改了 `SESSION_SCOPED_TABLES` 与迁移注释，**忘了在 `defineDomain` 的 spec 里声明 `infra` 表、也没把 domain version 提到 8**——storage-domain 是严格声明白名单，`domain.table("infra")` 直接抛错；面板保存经 agent 调 src_set_infra 时全部失败，值从未落库（这就是「填了再去看变成空」的原因）。已补 `srcInfraSchema` + spec.tables.infra + version 7→8，下次打开自动迁移并建表。单测没抓住是因为 harness 的 MemoryDomain 对任意表名自动建表（掩蔽 bug），真实环境是严格白名单。

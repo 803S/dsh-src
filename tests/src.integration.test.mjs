@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState } from "../lib/src.js";
+import { isJsonValue } from "@deepseek-ai/dsh-session";
 
 class MemoryTable {
   rows = new Map();
@@ -900,4 +901,19 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   assert.equal(proxyResult.kind, "success");
   assert.match(proxyResult.text, /未配置 HTTP 代理/);
   assert.equal(proxyFollowed, null, "proxy probe must not wake the agent");
+
+  // --- [local.12] viewSrcState works pre-goal so fresh sessions can configure infra ---
+  const freshView = viewSrcState(JSON.parse(JSON.stringify(srcInitialState)));
+  assert.equal(freshView.goal, null);
+  assert.equal(freshView.infra.burpMcpPort, "9876");
+  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0 });
+
+  // --- [local.12] tool outputs must survive lossless JSON snapshotting ---
+  // scan_surface non-stopped path previously emitted stopped:undefined -> "value is not lossless JSON"
+  assert.equal(isJsonValue({ baseUrl: "https://x.test", requested: 1, responses: 1, hints: 0, preflight: { status: 200, headers: [], challenge: false, protection: false }, requiresDecision: false, results: [{ path: "/", status: 200, contentType: "text/html", length: 10, protectionSignal: false }] }), true, "scan_surface success shape must be lossless");
+  // test_bypass error path previously emitted status:undefined via spread overwrite
+  assert.equal(isJsonValue([{ method: "GET", path: "/a", headers: {}, body: "", note: "", phase: "variant", error: "timeout" }]), true, "test_bypass error shape must be lossless");
+  // and the old buggy shapes must actually fail (guards the guard)
+  assert.equal(isJsonValue({ stopped: void 0 }), false);
+  assert.equal(isJsonValue([{ status: void 0, error: "x" }]), false);
 });
