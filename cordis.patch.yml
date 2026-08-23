@@ -15,18 +15,21 @@
 # Registering it here as well duplicates its scoped tool catalog whenever that
 # preset is selected, causing client command invalidation loops.
 
-# Burp MCP 接线（默认注释：Burp 未运行时 mcp-proxy.jar 会反复退出拖垮启动）。
+# Burp MCP 接线（默认注释：Burp 未运行时连接失败，宿主按退避策略自动重试）。
 # 启用方法：复制下面整段到 profile 的 cordis.patch.yml（如 ~/.dsh/profiles/web/）并取消注释。
-# [local.13 实测] PortSwigger "MCP Server" 扩展的 SSE 端点在根路径 "/" 且仅支持 HTTP：
-# --sse-url 必须写 http://localhost:9876/（https 会报 Invalid TLS record type code）。
+# 前置：桥脚本已装在 ~/.dsh/tools/burp-mcp-bridge.mjs（源码版本化在本仓 tools/ 下，直接 cp 过去即可）。
+# [2026-08-23] 自愈桥替换 PortSwigger mcp-proxy.jar：jar 内 Kotlin SDK 长连 SSE 断掉后
+# 进程存活但传输已死，后续调用全报 -32603 "SseClientTransport is not initialized!" 且无法自愈；
+# 桥在任何请求失败后丢弃会话、下次调用自动开全新 SSE 会话重试一次，对上层透明。
+# [local.13 实测仍适用] 扩展 SSE 端点在根路径 "/" 且仅支持 HTTP（默认 BURP_SSE_URL 同款）。
 # - insert:
 #     - id: mcp-burp
 #       name: '@deepseek-ai/dsh-mcp-client'
 #       config:
 #         serverName: burp
 #         transport: stdio
-#         command: java
-#         args: ['-jar', '~/.dsh/tools/mcp-proxy.jar', '--sse-url', 'http://localhost:9876/']
+#         command: node
+#         args: ['~/.dsh/tools/burp-mcp-bridge.mjs']
 #         failOnStartupError: false
 #         toolCallTimeoutMs: 120000
 
