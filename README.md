@@ -58,13 +58,7 @@
 dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/howmp-dsh-src-<版本>.tgz
 ```
 
-### 方式二：从 npm 安装（已发布时）
-
-```bash
-dsh plugin --profile web add @howmp/dsh-src
-```
-
-### 方式三：从源码构建安装
+### 方式二：从源码构建安装
 
 ```bash
 git clone https://github.com/803S/dsh-src.git
