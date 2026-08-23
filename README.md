@@ -155,7 +155,7 @@ settings:
 
 ## 使用速览
 
-对 agent 说人话即可开场：
+对 agent 以自然语言对话即可开场：
 
 > 挖掘 https://xxx.example.com 的 SRC，授权说明：SRC 平台注册账号 ID 12345
 
