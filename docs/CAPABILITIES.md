@@ -10,7 +10,7 @@
 ```
 $DSH_HOME/                          # 通常是 ~/.dsh/
 ├── capabilities.yaml               # ← 用户唯一要维护的声明文件（能力清单）
-├── tools/                          # dsh-src 自带脚本（桥等），版本化在本仓 tools/
+├── tools/                          # Burp 自愈桥安装点（caps-sync 自动从包内拷贝）
 │   └── burp-mcp-bridge.mjs
 └── capabilities/                   # ← 所有外部能力的统一落点（sync 自动创建）
     └── <id>/                       # 每个能力一个目录，目录名 = 声明里的 id
@@ -59,7 +59,7 @@ node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 多 profile：sync 默认只写 web profile；其它 profile 用同一份清单各跑一次：
 
 ```bash
-node scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test   # 例：src-test profile
+node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test   # 例：src-test profile
 ```
 
 验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」，或直接让 agent 调 src_list_capabilities / src_test_capability。

@@ -84,29 +84,30 @@ agent-presets:
 
 不接 Burp 插件照常工作（HAR/raw 文件导入兜底）。要实时导入浏览流量、把抓包直接喂给 agent：
 
-1. Burp Suite Pro 安装 "MCP Server" 扩展并点 **Start**（默认监听 `127.0.0.1:9876`）。
-2. 安装自愈桥脚本（源码在本仓 `tools/burp-mcp-bridge.mjs`，负责 stdio↔SSE 协议转换、断连自动重开会话）：
+1. Burp Suite Pro 安装 "MCP Server" 扩展并点 **Start**（默认监听 `127.0.0.1:9876`）；
+2. 打开 dsh 面板 → SRC 视图 → **基础设施**页，核对端口后点「测试 Burp MCP 连接」——通了就完事。
+
+接线与自愈桥安装都自动完成：接线在包内 `cordis.patch.yml` 默认已启用（无需手改任何配置文件）；桥脚本跑一次 caps-sync 即装：
 
 ```bash
-cp burp-mcp-bridge.mjs ~/.dsh/tools/
+node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 ```
 
-3. 把下面整段加进 profile 补丁文件 `$DSH_HOME/profiles/web/cordis.patch.yml`：
+没跑过 sync 时 Burp 块静默跳过，不影响其它功能。
 
-```yaml
-- insert:
-    - id: mcp-burp
-      name: '@deepseek-ai/dsh-mcp-client'
-      config:
-        serverName: burp          # 必须叫 burp —— 工具名才是 mcp__burp__*
-        transport: stdio
-        command: node
-        args: ['~/.dsh/tools/burp-mcp-bridge.mjs']
-        failOnStartupError: false # Burp 未开时不阻塞其它功能
-        toolCallTimeoutMs: 120000
+<details>
+<summary>细节：自愈桥是什么 / 不想用 caps-sync 怎么手动装</summary>
+
+桥脚本 `tools/burp-mcp-bridge.mjs` 负责 stdio↔SSE 协议转换、断连自动重开会话，替代 PortSwigger 官方 mcp-proxy.jar（其 SSE 断线后 -32603 无法自愈）。扩展 SSE 端点在根路径 `/` 且仅支持 HTTP。
+
+手动装桥（替代 caps-sync，效果相同）：
+
+```bash
+mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/tools/burp-mcp-bridge.mjs ~/.dsh/tools/
 ```
 
-4. 重启 dsh，面板「基础设施」页点「测试连接」验证。
+重启 dsh 生效。
+</details>
 
 ## 可选：接入外部能力（JS 逆向 / 二进制 / 移动端…）
 

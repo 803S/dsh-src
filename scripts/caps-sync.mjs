@@ -114,6 +114,53 @@ function die(msg) { console.error(`✗ ${msg}`); process.exit(1); }
 //#endregion
 
 //#region 主流程
+
+// ── ⓪ 确保 Burp 自愈桥就位（包 patch 默认启用 mcp-burp，桥缺失时该块静默跳过）────
+try {
+	const bridgeSrc = path.join(import.meta.dirname, "..", "tools", "burp-mcp-bridge.mjs");
+	if (await pathExists(bridgeSrc)) {
+		const bridgeDest = path.join(DSH_HOME, "tools", "burp-mcp-bridge.mjs");
+		const srcBuf = await readFile(bridgeSrc);
+		let needCopy = true;
+		if (await pathExists(bridgeDest)) needCopy = !srcBuf.equals(await readFile(bridgeDest));
+		if (needCopy) {
+			await mkdir(path.join(DSH_HOME, "tools"), { recursive: true });
+			await writeFile(bridgeDest, srcBuf);
+			log(`✓ 已安装 Burp 自愈桥 → ${bridgeDest}`);
+		}
+	}
+} catch { /* 桥安装失败不阻塞能力 sync */ }
+
+// ── ⓪½ 确保 profile patch 里有 mcp-burp 接线（已有则不动，绝不重复写）──────────
+try {
+	const patchPath0 = path.join(profileDir, "cordis.patch.yml");
+	if (await pathExists(patchPath0)) {
+		const ptxt = await readFile(patchPath0, "utf8");
+		const hasBurp = /^[^#\n]*- id: mcp-burp\b/m.test(ptxt);
+		if (!hasBurp) {
+			const burpBlock = [
+				"# ── dsh-src burp:8< 自动生成（caps-sync 幂等维护；想自定义请整段替换并去掉本标记）──",
+				"- insert:",
+				"    - id: mcp-burp",
+				"      name: '@deepseek-ai/dsh-mcp-client'",
+				"      config:",
+				"        serverName: burp          # 必须叫 burp —— 工具名才是 mcp__burp__*",
+				"        transport: stdio",
+				"        command: bash             # bash -c 展开 $HOME；桥未装时提示后静默退出",
+				"        args:",
+				"          - '-c'",
+				"          - 'B=\"$HOME/.dsh/tools/burp-mcp-bridge.mjs\"; if [ -f \"$B\" ]; then exec node \"$B\"; else echo \"[burp-bridge] bridge not installed; run caps-sync\" >&2; fi'",
+				"        failOnStartupError: false # Burp 未开时不阻塞其它功能",
+				"        toolCallTimeoutMs: 120000",
+				"# ── dsh-src burp:>8 自动生成区段结束 ──",
+				"",
+			].join(EOL);
+			await writeFile(patchPath0, ptxt.endsWith(EOL) ? ptxt + EOL + burpBlock : ptxt + EOL + burpBlock);
+			log(`✓ 已写入 Burp MCP 接线 → ${patchPath0}`);
+		}
+	}
+} catch { /* 接线写入失败不阻塞能力 sync */ }
+
 if (!existsSync(yamlPath)) {
 	console.error(`✗ 未找到 ${yamlPath}。请先复制示例：cp ~/.dsh/capabilities.yaml.example ~/.dsh/capabilities.yaml`);
 	process.exit(1);
@@ -129,6 +176,7 @@ const proxyEnv = settingsProxy
 	: process.env;
 if (settingsProxy) log(`使用 settings.proxy=${settingsProxy} 进行 git clone/fetch`);
 log(`读取 ${yamlPath}：${caps.length} 个能力声明`);
+
 
 const seen = new Set();
 for (const c of caps) {

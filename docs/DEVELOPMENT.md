@@ -27,40 +27,33 @@ dsh plugin --profile web add file:C:\path\to\dsh-src.tar.gz
 
 ## 接入你自己的 Burp MCP（可选）
 
-插件包本身**不包含任何 Burp 配置**——连接信息在你本机的 profile 补丁文件
-`$DSH_HOME/profiles/<profile>/cordis.patch.yml` 中声明，每台机器各自维护。
-不接 Burp 时插件照常工作：agent 会走 HAR/raw 文件导入兑底（`src_import_traffic mode=har/raw`），
-并在需要时创建「启用 Burp」用户待办提醒你。
+接线已随包内置（包内 `cordis.patch.yml` 默认启用 `mcp-burp` 块）：装好扩展、面板填端口即完事，
+无需手改任何配置文件。不接 Burp 时插件照常工作：agent 会走 HAR/raw 文件导入兑底
+（`src_import_traffic mode=har/raw`），并在需要时创建「启用 Burp」用户待办提醒你。
 
 ### 接入步骤（一次性）
 
-1. Burp Suite Pro 安装 "MCP Server" BApp 扩展并点 Start（扩展设置里可查看/修改监听端口，默认 `127.0.0.1:9876`）。
-2. 获取 PortSwigger 配套的桥接器 `mcp-proxy.jar`，放到任意位置（如 `~/.dsh/tools/mcp-proxy.jar`）。
-   它负责 stdio ↔ HTTP+SSE 协议转换（`dsh-mcp-client` 只说 stdio/streamable-http，Burp 扩展暴露的是旧版 SSE 协议）。
-3. 编辑你本机的 profile 补丁文件 `$DSH_HOME/profiles/<profile>/cordis.patch.yml`：
+1. 跑一次 caps-sync 装自愈桥（或手动拷贝，见 README「接入 Burp MCP」节）：
 
-```yaml
-- insert:
-    - id: mcp-burp
-      name: '@deepseek-ai/dsh-mcp-client'
-      config:
-        serverName: burp          # 必须叫 burp —— 工具名才是 mcp__burp__*，与 src 插件协议匹配
-        transport: stdio
-        command: java
-        args: ['-jar', '/你的路径/mcp-proxy.jar', '--sse-url', 'https://localhost:9876']
-        failOnStartupError: false # Burp 未开时不阻塞其它功能
-        toolCallTimeoutMs: 120000
+```bash
+node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 ```
 
-重启 dsh 后 agent 工具面多出 `mcp__burp__get_proxy_history` / `mcp__burp__send_to_repeater` 等，
-配合 `src_import_traffic(mode=mcp)` 把真实浏览流量落库。
+2. Burp Suite Pro 安装 "MCP Server" BApp 扩展并点 Start（默认监听 `127.0.0.1:9876`）。
+3. 重启 dsh，面板「基础设施」页核对端口 + 点「测试 Burp MCP 连接」验证；agent 工具面多出
+   `mcp__burp__get_proxy_history` / `mcp__burp__send_to_repeater` 等，配合 `src_import_traffic(mode=mcp)` 把真实浏览流量落库。
 
-### 不同端口 / 主机 / 认证
+### 自愈桥 vs 官方 mcp-proxy.jar
 
-- **换端口**：只改 `--sse-url` 的端口即可，如扩展改为 9877 → `'--sse-url', 'https://localhost:9877'`。
-- **远端主机**：写完整 URL，如 `'--sse-url', 'https://192.168.1.50:9876'`。
-- **环境变量方式**：`mcp-proxy.jar` 同样识别 `MCP_SSE_URL`（地址）、`MCP_AUTH_TOKEN` / `MCP_API_KEY`（认证）、
-  `MCP_OAUTH21_ENABLED` 等，可用 `env:` 字段传入而不写死在 args 里。
+包内置的是自研桥 `tools/burp-mcp-bridge.mjs`：官方 jar 内 Kotlin SDK 长连 SSE 断掉后进程存活但传输已死，
+后续调用全报 -32603 "SseClientTransport is not initialized!" 且无法自愈；桥在任何请求失败后丢弃会话、
+下次调用自动开全新 SSE 会话重试一次，对上层透明。扩展 SSE 端点在根路径 `/` 且仅支持 HTTP
+（桥默认连 `http://localhost:9876/`，可用环境变量 `BURP_SSE_URL` 覆盖）。
+
+### 不同端口 / 主机
+
+- **换端口**：面板「基础设施」页改 `burpMcpPort` 即可（桥与测试按钮都读它）；扩展侧同步修改监听端口。
+- **远端主机**：设环境变量 `BURP_SSE_URL=http://192.168.1.50:9876/`（在 profile patch 的 mcp-burp 块加 `env:` 字段）。
 
 ## 界面预览
 
@@ -298,9 +291,10 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/
 - `src_collect_passive` 自动识别 AI 站点（openai/deepseek/qwen/kimi/gemini 等）→ `ai-surface` 资产 + `ai-abuse` 研究骨架（manual-recommended）；威胁情报平台（fofa/shodan/censys/奇安信等）→ `threat-intel` 资产。
 - 定级指南对齐小米 SRC 四档（严重/高/中/低），impact 需注明定级依据。
 
-### Burp MCP 接入（已完成配置）
-- 架构：`dsh-mcp-client(stdio) → mcp-proxy.jar → Burp Pro MCP 扩展(SSE 127.0.0.1:9876)`
-- jar 已固定到 `~/.dsh/tools/mcp-proxy.jar`；profile patch 已写 `mcp-burp`（failOnStartupError:false，Burp 未开不影响其他工具）
+### Burp MCP 接入（已完成配置；后续已被自愈桥替代，见上文「接入你自己的 Burp MCP」节）
+- 架构（历史）：`dsh-mcp-client(stdio) → mcp-proxy.jar → Burp Pro MCP 扩展(SSE 127.0.0.1:9876)`；
+  现行为 `dsh-mcp-client(stdio) → burp-mcp-bridge.mjs（包 patch 默认启用）→ Burp Pro MCP 扩展`
+- jar 已固定到 `~/.dsh/tools/mcp-proxy.jar`（已弃用）；profile patch 已写 `mcp-burp`（failOnStartupError:false，Burp 未开不影响其他工具）
 - **用户侧一次性步骤**：Burp Pro → Extender/插件市场装 "MCP Server" 扩展 → Start
 - agent 工具面多出 `mcp__burp__*`（get_proxy_history/send_to_repeater 等）；协议【Burp MCP 工具面】段已写明用法（proxy history→src_import_traffic 落库→认证画像→Repeater 回写）
 

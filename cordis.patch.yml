@@ -15,9 +15,8 @@
 # Registering it here as well duplicates its scoped tool catalog whenever that
 # preset is selected, causing client command invalidation loops.
 
-# Burp MCP 接线（默认注释：Burp 未运行时连接失败，宿主按退避策略自动重试）。
-# 启用方法：复制下面整段到 profile 的 cordis.patch.yml（如 ~/.dsh/profiles/web/）并取消注释。
-# 前置：桥脚本已装在 ~/.dsh/tools/burp-mcp-bridge.mjs（源码版本化在本仓 tools/ 下，直接 cp 过去即可）。
+# Burp MCP 接线：由 caps-sync 自动写入 profile 的 cordis.patch.yml 标记区段（幂等，
+# 重复跑不重复写），无需手动复制本块。桥脚本也由 caps-sync 自动安装到 ~/.dsh/tools/。
 # [2026-08-23] 自愈桥替换 PortSwigger mcp-proxy.jar：jar 内 Kotlin SDK 长连 SSE 断掉后
 # 进程存活但传输已死，后续调用全报 -32603 "SseClientTransport is not initialized!" 且无法自愈；
 # 桥在任何请求失败后丢弃会话、下次调用自动开全新 SSE 会话重试一次，对上层透明。
@@ -26,11 +25,13 @@
 #     - id: mcp-burp
 #       name: '@deepseek-ai/dsh-mcp-client'
 #       config:
-#         serverName: burp
+#         serverName: burp          # 必须叫 burp —— 工具名才是 mcp__burp__*
 #         transport: stdio
-#         command: node
-#         args: ['~/.dsh/tools/burp-mcp-bridge.mjs']
-#         failOnStartupError: false
+#         command: bash             # bash -c 展开 $HOME；桥未装时提示后静默退出
+#         args:
+#           - '-c'
+#           - 'B="$HOME/.dsh/tools/burp-mcp-bridge.mjs"; if [ -f "$B" ]; then exec node "$B"; fi'
+#         failOnStartupError: false # Burp 未开时不阻塞其它功能
 #         toolCallTimeoutMs: 120000
 
 - insert:
