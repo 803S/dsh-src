@@ -55,7 +55,7 @@
 
 ```bash
 # 资产名以 Releases 页为准（形如 howmp-dsh-src-<版本>.tgz）
-dsh plugin --profile web add https://github.com/howmp/dsh-src/releases/latest/download/howmp-dsh-src-<版本>.tgz
+dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/howmp-dsh-src-<版本>.tgz
 ```
 
 ### 方式二：从 npm 安装（已发布时）
@@ -67,7 +67,7 @@ dsh plugin --profile web add @howmp/dsh-src
 ### 方式三：从源码构建安装
 
 ```bash
-git clone https://github.com/howmp/dsh-src.git
+git clone https://github.com/803S/dsh-src.git
 cd dsh-src && npm pack
 dsh plugin --profile web add file:$PWD/howmp-dsh-src-<版本>.tgz
 ```
