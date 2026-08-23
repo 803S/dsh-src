@@ -1408,3 +1408,18 @@ test("[local.17] 无链上 goal 时报错文案保持不变（orphan 子代理�
     /requires an initialized SRC goal/
   );
 });
+
+await test("local.17: src_submit 省略 findings/assets 不再报 invalid arguments", async () => {
+  const h = harness();
+  const parent = h.exec("parent");
+  h.sessions.set("parent", { append() {} });
+  const child = h.exec("child", "parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment" }, parent);
+  const intent = await h.run("src_add_intent", { title: "Only facts batch", goalId: goal.id }, parent);
+  // 只传 facts，省略 assets/findings——此前 parameters required: true 导致 ToolArgsError
+  const result = await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "facts only", facts: [{ kind: "info", target: "https://example.test", detail: "server banner", confidence: 0.8 }] }, child);
+  assert.deepEqual({ facts: result.facts, assets: result.assets, findings: result.findings }, { facts: 1, assets: 0, findings: 0 });
+  // 全部数组都省略也应成功（仅 checkpoint）
+  const empty = await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "checkpoint only" }, child);
+  assert.equal(empty.facts, 0);
+});
