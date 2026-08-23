@@ -120,7 +120,7 @@ cp burp-mcp-bridge.mjs ~/.dsh/tools/
 ```bash
 cp capabilities.yaml.example ~/.dsh/capabilities.yaml           # 首次：从示例创建清单
 # 编辑清单（npm 型一行即接；git 型声明 build 后自动 clone+构建）
-node <本包目录>/scripts/caps-sync.mjs                            # 同步：安装+生成接线
+node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs   # 同步：安装+生成接线
 ```
 
 示例条目：

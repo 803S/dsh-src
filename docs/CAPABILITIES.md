@@ -50,7 +50,8 @@ capabilities:
 ## 三、使用流程
 
 ```bash
-node <dsh-src包>/scripts/caps-sync.mjs     # 读 yaml → 安装 → 生成 patch 区段 → 报告
+node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
+# （源码构建安装的把路径换成仓库目录；其它 profile 加 --profile-dir ~/.dsh/profiles/<名>)
 ```
 
 之后**重启 dsh web 生效**（MCP 接线是组合态的一部分，不支持热插拔——这是有意取舍）。
