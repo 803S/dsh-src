@@ -22,7 +22,10 @@
 	"files": [
 		"lib/**/*.js",
 		"preset/src-hunter/**",
-		"cordis.patch.yml"
+		"cordis.patch.yml",
+		"tools/**",
+		"README.md",
+		"LICENSE"
 	],
 	"license": "MIT",
 	"dsh": {
@@ -56,5 +59,24 @@
 	},
 	"devDependencies": {
 		"js-yaml": "4.3.1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/howmp/dsh-src.git"
+	},
+	"keywords": [
+		"dsh",
+		"deepseek-harness",
+		"src",
+		"bug-bounty",
+		"vulnerability",
+		"pentest",
+		"security",
+		"burp-suite",
+		"agent"
+	],
+	"author": "howmp",
+	"engines": {
+		"node": ">=24"
 	}
 }
