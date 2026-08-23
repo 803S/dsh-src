@@ -133,10 +133,6 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 
 ![工作台](images/workspace.png)
 
-### 探索链路
-
-![探索链路](images/explore.png)
-
 ### 漏洞视图
 
 ![漏洞视图](images/findings.png)
@@ -160,6 +156,12 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 ### 报告
 
 ![报告](images/report.png)
+
+## 致谢与项目来源
+
+本项目是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh，MIT License）生态的二次开发作品：插件结构、bundle 分发机制、Web 面板与 agent 预设体系均基于 dsh 的公开插件接口构建。感谢 dsh 原作者的设计与开源。
+
+包内 Web 界面的视觉与交互模式参考了 dsh 官方预设的实现方式；`@howmp/dsh-pentest`（同作者）作为本项目的直接前身提供了探索链路数据模型的初始范式。
 
 ## 文档
 
