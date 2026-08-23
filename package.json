@@ -1,83 +1,86 @@
 {
-	"name": "@howmp/dsh-src",
-	"description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-	"version": "0.1.0-local.17",
-	"publishConfig": {
-		"access": "public"
-	},
-	"type": "module",
-	"main": "./lib/index.js",
-	"exports": {
-		".": "./lib/index.js",
-		"./src": "./lib/src.js",
-		"./storage-sqlite": "./lib/storage-sqlite.js",
-		"./preset-root": "./lib/preset-root.js",
-		"./ui-src": "./lib/ui-src.js",
-		"./ui-src/package.json": "./package.json",
-		"./client": "./lib/ui-src.client.js",
-		"./invariant": "./lib/invariant.js",
-		"./cordis.patch.yml": "./cordis.patch.yml",
-		"./package.json": "./package.json"
-	},
-	"files": [
-		"lib/**/*.js",
-		"preset/src-hunter/**",
-		"cordis.patch.yml",
-		"tools/**",
-		"images/**",
-		"README.md",
-		"LICENSE"
-	],
-	"license": "MIT",
-	"dsh": {
-		"client": {
-			"inject": [
-				"@deepseek-ai/dsh-client-runtime",
-				"@deepseek-ai/dsh-client-locale",
-				"@deepseek-ai/dsh-api-remotes",
-				"@deepseek-ai/dsh-client-ui-conversation"
-			],
-			"platform": "web"
-		},
-		"bundle": {
-			"patch": "./cordis.patch.yml"
-		}
-	},
-	"peerDependencies": {
-		"@deepseek-ai/cordis": ">=0.1.0-rc.6",
-		"@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6"
-	},
-	"peerDependenciesMeta": {
-		"@deepseek-ai/cordis": {
-			"optional": true
-		},
-		"@deepseek-ai/dsh-invariants": {
-			"optional": true
-		}
-	},
-	"scripts": {
-		"test": "node --test tests/src.integration.test.mjs"
-	},
-	"devDependencies": {
-		"js-yaml": "4.3.1"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/803S/dsh-src.git"
-	},
-	"keywords": [
-		"dsh",
-		"deepseek-harness",
-		"src",
-		"bug-bounty",
-		"vulnerability",
-		"pentest",
-		"security",
-		"burp-suite",
-		"agent"
-	],
-	"author": "howmp",
-	"engines": {
-		"node": ">=24"
-	}
+  "name": "@howmp/dsh-src",
+  "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
+  "version": "0.1.0-local.17",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./src": "./lib/src.js",
+    "./storage-sqlite": "./lib/storage-sqlite.js",
+    "./preset-root": "./lib/preset-root.js",
+    "./ui-src": "./lib/ui-src.js",
+    "./ui-src/package.json": "./package.json",
+    "./client": "./lib/ui-src.client.js",
+    "./invariant": "./lib/invariant.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "preset/src-hunter/**",
+    "cordis.patch.yml",
+    "tools/**",
+    "images/**",
+    "README.md",
+    "LICENSE",
+    "scripts/**",
+    "capabilities.yaml.example",
+    "docs/**"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-invariants": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/src.integration.test.mjs"
+  },
+  "devDependencies": {
+    "js-yaml": "4.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/803S/dsh-src.git"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "src",
+    "bug-bounty",
+    "vulnerability",
+    "pentest",
+    "security",
+    "burp-suite",
+    "agent"
+  ],
+  "author": "howmp",
+  "engines": {
+    "node": ">=24"
+  }
 }

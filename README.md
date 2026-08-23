@@ -108,6 +108,36 @@ cp burp-mcp-bridge.mjs ~/.dsh/tools/
 
 4. 重启 dsh，面板「基础设施」页点「测试连接」验证。
 
+## 可选：接入外部能力（JS 逆向 / 二进制 / 移动端…）
+
+以 docker compose 式体验接入任意外部 MCP 能力：**只维护一份 `~/.dsh/capabilities.yaml`，跑一次 sync，重启生效**。能力本体统一安装在 `~/.dsh/capabilities/<id>/`，接线由脚本生成，不手改 patch。
+
+```bash
+cp capabilities.yaml.example ~/.dsh/capabilities.yaml           # 首次：从示例创建清单
+# 编辑清单（npm 型一行即接；git 型声明 build 后自动 clone+构建）
+node <本包目录>/scripts/caps-sync.mjs                            # 同步：安装+生成接线
+```
+
+示例条目：
+
+```yaml
+capabilities:
+  - id: jshook                                  # 工具前缀 mcp__jshook__*
+    from: npm:@jshookmcp/jshook@latest          # npm 型：首次启动自动下载
+    enabled: true
+    env: { MCP_TOOL_PROFILE: search }
+    when: 遇到 JS 混淆/加密签名需要运行时 Hook 时   # 给 agent 的路由提示
+
+  - id: ruishu                                  # git 型：自动 clone 到统一目录并构建
+    from: git:https://github.com/xuange520/ruishu-mcp
+    ref: main
+    build: pnpm install && pnpm build
+    entry: dist/index.js
+    enabled: true
+```
+
+细节与安全边界见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
+
 ## 使用速览
 
 对 agent 说人话即可开场：

@@ -1,0 +1,12 @@
+# dsh-src 外部能力清单（唯一真源）。格式见 docs/CAPABILITIES.md
+# 用法：node scripts/caps-sync.mjs   （读本文件 → 安装 git 型到 ~/.dsh/capabilities/<id>/
+#       → 生成 profile cordis.patch.yml 的能力区段 → 重启 dsh web 生效）
+#
+# 示例（取消注释即启用）：
+#
+# capabilities:
+#   - id: jshook
+#     from: npm:@jshookmcp/jshook@latest
+#     enabled: true
+#     env: { MCP_TOOL_PROFILE: search, npm_config_omit: optional }
+#     when: 遇到 JS 混淆/加密签名/Webpack 打包需要运行时 Hook、AST 还原时
