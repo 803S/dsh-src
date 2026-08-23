@@ -16,14 +16,22 @@ import path from "node:path";
 function parseCapsYaml(text) {
 	const lines = text.split(/\r?\n/);
 	let caps = null;
+	let settings = {};       // 顶层 settings:（当前仅 proxy）
+	let inSettings = false;
 	let cur = null;          // 当前能力条目
 	let curKey = null;       // 待赋值的顶层键（when 多行场景）
 	for (let i = 0; i < lines.length; i++) {
 		const raw = lines[i];
 		const no = i + 1;
 		if (raw.trim() === "" || raw.trim().startsWith("#")) continue;
-		if (/^capabilities:\s*$/.test(raw)) { caps = []; continue; }
-		if (caps === null) throw new Error(`第${no}行：文件必须以 "capabilities:" 开头`);
+		if (/^capabilities:\s*$/.test(raw)) { caps = []; inSettings = false; continue; }
+		if (/^settings:\s*$/.test(raw)) { inSettings = true; continue; }
+		if (inSettings) {
+			const skv = raw.match(/^  ([A-Za-z_][\w]*):\s*(.*)$/);   // settings 内键（2空格缩进）
+			if (skv) { settings[skv[1]] = coerce(stripQuotes(skv[2])); continue; }
+			throw new Error(`第${no}行：settings 块内只支持 "  key: value" 形式`);
+		}
+		if (caps === null) throw new Error(`第${no}行：文件必须以 "capabilities:" 或 "settings:" 开头`);
 		const item = raw.match(/^  - (.+)$/);            // 条目首行 "  - key: value"
 		if (item) {
 			const kv = item[1].match(/^([A-Za-z_][\w]*):\s*(.*)$/);
@@ -49,7 +57,7 @@ function parseCapsYaml(text) {
 		}
 		throw new Error(`第${no}行：无法解析的行「${raw.trim().slice(0, 40)}」（只支持 docs/CAPABILITIES.md 定义的子集）`);
 	}
-	return caps ?? [];
+	return { caps: caps ?? [], settings };
 }
 function stripQuotes(v) {
 	const s = v.trim();
@@ -110,7 +118,16 @@ if (!existsSync(yamlPath)) {
 	console.error(`✗ 未找到 ${yamlPath}。请先复制示例：cp ~/.dsh/capabilities.yaml.example ~/.dsh/capabilities.yaml`);
 	process.exit(1);
 }
-const caps = parseCapsYaml(await readFile(yamlPath, "utf8"));
+const parsed = parseCapsYaml(await readFile(yamlPath, "utf8"));
+const caps = parsed.caps;
+const settingsProxy = typeof parsed.settings.proxy === "string" ? parsed.settings.proxy.trim() : "";
+if (settingsProxy && !/^https?:\/\/[A-Za-z0-9.\-_]+:\d{1,5}$/.test(settingsProxy))
+	die(`settings.proxy「${settingsProxy}」不是合法 http(s)://host:port 形式`);
+/* 代理优先级：settings.proxy 显式声明 > 环境变量既有值。仅影响 sync 内部的 git 操作，不改写用户 shell。 */
+const proxyEnv = settingsProxy
+	? { ...process.env, HTTPS_PROXY: settingsProxy, HTTP_PROXY: settingsProxy, https_proxy: settingsProxy, http_proxy: settingsProxy }
+	: process.env;
+if (settingsProxy) log(`使用 settings.proxy=${settingsProxy} 进行 git clone/fetch`);
 log(`读取 ${yamlPath}：${caps.length} 个能力声明`);
 
 const seen = new Set();
@@ -139,14 +156,14 @@ for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("git
 		const cloneArgs = ["clone", "--depth", "1"];
 		if (c.ref) cloneArgs.push("--branch", String(c.ref));
 		cloneArgs.push(wantFrom.slice(4), dest);
-		const r = await run("git", cloneArgs, { env: { ...process.env } });
+		const r = await run("git", cloneArgs, { env: proxyEnv });
 		if (r.code !== 0) { log(`✗ ${c.id}: git clone 失败（该能力本轮不接线）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
 		await writeFile(marker, JSON.stringify({ from: wantFrom, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
 	}
 	if (c.build) {
 		if (dryRun) { log(`[dry] ${c.id}: 将在 ${dest} 执行构建`); continue; }
 		log(`→ ${c.id}: 构建…`);
-		const r = await run("bash", ["-lc", c.build], { cwd: dest });
+		const r = await run("bash", ["-lc", c.build], { cwd: dest, env: proxyEnv });
 		if (r.code !== 0) { log(`✗ ${c.id}: 构建失败（该能力本轮不接线）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
 		log(`✓ ${c.id}: 构建完成`);
 	}

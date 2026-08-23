@@ -1,4 +1,8 @@
 # dsh-src 外部能力清单（唯一真源）。格式见 docs/CAPABILITIES.md
+#
+# 可选：git 型 clone 走代理（仅影响 sync 内部 git 操作）
+# settings:
+#   proxy: http://127.0.0.1:7890
 # 用法：node scripts/caps-sync.mjs   （读本文件 → 安装 git 型到 ~/.dsh/capabilities/<id>/
 #       → 生成 profile cordis.patch.yml 的能力区段 → 重启 dsh web 生效）
 #

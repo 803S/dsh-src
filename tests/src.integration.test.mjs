@@ -1423,3 +1423,69 @@ await test("local.17: src_submit 省略 findings/assets 不再报 invalid argume
   const empty = await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "checkpoint only" }, child);
   assert.equal(empty.facts, 0);
 });
+
+test("[capability] src_list_capabilities 读取清单并对照 patch 接线区段", async () => {
+  const h = harness();
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "caps-test-"));
+  fs.mkdirSync(path.join(tmp, "profiles", "web"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "capabilities.yaml"), [
+    "capabilities:",
+    "  - id: alpha",
+    "    from: npm:@t/alpha@1.0.0",
+    "    enabled: true",
+    "    when: >",
+    "      测试场景 A 续行",
+    "  - id: beta",
+    "    from: npm:@t/beta@2.0.0",
+    "    enabled: false"
+  ].join("\n"));
+  fs.writeFileSync(path.join(tmp, "profiles", "web", "cordis.patch.yml"), [
+    "# ── dsh-src capabilities:8< 自动生成区段开始 ──",
+    "- insert:",
+    "    - id: mcp-alpha",
+    "# ── dsh-src capabilities:>8 自动生成区段结束 ──"
+  ].join("\n"));
+  const prevHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = tmp;
+  try {
+    const r = await h.run("src_list_capabilities", {}, h.exec("cmd-1"));
+    assert.equal(r.items.length, 2);
+    const alpha = r.items.find((x) => x.id === "alpha");
+    const beta = r.items.find((x) => x.id === "beta");
+    assert.deepEqual({ id: alpha.id, enabled: alpha.enabled, wired: alpha.wired, when: alpha.when }, { id: "alpha", enabled: true, wired: true, when: "测试场景 A 续行" });
+    assert.deepEqual({ enabled: beta.enabled, wired: beta.wired }, { enabled: false, wired: false });
+    // 清单缺失场景
+    process.env.DSH_HOME = path.join(tmp, "nope");
+    const r2 = await h.run("src_list_capabilities", {}, h.exec("cmd-2"));
+    assert.equal(r2.parseError, "清单未创建");
+    assert.deepEqual(r2.items, []);
+  } finally {
+    if (prevHome === void 0) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("[capability] parseCapsYamlSubset 容错与折叠块", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  // 直接经模块内函数不可行（非导出），改由 src_list_capabilities 行为覆盖：畸形文件应报解析失败而非崩溃
+  const h = harness();
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "caps-bad-"));
+  fs.writeFileSync(path.join(tmp, "capabilities.yaml"), "garbage line without structure\n");
+  const prevHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = tmp;
+  try {
+    const r = await h.run("src_list_capabilities", {}, h.exec("cmd-3"));
+    assert.match(r.parseError, /解析失败|应以/);
+    assert.deepEqual(r.items, []);
+  } finally {
+    if (prevHome === void 0) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

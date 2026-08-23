@@ -136,6 +136,15 @@ capabilities:
     enabled: true
 ```
 
+**懒人方式**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
+
+国内网络下 git 型 clone 可在清单顶部加代理占位（仅影响 sync 内部的 git 操作，不改写 shell）：
+
+```yaml
+settings:
+  proxy: http://127.0.0.1:7890   # 可选；npm 型无需配置
+```
+
 细节与安全边界见 [docs/CAPABILITIES.md](docs/CAPABILITIES.md)。
 
 ## 使用速览

@@ -56,6 +56,17 @@ node <dsh-src包>/scripts/caps-sync.mjs     # 读 yaml → 安装 → 生成 pat
 验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」。
 证据纪律：外部产出一律经 `src_record_observation(tool='<id>')` 固化，未固化不算数。
 
+## 三点五、自定义代理占位（settings.proxy）
+
+清单顶部可加：
+
+```yaml
+settings:
+  proxy: http://192.168.10.88:7893
+```
+
+生效范围：仅 sync 内部 git clone/fetch 与 build 子进程的环境变量（HTTPS_PROXY/HTTP_PROXY 大小写四个全注入）。不配置时尊重你 shell 已有的环境变量；npm 型（npx）不受此设置影响。
+
 ## 四、安全边界
 
 - 只接注册在案、来源可信的能力；`failOnStartupError: false` 由 sync 统一写死——
