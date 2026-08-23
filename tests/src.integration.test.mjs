@@ -948,11 +948,15 @@ test("[local.13] burp SSE handshake probe: closed port fails fast; live SSE endp
   await h.run("src_set_infra", { key: "burpMcpPort", value: String(port) }, parent);
   const okResult = await h.commands.get("src-burp-test").handler({ rawInput: "", agent: { session: { id: "sse1" }, followup: (m) => { woke = m; } } });
   assert.equal(okResult.kind, "success");
-  assert.match(okResult.text, /②MCP SSE 端点 http:\/\/127\.0\.0\.1:\d+\/sse 握手通过/);
+  // [local.17] 文案改为桥端到端验证说明（直探只证扩展端点活着）
+  assert.match(okResult.text, /②SSE 握手通过/);
+  assert.match(okResult.text, /自愈桥/);
   assert.ok(woke, "SSE pass wakes the agent for tool-layer verification");
   const wokeText = JSON.stringify(woke);
-  assert.match(wokeText, /get_proxy_history/);
+  // [local.17] 端到端验证改为经自愈桥：tools_list + get_proxy_http_history
+  assert.match(wokeText, /get_proxy_http_history/);
   server.close();
+  server.closeAllConnections();
 
   // 非 SSE 服务（普通 404 页）：TCP 过但握手败，不扰 AI
   const server2 = http.createServer((req, res) => { res.writeHead(404, { "content-type": "text/html" }); res.end("<html>nope</html>"); });
@@ -965,6 +969,7 @@ test("[local.13] burp SSE handshake probe: closed port fails fast; live SSE endp
   assert.match(sseFail.text, /②SSE 握手失败/);
   assert.equal(woke2, null, "SSE failure must not wake the agent");
   server2.close();
+  server2.closeAllConnections();
 });
 
 test("[local.13] src_fetch_policy fetches and strips HTML; finalize warns on pending todos and thin impact", async () => {
@@ -1368,4 +1373,38 @@ test("[local.16] src_update_finding 投影折叠：UI 视角（viewSrcState）�
   assert.equal(findingOf(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-1" }))).affectedAssetId, "asset-1");
   assert.equal(findingOf(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-404" }))).affectedAssetId, void 0);
   assert.equal(findingOf(applySrcEvent(applySrcEvent(s4, ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "asset-1" })), ev("src_update_finding", { findingId: "finding-1", affectedAssetId: "" }))).affectedAssetId, void 0);
+});
+
+test("[local.17] 委派子代理执行类工具沿 parentSession 链解析 goal/infra/intent（fork 场景修复）", async () => {
+  const h = harness();
+  const commander = h.exec("cmd-1");
+  // fork 子代理：header.parentSession 指向指挥官；ctx.sessions.get(parent) 无 header 也应终止遍历
+  const child = h.exec("child-fork", "cmd-1");
+
+  await h.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment", authorization: "ticket-42" }, commander);
+  const intent = await h.run("src_add_intent", { title: "Bypass filter list", detail: "vector enumeration", goalId: "goal-1" }, commander);
+  await h.run("src_set_infra", { key: "proxyUrl", value: "http://127.0.0.1:18080" }, commander);
+
+  // 修复前：子代理直接调 src_scan_surface 会报 "requires an initialized SRC goal"
+  const surface = await h.run("src_scan_surface", { intentId: intent.id, baseUrl: "https://example.test", paths: ["/", "/robots.txt"] }, child);
+  assert.ok(surface, "child with fork parent resolves the engagement goal via the parent chain");
+
+  // src_get_infra 子代理可读且读到指挥官的覆盖值
+  const infra = await h.run("src_get_infra", {}, child);
+  assert.equal(infra.infra.proxyUrl, "http://127.0.0.1:18080");
+
+  // 孙链（两层以上）也能回溯：child2 -> child-fork -> cmd-1
+  h.sessions.get("child-fork").header = { parentSession: "cmd-1" };
+  const grandchild = h.exec("grandchild", "child-fork");
+  const surface2 = await h.run("src_scan_surface", { intentId: intent.id, baseUrl: "https://example.test", paths: ["/robots.txt"] }, grandchild);
+  assert.ok(surface2, "two-level chain still resolves the engagement session");
+});
+
+test("[local.17] 无链上 goal 时报错文案保持不变（orphan 子代理）", async () => {
+  const h = harness();
+  const orphan = h.exec("orphan", "nobody");
+  await assert.rejects(
+    () => h.run("src_scan_surface", { intentId: "intent-x", baseUrl: "https://example.test", paths: ["/"] }, orphan),
+    /requires an initialized SRC goal/
+  );
 });
