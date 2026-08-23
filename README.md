@@ -127,6 +127,40 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 - 所有记录写入本机 `$DSH_HOME/storages/src-sessions.db`（sqlite），不出网。
 - 包本身零运行时依赖、零遥测；Google dorks 等被动采集直接从你本机发出。
 
+## 界面预览
+
+### 工作台（对话 + 统计卡条）
+
+![工作台](images/workspace.png)
+
+### 探索链路
+
+![探索链路](images/explore.png)
+
+### 漏洞视图
+
+![漏洞视图](images/findings.png)
+
+### 资产视图
+
+![资产视图](images/assets.png)
+
+### 时间线
+
+![时间线](images/timeline.png)
+
+### 用户待办
+
+![用户待办](images/todos.png)
+
+### 基础设施
+
+![基础设施](images/infra.png)
+
+### 报告
+
+![报告](images/report.png)
+
 ## 文档
 
 - [开发与迭代历史](docs/DEVELOPMENT.md) —— 架构细节、设计决策、版本迭代日志。
