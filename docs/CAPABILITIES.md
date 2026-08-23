@@ -30,6 +30,8 @@ $DSH_HOME/                          # 通常是 ~/.dsh/
 ## 二、capabilities.yaml 格式
 
 > 示例文件版本化在仓库根：`capabilities.yaml.example`，首次使用 `cp capabilities.yaml.example ~/.dsh/capabilities.yaml`。
+>
+> **懒人路径**：不想手写 yaml 就用 [INSTALL-PROMPT.md](INSTALL-PROMPT.md) 的一键提示词（顶部只需填项目链接），AI 代劳全程。
 
 ```yaml
 capabilities:
@@ -53,7 +55,13 @@ node <dsh-src包>/scripts/caps-sync.mjs     # 读 yaml → 安装 → 生成 pat
 
 之后**重启 dsh web 生效**（MCP 接线是组合态的一部分，不支持热插拔——这是有意取舍）。
 
-验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」。
+多 profile：sync 默认只写 web profile；其它 profile 用同一份清单各跑一次：
+
+```bash
+node scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test   # 例：src-test profile
+```
+
+验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」，或直接让 agent 调 src_list_capabilities / src_test_capability。
 证据纪律：外部产出一律经 `src_record_observation(tool='<id>')` 固化，未固化不算数。
 
 ## 三点五、自定义代理占位（settings.proxy）

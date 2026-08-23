@@ -112,6 +112,11 @@ cp burp-mcp-bridge.mjs ~/.dsh/tools/
 
 以 docker compose 式体验接入任意外部 MCP 能力：**只维护一份 `~/.dsh/capabilities.yaml`，跑一次 sync，重启生效**。能力本体统一安装在 `~/.dsh/capabilities/<id>/`，接线由脚本生成，不手改 patch。
 
+**懒人方式（推荐）**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
+
+<details>
+<summary><b>手动三步（点开折叠）</b></summary>
+
 ```bash
 cp capabilities.yaml.example ~/.dsh/capabilities.yaml           # 首次：从示例创建清单
 # 编辑清单（npm 型一行即接；git 型声明 build 后自动 clone+构建）
@@ -136,9 +141,9 @@ capabilities:
     enabled: true
 ```
 
-**懒人方式**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
+</details>
 
-国内网络下 git 型 clone 可在清单顶部加代理占位（仅影响 sync 内部的 git 操作，不改写 shell）：
+国内网络下 git 型 clone 可在清单顶部加代理占位（仅影响 sync 内部的 git 操作，不改写 shell；不配置默认直连）：
 
 ```yaml
 settings:
