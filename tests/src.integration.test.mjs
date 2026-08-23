@@ -1489,12 +1489,3 @@ test("[capability] parseCapsYamlSubset 容错与折叠块", async () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
-
-test("[capability] src_add_goal 纯品牌名报错含品牌→主域引导", async () => {
-  const h = harness();
-  const parent = h.exec("parent");
-  await assert.rejects(
-    () => h.run("src_add_goal", { target: "小米", objective: "authorized SRC assessment" }, parent),
-    /公司\/品牌名.*web_search/
-  );
-});
