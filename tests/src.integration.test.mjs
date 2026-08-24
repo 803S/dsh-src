@@ -83,7 +83,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, 5, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0 });
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, testAccounts: 0 });
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
@@ -414,7 +414,7 @@ test("projection replay mirrors semantic deduplication", () => {
   const replayed = projection.view(state);
   assert.equal(replayed.coverage.some((c) => c.category === "bypass-verification" && c.phase === "method-bypass"), true);
   assert.equal(replayed.coverage.some((c) => c.category === "passive-collection" && c.phase === "discovery"), true);
-  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0 });
+  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0 });
 });
 
 test("full SRC engagement end-to-end: scope → passive → research → coverage → bypass → finalize → report", async () => {
@@ -919,7 +919,7 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   const freshView = viewSrcState(JSON.parse(JSON.stringify(srcInitialState)));
   assert.equal(freshView.goal, null);
   assert.equal(freshView.infra.burpMcpPort, "9876");
-  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0 });
+  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0 });
 
   // --- [local.12] tool outputs must survive lossless JSON snapshotting ---
   // scan_surface non-stopped path previously emitted stopped:undefined -> "value is not lossless JSON"
@@ -1607,4 +1607,69 @@ test("[local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派�
   assert.match(report.markdown, /http-authz-surface: 已覆盖/);
   assert.match(report.markdown, /websocket: 未覆盖/);
   assert.match(report.markdown, /无 ws 客户端能力/);
+});
+
+test("[local.22] blindSpots schema 校验：非法 status 被框架拒绝", async () => {
+  const h = harness();
+  const parent = h.exec("g22sch");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "schema", authorization: "t" }, parent);
+  await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
+  // 非法 status 值应被 schema 拒绝（框架层 enum 校验）
+  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "maybe" },
+    { dimension: "cors-headers", status: "notApplicable" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "dict-budget", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "notApplicable" },
+  ] }, parent), /maybe|status|enum|invalid/i);
+});
+
+test("[local.23] testAccounts 列表：登记/去重/投影/向后兼容单值", async () => {
+  const h = harness();
+  const parent = h.exec("g23ac");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "矩阵", authorization: "t" }, parent);
+  // 登记 A 账号
+  const a = await h.run("src_add_test_account", { label: "商家账号A", credential: "Cookie: sid=aaa; role=merchant", note: "商家端" }, parent);
+  assert.equal(a.updated, false);
+  assert.match(a.id, /^testAccount-/);
+  // 同 label 去重覆盖
+  const a2 = await h.run("src_add_test_account", { label: "商家账号A", credential: "Cookie: sid=aaa2" }, parent);
+  assert.equal(a2.updated, true);
+  assert.equal(a2.id, a.id);
+  // 登记 B 账号
+  await h.run("src_add_test_account", { label: "管理员号B", credential: "Authorization: Bearer admintoken", note: "管理端" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.testAccounts.length, 2);
+  assert.equal(state.counts.testAccounts, 2);
+  assert.equal(state.testAccounts.some((r) => r.label === "管理员号B"), true);
+  // credential 不暴露进投影（只暴露 label/note/observationId）
+  assert.equal(state.testAccounts.every((r) => !("credential" in r)), true);
+  // 向后兼容：infra.testAccount 单值也进列表（label=legacy-infra）
+  await h.run("src_set_infra", { key: "testAccount", value: "user:pass" }, parent);
+  const state2 = await h.run("src_state", {}, parent);
+  assert.equal(state2.testAccounts.some((r) => r.label === "legacy-infra"), true);
+});
+
+test("[local.23] 认证预算：src_test_bypass 计数 + budgetExhausted 软信号 + 401 连发 sessionLikelyExpired", async () => {
+  const h = harness();
+  const parent = h.exec("g23bud");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "预算", authorization: "t" }, parent);
+  const intent = await h.run("src_add_intent", { title: "auth", goalId: "goal-1" }, parent);
+  const research = await h.run("src_record_research", { intentId: intent.id, category: "authorization-bypass", hypothesis: "auth bypass", status: "hypothesis" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    // 认证请求（带 Cookie）连续 401 → sessionLikelyExpired
+    globalThis.fetch = async () => new Response("unauth", { status: 401, headers: { "content-type": "application/json" } });
+    const result = await h.run("src_test_bypass", {
+      intentId: intent.id, researchId: research.id, category: "authorization-bypass", baseUrl: "https://example.test",
+      baseline: { method: "GET", path: "/api/me", headers: { cookie: "sid=abc" } },
+      variants: [{ method: "GET", path: "/api/admin", headers: { cookie: "sid=abc" } }, { method: "GET", path: "/api/orders/1", headers: { cookie: "sid=abc" } }]
+    }, parent);
+    assert.equal(result.sessionLikelyExpired, true, "401 连发应触发 sessionLikelyExpired");
+    // authBudget 在 view 里可见
+    const state = await h.run("src_state", {}, parent);
+    assert.equal(state.authBudget.limit, 30);
+    assert.ok(state.authBudget.used >= 3, "认证请求应计数");
+  } finally { globalThis.fetch = originalFetch; }
 });

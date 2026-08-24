@@ -22,6 +22,9 @@ jobs:
             node --check "$f"
           done
 
+      - name: Preset consistency (persona×toolFilter)
+        run: node scripts/check-preset-consistency.mjs
+
       - name: Reject private network addresses (RFC1918 / loopback ranges in docs & code)
         run: |
           # 允许：127.0.0.1（本机示例）、0.0.0.0、192.0.2.x（TEST-NET-1 文档地址）
