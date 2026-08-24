@@ -105,7 +105,24 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
     `## ${t('report.checkpoints')}`,
     ...(checkpointLines.length === 0 ? [t('report.none')] : checkpointLines),
     '',
+    `## ${t('report.blindSpots')}`,
+    ...blindSpotLines(src, t),
+    '',
   ].join('\n')
+}
+
+function blindSpotLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const rows = (src.coverage ?? []).filter((row) => {
+    if (row === null || typeof row !== 'object') return false
+    return (row as { phase?: unknown }).phase === 'blind-spot'
+  }) as ReadonlyArray<{ category?: unknown; status?: unknown; limitation?: unknown; evidence?: unknown }>
+  if (rows.length === 0) return [t('report.blindSpotsEmpty')]
+  const statusLabel = (status: unknown) => status === 'completed' ? t('report.blindSpotCovered') : status === 'blocked' ? t('report.blindSpotUncovered') : status === 'not-applicable' ? t('report.blindSpotNa') : String(status)
+  return rows.map((row) => {
+    const note = typeof row.limitation === 'string' && row.limitation !== '' ? ` — ${row.limitation}` : ''
+    const evidence = Array.isArray(row.evidence) && row.evidence.length > 0 ? `（${t('report.blindSpotEvidence')} ${row.evidence.join(',')}）` : ''
+    return `- ${String(row.category ?? '?')}: ${statusLabel(row.status)}${note}${evidence}`
+  })
 }
 
 function filenameOf(target: string): string {

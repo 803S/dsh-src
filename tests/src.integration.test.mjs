@@ -106,13 +106,13 @@ test("finalize engagement reports blockers and supports documented interruption"
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "example.test", objective: "test", authorization: "ticket" }, parent);
   await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
-  const blocked = await h.run("src_finalize_engagement", { remainingDirections: ["扩展子域枚举"] }, parent);
+  const blocked = await h.run("src_finalize_engagement", { remainingDirections: ["扩展子域枚举"], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(blocked.ready, false);
   assert.ok(blocked.blockers.some((b) => /可继续推进的方向/.test(b)), "non-empty directions blocked");
-  const blocked2 = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+  const blocked2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(blocked2.ready, false);
   assert.match(blocked2.blockers[0], /未完成 intent/);
-  const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "测试用：模拟用户指示停止" }, parent);
+  const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "测试用：模拟用户指示停止" }, parent);
   assert.equal(allowed.ready, true);
   assert.match(allowed.warnings.join(" "), /受限完成/);
   const stateAfter = await h.run("src_state", {}, parent);
@@ -298,12 +298,12 @@ test("finalize engagement warns on discovered API endpoints with no follow-up", 
     await h.run("src_collect_passive", { intentId: intent.id, baseUrl: "https://example.test" }, parent);
     await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
     /* [local.20] untouched/autoOnly 从 warning 升级为 blocker：不带 allowIncomplete 会被拦。 */
-    const gated = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+    const gated = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
     assert.equal(gated.ready, false);
     assert.match(gated.blockers.join(" "), /API\/接口资产尚未进入研究或覆盖推进/);
     assert.match(gated.blockers.join(" "), /仍停留在自动生成骨架/);
     assert.equal(gated.blockers.some((b) => /未完成漏洞研究假设/.test(b)), true);
-    const result = await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "范围耗尽" }, parent);
+    const result = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "范围耗尽" }, parent);
     assert.equal(result.ready, true, "allowIncomplete bypasses the new gates");
     assert.match(result.warnings.join(" "), /已按「受限完成」处理/);
   } finally { globalThis.fetch = originalFetch; }
@@ -457,7 +457,7 @@ test("full SRC engagement end-to-end: scope → passive → research → coverag
 
     // 5) mark intent completed, run finalize, and produce report
     await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
-    const finalize = await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "e2e 演练停止" }, parent);
+    const finalize = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "e2e 演练停止" }, parent);
     assert.equal(finalize.ready, true);
     const report = await h.run("src_report", {}, parent);
     assert.match(report.markdown, /受限完成声明/);
@@ -480,9 +480,9 @@ test("finalize allowIncomplete without reason throws; reason lands in report dec
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "example.test", objective: "g", authorization: "t" }, parent);
   await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
-  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true }, parent), /allowIncompleteReason/);
-  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "   " }, parent), /allowIncompleteReason/);
-  const ok = await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "WAF 全程拦截，用户指示停止" }, parent);
+  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true }, parent), /allowIncompleteReason/);
+  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "   " }, parent), /allowIncompleteReason/);
+  const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "WAF 全程拦截，用户指示停止" }, parent);
   assert.equal(ok.ready, true);
   assert.match(ok.warnings.join(" "), /受限完成/);
   const report = await h.run("src_report", {}, parent);
@@ -515,7 +515,7 @@ test("finalize downgrades info/low-only findings to warning (SRC accepts real-ha
   await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"] }, parent);
   await h.run("src_record_research", { intentId: "intent-1", category: "info-leak", hypothesis: "版本泄露", status: "verified", findingId: "finding-1" }, parent);
   // rawRequest 门禁仍会阻断；但「仅 info/low」不再是 blocker，降级为 warning
-  const result = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+  const result = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(result.ready, false);
   assert.equal(result.blockers.some((b) => /真实危害|info\/low/.test(b)), false);
   assert.match(result.warnings.join(" "), /仅存在 info\/low/);
@@ -657,7 +657,7 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p1);
   await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取简历", severity: "high", impact: "泄露", affectedScope: "全站", remediation: "鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"] }, p1);
   await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p1);
-  const blocked = await h.run("src_finalize_engagement", { remainingDirections: [] }, p1);
+  const blocked = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p1);
   assert.equal(blocked.ready, false);
   assert.equal(blocked.blockers.some((b) => /rawRequest/.test(b)), true);
   // 通过部分：独立 session，带全字段
@@ -667,7 +667,7 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p2);
   await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}" }, p2);
   await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p2);
-  const ok = await h.run("src_finalize_engagement", { remainingDirections: [] }, p2);
+  const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p2);
   assert.equal(ok.ready, true);
   const report = await h.run("src_report", {}, p2);
   assert.match(report.markdown, /前端功能点: 简历查看页-详情/);
@@ -1016,7 +1016,7 @@ test("[local.13] src_fetch_policy fetches and strips HTML; finalize warns on pen
   const findingId = state1.findings[0]?.id;
   assert.ok(findingId, "finding recorded");
   await h.run("src_record_research", { intentId, category: "web", hypothesis: "cors misconfig on example.test", findingId, status: "verified" }, parent);
-  const fin = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   /* [local.20] pending 待办从 warning 升级为 blocker：ready=false 且待办出现在 blockers。 */
   assert.equal(fin.ready, false, "pending todo is now a blocker");
   const allWarnings = [...fin.blockers, ...fin.warnings].join("\n");
@@ -1087,7 +1087,7 @@ test("[local.15] finalize 受限完成声明后 src_state/src_graph 输出仍是
   await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
   // allowIncomplete=true 触发 upsertCoverage({ assetId: void 0, ... }) —— 此前会把 undefined 写进内存记录，
   // 污染后续 src_state/src_graph 的 lossless 输出（真实事故：session-349ed2ec turn3 两工具连续失败）。
-  await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "用户指示停止" }, parent);
+  await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "用户指示停止" }, parent);
   // 直接检查内存表里的受限完成声明行不含值为 undefined 的自有属性
   const covTable = h.domain.table("coverage");
   for (const [, row] of covTable.entries()) {
@@ -1304,7 +1304,7 @@ test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索�
   }, parent);
   let finalized = false;
   try {
-    await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+    await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
     finalized = true;
   } catch (error) {
     // blockers 可能拦（checkpoint 已建），warning 只在成功路径返回——用 message 判别
@@ -1507,17 +1507,17 @@ test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联�
   await h.run("src_add_intent", { title: "登录态越权面", detail: "需商家账号", goalId: "goal-1" }, parent);
   await h.run("src_update_intent", { intentId: "intent-1", status: "blocked" }, parent);
   // 闸②：blocked intent 存在但从未建任何待办 → blocker
-  const noTodo = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+  const noTodo = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(noTodo.ready, false);
   assert.match(noTodo.blockers.join(" "), /标记为 blocked 但从未创建任何用户待办/);
   // 建待办（intentId 关联）后闸②解除；闸①pending 待办仍拦
   await h.run("src_user_todo", { title: "登录 shop.example.test 提供商家会话", kind: "auth-session", intentId: "intent-1" }, parent);
-  const withTodo = await h.run("src_finalize_engagement", { remainingDirections: [] }, parent);
+  const withTodo = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(withTodo.ready, false, "pending todo blocks finalize");
   assert.match(withTodo.blockers.join(" "), /未完成的用户待办/);
   assert.doesNotMatch(withTodo.blockers.join(" "), /从未创建任何用户待办/, "linked todo clears gate 2");
   // allowIncomplete 越过两闸
-  const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], allowIncomplete: true, allowIncompleteReason: "用户指示暂停" }, parent);
+  const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "用户指示暂停" }, parent);
   assert.equal(allowed.ready, true);
   // 报告尾节：pending 待办 + blocked intent 都进「⏸ 等你的事」
   const report = await h.run("src_report", {}, parent);
@@ -1533,8 +1533,78 @@ test("[local.20] finalize remainingDirections 必填：缺失抛错、非空拦�
   await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
   await assert.rejects(() => h.run("src_finalize_engagement", {}, parent), /remainingDirections/);
-  const listed = await h.run("src_finalize_engagement", { remainingDirections: ["深挖 /api/admin 越权", "GraphQL schema 复核"] }, parent);
+  const listed = await h.run("src_finalize_engagement", { remainingDirections: ["深挖 /api/admin 越权", "GraphQL schema 复核"], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(listed.ready, false);
   assert.match(listed.blockers.join(" "), /可继续推进的方向却要求收官/);
   assert.match(listed.blockers.join(" "), /GraphQL schema 复核/, "directions echoed back");
+});
+
+test("[local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派生/报告渲染", async () => {
+  const h = harness();
+  const parent = h.exec("g22bs");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "盲区闸", authorization: "t" }, parent);
+  await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
+
+  // ① 缺 blindSpots 参数 → throw
+  await assert.rejects(() => h.run("src_finalize_engagement", { remainingDirections: [] }, parent), /blindSpots/);
+
+  // ② 缺项：漏 cors-headers 等 → blocker
+  const partial = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "notApplicable" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "notApplicable" },
+  ] }, parent);
+  assert.equal(partial.ready, false);
+  assert.match(partial.blockers.join(" "), /覆盖维度声明缺项/);
+  assert.match(partial.blockers.join(" "), /cors-headers/);
+
+  // ③ covered 无 evidenceId → blocker
+  const noEvidence = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "covered" },
+    { dimension: "cors-headers", status: "notApplicable" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "dict-budget", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "notApplicable" },
+  ] }, parent);
+  assert.equal(noEvidence.ready, false);
+  assert.match(noEvidence.blockers.join(" "), /evidenceId 缺失或不可解析/);
+  assert.match(noEvidence.blockers.join(" "), /http-authz-surface/);
+
+  // ④ covered 带真实 evidenceId → 放行；uncovered 多账号无待办 → warning
+  const withEvidence = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "covered", evidenceId: "intent-1" },
+    { dimension: "cors-headers", status: "notApplicable" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "dict-budget", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "uncovered", note: "缺第二测试账号" },
+  ] }, parent);
+  assert.match(withEvidence.warnings.join(" "), /multi-account-cross-authz|未建对应 src_user_todo/);
+
+  // ⑤ 信号派生：wss 资产存在却未声明 websocket → 缺项阻断
+  await h.run("src_add_asset", { type: "endpoint", value: "wss://api.example.test/ws", meta: "api:websocket" }, parent);
+  const wsMissing = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "notApplicable" },
+    { dimension: "cors-headers", status: "notApplicable" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "dict-budget", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "notApplicable" },
+  ] }, parent);
+  assert.match(wsMissing.blockers.join(" "), /websocket/);
+
+  // ⑥ allowIncomplete 越过，blindSpots 落 coverage 行 → 报告渲染「覆盖维度声明」
+  const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "covered", evidenceId: "intent-1", note: "已测" },
+    { dimension: "cors-headers", status: "uncovered", note: "未测响应头" },
+    { dimension: "dom-xhr", status: "notApplicable" },
+    { dimension: "dict-budget", status: "notApplicable" },
+    { dimension: "multi-account-cross-authz", status: "uncovered", note: "缺多账号" },
+    { dimension: "websocket", status: "uncovered", note: "无 ws 客户端能力" },
+  ], allowIncomplete: true, allowIncompleteReason: "演示停止" }, parent);
+  assert.equal(allowed.ready, true);
+  const report = await h.run("src_report", {}, parent);
+  assert.match(report.markdown, /覆盖维度声明/);
+  assert.match(report.markdown, /http-authz-surface: 已覆盖/);
+  assert.match(report.markdown, /websocket: 未覆盖/);
+  assert.match(report.markdown, /无 ws 客户端能力/);
 });
