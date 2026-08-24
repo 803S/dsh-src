@@ -87,13 +87,16 @@ agent-presets:
 1. Burp Suite Pro 安装 "MCP Server" 扩展并点 **Start**（默认监听 `127.0.0.1:9876`）；
 2. 打开 dsh 面板 → SRC 视图 → **基础设施**页，核对端口后点「测试 Burp MCP 连接」——通了就完事。
 
-接线与自愈桥安装都自动完成：接线在包内 `cordis.patch.yml` 默认已启用（无需手改任何配置文件）；桥脚本跑一次 caps-sync 即装：
+接线与自愈桥安装都自动完成，只需跑一次：
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/ @howmp/dsh-src/scripts/caps-sync.mjs
+node \
+  ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 ```
 
-没跑过 sync 时 Burp 块静默跳过，不影响其它功能。
+> **不需要 PortSwigger 官方的 `mcp-proxy.jar`**：stdio↔SSE 协议转换由包内自带的桥脚本完成，上面这条命令会把它自动装到 `~/.dsh/tools/` 并写好接线——你不需要下载、放置任何 jar；以前按旧教程装过的 jar 可以直接删掉。
+
+没跑过 sync 时 Burp 功能静默不启用，不影响其它功能。
 
 <details>
 <summary>细节：自愈桥是什么 / 不想用 caps-sync 怎么手动装</summary>

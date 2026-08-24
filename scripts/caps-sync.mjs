@@ -162,8 +162,10 @@ try {
 } catch { /* 接线写入失败不阻塞能力 sync */ }
 
 if (!existsSync(yamlPath)) {
-	console.error(`✗ 未找到 ${yamlPath}。请先复制示例：cp ~/.dsh/capabilities.yaml.example ~/.dsh/capabilities.yaml`);
-	process.exit(1);
+	/* [local.19] 只为 Burp 跑 sync 的用户（无外部能力清单）到此已全部就绪，正常退出而非报错。 */
+	log(`✓ Burp 自愈桥与 MCP 接线已就绪。`);
+	log(`ℹ 未找到 ${yamlPath}——跳过外部能力同步。仅当要接入 JS 逆向/二进制等外部 MCP 能力时才需要它；届时执行：cp ~/.dsh/capabilities.yaml.example ~/.dsh/capabilities.yaml`);
+	process.exit(0);
 }
 const parsed = parseCapsYaml(await readFile(yamlPath, "utf8"));
 const caps = parsed.caps;
