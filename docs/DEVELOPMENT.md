@@ -184,6 +184,15 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 - **[UI] 时间线重设计为「时间轴 + 详情」双栏**：左列色点+时间+单行摘要+按类型过滤 chips（全部/意图/事实/漏洞/检查点/探测），右侧详情面板按类型渲染完整字段——observation 含响应头/响应体原文与决策理由，finding 含七字段+原始请求响应，checkpoint 含阶段小结与决策；顺带修复事实事件从未显示的潜伏 bug（facts 在 projection nodes 里而非顶层 facts 数组）。
 - **[纪律] 协议新增【用户待办】【基础设施】两章**：待办标题≤30字含完整登录 URL、detail≤120字分步指引；auth-session 必须走 Burp 三步流程并用 mcp__burp__get_proxy_history 取包、禁索要 HAR 原始包；短信/越权测试前必须先 src_get_infra。全程中文纪律���化（禁 let me/I'll 等英文插入语）；ask_user_question 仅限开场唯一阻塞时机。
 
+## 0.1.0-local.20（自主收官三闸 + 报告「等你的事」+ AI 面自动深挖）
+
+- **[门禁] finalize 收官三闸**（背景：实战会话第一波即 finalize，blocked intent 不建待办、报告后无人唤醒）：①`remainingDirections` 必填参数——调用前逐项枚举还能推进的方向，非空直接拒绝并回显清单；②pending 用户待办从 warning 升级为 blocker；③存在 blocked intent 但从未创建任何用户待办 → blocker（有待办但无关联 → warning 提示补建 intentId 关联）。三闸均可 `allowIncomplete=true` + reason 越过（受限完成声明照旧写入报告）。
+- **[提示词] 【终止】重写为收官前三问**（待办清了吗/blocked 都有待办吗/还有可推导方向吗），禁止用「收益递减」含糊替代枚举；新增「报告不是终点」语义；禁止以收敛报告为由 interrupt 仍在产出结果的子代理。【用户待办】新增配对铁律：因缺用户输入标 blocked 的同一回合必须建 src_user_todo（intentId 关联）。
+- **[报告] 尾部固定「⏸ 等你的事」区块**：列出 pending 待办（kind+标题+操作指引）与无待办关联的 blocked intent；无等待事项时显示「已完整收敛」。用户打开报告即可分辨自己是旁观者还是需要动手。
+- **[AI 面] 放开自动深挖**：撤回「ai-surface 只落资产标注 manual-recommended 不作为 finding」的一刀切——语义复核确认真实 AI 面后按新内置课程 lessons/ai-abuse 自主推进：优先越权面/key 暴露（硬通货），再间接注入与工具滥用（src_serve_proof OOB 取证）；系统提示词泄露只作注入链证据；纯越狱不构成独立 finding。测不了或不全面（需登录态 RAG 投毒、浏览器人工交互）一律建 manual-test 待办移交用户，不得静默跳过。audit persona 同步。
+- **[课程] 新增内置经验 lessons/ai-abuse.md**：测试优先级、无害金丝雀纪律（绝不真实生成违规内容，用受限标记物证明能力）、收录标准、常见误判。
+- **[修复] 经验索引标题污染**：lessonIndex 标题混入「## 触发场景」等正文行（原实现取前 3 行拼接后匹配 ^#），改为全文按行匹配第一个一级标题。
+
 ## 0.1.0-local.8（质量标准修正 + finalize 门禁收紧 + 冗余工具清理）
 
 - **[政策] 漏洞质量标准修正**：撤回"信息泄露/指纹类只能作 fact 不得作 finding"的一刀切禁令——SRC 平台接受一切有实际危害的真实漏洞（如版本暴露可匹配已知 CVE 定向利用），关键改为如实论证危害、severity 如实定级、不夸大不虚构；finalize 里对应的「仅 info/low 不构成真实危害」从 blocker 降级为 warning。同步修正 audit/verify 子代理 persona 措辞。
