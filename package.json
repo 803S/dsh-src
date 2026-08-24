@@ -59,7 +59,9 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/src.integration.test.mjs"
+    "test": "node --test tests/src.integration.test.mjs",
+    "ui-src:typecheck": "cd src/dsh-client-ui-src && tsc -p tsconfig.json",
+    "ui-src:build": "cd src/dsh-client-ui-src && tsdown && cp dist/index.js ../../lib/ui-src.client.js"
   },
   "devDependencies": {
     "js-yaml": "4.3.1"

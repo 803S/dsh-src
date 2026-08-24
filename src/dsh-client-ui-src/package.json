@@ -1,0 +1,26 @@
+{
+  "name": "@lihua_dis/dsh-client-ui-src",
+  "description": "SRC surface: the per-session SRC view tab over the src session projection (source of truth for lib/ui-src.client.js)",
+  "version": "0.1.0-local.21",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "tsdown",
+    "watch": "tsdown --watch",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.3"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.12",
+    "lightningcss": "^1.33.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsdown": "^0.12.9",
+    "typescript": "~5.9.0"
+  }
+}
