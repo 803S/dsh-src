@@ -208,6 +208,7 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 ## 文档
 
 - [开发与迭代历史](docs/DEVELOPMENT.md) —— 架构细节、设计决策、版本迭代日志。
+- [UI 源码现状](docs/UI-SOURCE.md) —— Web 面板源码工程重建计划（当前仓库仅含构建产物）。
 
 ## License
 

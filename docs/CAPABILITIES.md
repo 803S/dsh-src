@@ -71,7 +71,7 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs -
 
 ```yaml
 settings:
-  proxy: http://192.168.10.88:7893
+  proxy: http://192.0.2.88:7893
 ```
 
 生效范围：仅 sync 内部 git clone/fetch 与 build 子进程的环境变量（HTTPS_PROXY/HTTP_PROXY 大小写四个全注入）。不配置时尊重你 shell 已有的环境变量；npm 型（npx）不受此设置影响。

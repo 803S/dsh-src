@@ -1,5 +1,6 @@
 > **开发/迭代历史文档**（原仓库根 README）。面向使用者的项目介绍见根目录 [README](../README.md)。
-> 下文的目录结构、版本日志反映撰写时的状态，部分内容（src/ 源码快照、packages/ 子包、images/ 截图）已随仓库精简而变化。
+
+> ⚠️ 历史章节说明：本文前半部分（目录结构、安装方式）反映的是早期仓库布局；当前真实结构以仓库根目录为准，安装方式以根 [README](../README.md) 为准。后半部分版本日志按时间顺序保留，供了解设计决策脉络。
 
 # dsh-src — DSH SRC 漏洞挖掘模式
 
@@ -13,14 +14,14 @@
 
 ### 从 Release URL 安装
 
-```powershell
-dsh plugin --profile web add https://Copyright (c) 2026 lihua_dis/releases/latest/download/dsh-src.tar.gz
+```bash
+dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/lihua_dis-dsh-src-<版本>.tgz
 ```
 
 ### 或下载后从本地文件安装
 
-```powershell
-dsh plugin --profile web add file:C:\path\to\dsh-src.tar.gz
+```bash
+dsh plugin --profile web add file:/path/to/lihua_dis-dsh-src-<版本>.tgz
 ```
 
 重启 dsh 后，在新会话中选择自动注册的「SRC 专业模式」。
@@ -53,7 +54,7 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 ### 不同端口 / 主机
 
 - **换端口**：面板「基础设施」页改 `burpMcpPort` 即可（桥与测试按钮都读它）；扩展侧同步修改监听端口。
-- **远端主机**：设环境变量 `BURP_SSE_URL=http://192.168.1.50:9876/`（在 profile patch 的 mcp-burp 块加 `env:` 字段）。
+- **远端主机**：设环境变量 `BURP_SSE_URL=http://192.0.2.50:9876/`（在 profile patch 的 mcp-burp 块加 `env:` 字段）。
 
 ## 界面预览
 
@@ -221,9 +222,9 @@ kill $(lsof -ti TCP:3080 -sTCP:LISTEN)
 
 # 启动（后台常驻，日志落 /tmp/dsh-web-local9.log；必须用绝对路径——nohup 不继承 shell 的 export PATH；
 # < /dev/null 不能省：stdin 挂在管道上时父进程退出会让 dsh 读到 EOF 静默退出）
-nohup /Users/lihua-dis/Library/pnpm/bin/dsh web \
+nohup "$(pnpm bin)/dsh" web \   # 或 dsh 在 PATH 时直接用 nohup dsh web
   --host 0.0.0.0 --port 3080 \
-  --trusted-host 192.168.10.7:3080 --no-open \
+  --trusted-host 192.0.2.7:3080 --no-open \
   > /tmp/dsh-web-local9.log 2>&1 < /dev/null &
 
 # 验证
@@ -231,7 +232,7 @@ lsof -nP -iTCP:3080 -sTCP:LISTEN
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/
 ```
 
-- 本机访问 http://127.0.0.1:3080 ；局域网访问 http://192.168.10.7:3080
+- 本机访问 http://127.0.0.1:3080 ；局域网访问 http://192.0.2.7:3080
 - 日志里的 `Failed to connect to SSE server at https://localhost:9876` 是 Burp MCP 代理在等 Burp 的 MCP Server 扩展（Burp 未开时属正常噪音，不影响其他功能）。
 - 注意不要同时跑两个实例指向同一 profile（会并发写同一个 sqlite）。
 
