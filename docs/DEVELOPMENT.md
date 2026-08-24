@@ -6,7 +6,7 @@
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的SRC 漏洞挖掘模式：
 在授权范围内记录目标、探索线索、验证结果、资产与漏洞，并在 Web 中以探索链路、漏洞和资产视图展示。
 
-本目录是自包含 bundle 包（`@howmp/dsh-src`）：宿主插件、Web 界面和 sqlite 后端通过包内 `exports`
+本目录是自包含 bundle 包（`@lihua_dis/dsh-src`）：宿主插件、Web 界面和 sqlite 后端通过包内 `exports`
 一同分发。Release 资产可直接由 `dsh plugin add` 安装。
 
 ## 安装
@@ -14,7 +14,7 @@
 ### 从 Release URL 安装
 
 ```powershell
-dsh plugin --profile web add https://github.com/howmp/dsh-src/releases/latest/download/dsh-src.tar.gz
+dsh plugin --profile web add https://Copyright (c) 2026 lihua_dis/releases/latest/download/dsh-src.tar.gz
 ```
 
 ### 或下载后从本地文件安装
@@ -36,7 +36,7 @@ dsh plugin --profile web add file:C:\path\to\dsh-src.tar.gz
 1. 跑一次 caps-sync 装自愈桥（或手动拷贝，见 README「接入 Burp MCP」节）：
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
+node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 ```
 
 2. Burp Suite Pro 安装 "MCP Server" BApp 扩展并点 Start（默认监听 `127.0.0.1:9876`）。
@@ -124,7 +124,7 @@ node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 ## 目录结构
 
 ```
-dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖，自包含）
+dsh-src/                   # 项目根 = bundle 包 @lihua_dis/dsh-src（零依赖，自包含）
 ├── package.json               # bundle manifest：dsh.bundle.patch + dsh.client + exports 子路径
 ├── cordis.patch.yml           # 补丁层：UI、sqlite 后端与 storage-domain 路由
 ├── lib/                       # 构建产物（npm pack 的内容）
@@ -183,6 +183,12 @@ dsh-src/                   # 项目根 = bundle 包 @howmp/dsh-src（零依赖�
 - **[UI] 新增「基础设施」tab**：表单读写六项设置（保存经 `/src-infra <key> <value>` 人机命令写回，value 为 `-` 表示恢复默认）；附 Burp MCP 接线示例与进程级代理说明。子代理 deny 列表追加 src_set_infra/src_set_goal_target（src_get_infra 允许读取）。
 - **[UI] 时间线重设计为「时间轴 + 详情」双栏**：左列色点+时间+单行摘要+按类型过滤 chips（全部/意图/事实/漏洞/检查点/探测），右侧详情面板按类型渲染完整字段——observation 含响应头/响应体原文与决策理由，finding 含七字段+原始请求响应，checkpoint 含阶段小结与决策；顺带修复事实事件从未显示的潜伏 bug（facts 在 projection nodes 里而非顶层 facts 数组）。
 - **[纪律] 协议新增【用户待办】【基础设施】两章**：待办标题≤30字含完整登录 URL、detail≤120字分步指引；auth-session 必须走 Burp 三步流程并用 mcp__burp__get_proxy_history 取包、禁索要 HAR 原始包；短信/越权测试前必须先 src_get_infra。全程中文纪律���化（禁 let me/I'll 等英文插入语）；ask_user_question 仅限开场唯一阻塞时机。
+
+## 0.1.0-local.21（包名署名修正：@howmp → @lihua_dis）
+
+- **[改名] 包标识从 `@howmp/dsh-src` 全面迁移到 `@lihua_dis/dsh-src`**：原 scope 系沿用 dsh-pentest 参考项目的命名约定，属错误署名。替换范围：package.json name/author、cordis 服务名×4（ui-src/storage-sqlite/preset-root/src）、invariant 注册名、UI 模块与 CSS 资源 id（构建产物内）、README/docs 全部命令路径、LICENSE 版权行。tgz 资产名相应变为 `lihua_dis-dsh-src-<版本>.tgz`。
+- **[安装] 安装目录变化**：包现位于 `~/.dsh/profiles/<p>/node_modules/@lihua_dis/dsh-src/`；从旧版本升级需删除旧 `@howmp/dsh-src` 目录（新旧并存会被宿主识别为两个插件）。caps-sync 默认路径文档已同步。
+- 对 dsh-pentest 参考项目的技术致谢保留于 README「致谢」节。
 
 ## 0.1.0-local.20（自主收官三闸 + 报告「等你的事」+ AI 面自动深挖）
 

@@ -8,7 +8,7 @@
 ```
 项目链接 = <必填：要接入的 MCP 项目 GitHub 地址，如 https://github.com/vmoranv/jshookmcp>
 代理地址 = <可选：仅 git 型 clone 被墙时填，如 http://127.0.0.1:7890；留空 = 直连>
-dsh-src 包目录 = <一般不用改：默认 ~/.dsh/profiles/web/node_modules/@howmp/dsh-src>
+dsh-src 包目录 = <一般不用改：默认 ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src>
 ```
 
 ═══════════════════════════════════════
@@ -43,7 +43,7 @@ dsh-src 包目录 = <一般不用改：默认 ~/.dsh/profiles/web/node_modules/@
 
 - `settings.proxy` 是 caps-sync 的代理占位：即配置区的「代理地址」，仅影响 sync 内部的 git clone/fetch 与 build 子进程环境变量，不改写你的 shell 全局代理；不配置默认直连。
 - 多 profile：sync 默认只写 web profile，其它 profile 加参数再跑一次：
-  `node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test`
+  `node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test`
 - 停用一个能力 = 清单里 `enabled: false` + 重跑 sync + 重启；彻底删除 = 删条目 + 重跑 sync + 手动删 `~/.dsh/capabilities/<id>/` 目录。
 - 更新已装能力到最新 = 删掉 `~/.dsh/capabilities/<id>/` 目录 + 重跑 sync（自动重新 clone+build）。
 - 规范全文见 [CAPABILITIES.md](CAPABILITIES.md)。

@@ -36,10 +36,10 @@
 
 - insert:
     - id: ui-src
-      name: '@howmp/dsh-src/ui-src'
+      name: '@lihua_dis/dsh-src/ui-src'
 
     - id: storage-src-sqlite
-      name: '@howmp/dsh-src/storage-sqlite'
+      name: '@lihua_dis/dsh-src/storage-sqlite'
       config:
         path: !!js dshHomePath('storages', 'src-sessions.db')
 
@@ -55,4 +55,4 @@
 # after `agent-presets` is constructed, without copying files into DSH_HOME.
 - insert:
     - id: src-preset-root
-      name: '@howmp/dsh-src/preset-root'
+      name: '@lihua_dis/dsh-src/preset-root'

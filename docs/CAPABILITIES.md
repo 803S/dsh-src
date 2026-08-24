@@ -50,7 +50,7 @@ capabilities:
 ## 三、使用流程
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
+node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 # （源码构建安装的把路径换成仓库目录；其它 profile 加 --profile-dir ~/.dsh/profiles/<名>)
 ```
 
@@ -59,7 +59,7 @@ node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
 多 profile：sync 默认只写 web profile；其它 profile 用同一份清单各跑一次：
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test   # 例：src-test profile
+node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs --profile-dir ~/.dsh/profiles/src-test   # 例：src-test profile
 ```
 
 验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」，或直接让 agent 调 src_list_capabilities / src_test_capability。

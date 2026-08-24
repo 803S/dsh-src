@@ -284,4 +284,4 @@
 # panel. It publishes no service and consumes the host `storageDomain`
 # facility, so it needs no realm.
 - id: src
-  name: '@howmp/dsh-src/src'
+  name: '@lihua_dis/dsh-src/src'

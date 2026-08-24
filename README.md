@@ -2,7 +2,7 @@
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的 SRC 漏洞挖掘模式插件。它把一次授权漏洞挖掘组织成一条**可审计的探索链路**：目标 → 研究方向 → 事实 → 假设 → 验证 → 漏洞报告，全程由 agent 推进、在 Web 面板可视化，最终一键产出结构化 Markdown 报告。
 
-一个自包含 bundle 包（`@howmp/dsh-src`）：宿主工具集、Web 界面、sqlite 存储后端和「SRC 专业模式」agent 预设通过包内 `exports` 一同分发，`dsh plugin add` 一条命令安装。
+一个自包含 bundle 包（`@lihua_dis/dsh-src`）：宿主工具集、Web 界面、sqlite 存储后端和「SRC 专业模式」agent 预设通过包内 `exports` 一同分发，`dsh plugin add` 一条命令安装。
 
 ---
 
@@ -54,8 +54,8 @@
 ### 方式一：从 GitHub Release 安装（推荐）
 
 ```bash
-# 资产名以 Releases 页为准（形如 howmp-dsh-src-<版本>.tgz）
-dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/howmp-dsh-src-<版本>.tgz
+# 资产名以 Releases 页为准（形如 lihua_dis-dsh-src-<版本>.tgz）
+dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/lihua_dis-dsh-src-<版本>.tgz
 ```
 
 ### 方式二：从源码构建安装
@@ -63,7 +63,7 @@ dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/dow
 ```bash
 git clone https://github.com/803S/dsh-src.git
 cd dsh-src && npm pack
-dsh plugin --profile web add file:$PWD/howmp-dsh-src-<版本>.tgz
+dsh plugin --profile web add file:$PWD/lihua_dis-dsh-src-<版本>.tgz
 ```
 
 ### 启用
@@ -91,7 +91,7 @@ agent-presets:
 
 ```bash
 node \
-  ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
+  ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 ```
 
 > **不需要 PortSwigger 官方的 `mcp-proxy.jar`**：stdio↔SSE 协议转换由包内自带的桥脚本完成，上面这条命令会把它自动装到 `~/.dsh/tools/` 并写好接线——你不需要下载、放置任何 jar；以前按旧教程装过的 jar 可以直接删掉。
@@ -106,7 +106,7 @@ node \
 手动装桥（替代 caps-sync，效果相同）：
 
 ```bash
-mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/tools/burp-mcp-bridge.mjs ~/.dsh/tools/
+mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/tools/burp-mcp-bridge.mjs ~/.dsh/tools/
 ```
 
 重启 dsh 生效。
@@ -124,7 +124,7 @@ mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/tool
 ```bash
 cp capabilities.yaml.example ~/.dsh/capabilities.yaml           # 首次：从示例创建清单
 # 编辑清单（npm 型一行即接；git 型声明 build 后自动 clone+构建）
-node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs   # 同步：安装+生成接线
+node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs   # 同步：安装+生成接线
 ```
 
 示例条目：
