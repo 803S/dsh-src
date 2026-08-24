@@ -768,9 +768,9 @@ test("[local.9] parseGoalHost: dirty target normalized at src_add_goal and all U
 test("[local.9] parseGoalHost rejects unparseable targets with actionable error; src_set_goal_target fixes in place", async () => {
   const h = harness();
   const parent = h.exec("p9b");
-  await assert.rejects(() => h.run("src_add_goal", { target: "！！！不是���名", objective: "x" }, parent), /无法解析出目标域名/);
+  await assert.rejects(() => h.run("src_add_goal", { target: "！！！不是���名", objective: "x" }, parent), /不是可测的公网目标/);
   /* [local.22] 纯 ASCII 品牌名（OPPO）不再被 URL 解析误判为单标签 hostname "oppo"。 */
-  await assert.rejects(() => h.run("src_add_goal", { target: "OPPO", objective: "x" }, parent), /无法解析出目标域名/);
+  await assert.rejects(() => h.run("src_add_goal", { target: "OPPO", objective: "x" }, parent), /不是可测的公网目标/);
   const goal = await h.run("src_add_goal", { target: "example.test", objective: "fix-target" }, parent);
   await h.run("src_add_intent", { title: "i1", goalId: goal.id }, parent);
   const updated = await h.run("src_set_goal_target", { target: "sub.example.test（主域）" }, parent);
