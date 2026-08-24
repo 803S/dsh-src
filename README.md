@@ -90,7 +90,7 @@ agent-presets:
 接线与自愈桥安装都自动完成：接线在包内 `cordis.patch.yml` 默认已启用（无需手改任何配置文件）；桥脚本跑一次 caps-sync 即装：
 
 ```bash
-node ~/.dsh/profiles/web/node_modules/@howmp/dsh-src/scripts/caps-sync.mjs
+node ~/.dsh/profiles/web/node_modules/ @howmp/dsh-src/scripts/caps-sync.mjs
 ```
 
 没跑过 sync 时 Burp 块静默跳过，不影响其它功能。
