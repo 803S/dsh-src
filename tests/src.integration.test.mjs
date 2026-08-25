@@ -72,7 +72,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
     intentId: intent.id,
     facts: [{ kind: "http", target: "https://example.test", detail: "GET /health returns 200", confidence: "95%" }],
     assets: [{ type: "root-domain", value: "example.test", meta: "authorized" }],
-    findings: [{ title: "Public diagnostic endpoint", severity: "low", description: "Exposes build metadata", impact: "Leaks deployment information", affectedScope: "Unauthenticated visitors to the health endpoint", remediation: "Remove build metadata from the response", pocEvidence: ["GET /health -> 200 with build field"], reproducibleSteps: ["GET /health"] }]
+    findings: [{ title: "Public diagnostic endpoint", severity: "low", description: "Exposes build metadata", impact: "Leaks deployment information", affectedScope: "Unauthenticated visitors to the health endpoint", remediation: "Remove build metadata from the response", pocEvidence: ["GET /health -> 200 with build field"], reproducibleSteps: ["GET /health"], victimImpact: "Unauthenticated visitors have deployment internals exposed and can be fingerprinted for targeted exploitation without awareness", attackPrerequisites: "Attacker needs only network access to the health endpoint; no authentication or user interaction required", concreteLossEvidence: ["fact-1"] }]
   };
   const firstBatch = await h.run("src_submit", { ...batch, stage: "progress", summary: "initial evidence" }, child);
   assert.deepEqual({ facts: firstBatch.facts, assets: firstBatch.assets, findings: firstBatch.findings, stage: firstBatch.stage }, { facts: 1, assets: 1, findings: 1, stage: "progress" });
@@ -174,7 +174,7 @@ test("invalid child batches are rejected before any row is written", async () =>
     intentId: "intent-1",
     facts: [{ detail: "must not persist" }],
     assets: [],
-    findings: [{ title: "invalid reference", severity: "high", impact: "test impact", affectedScope: "test scope", remediation: "test remediation", pocEvidence: ["test evidence"], reproducibleSteps: ["step"], affectedAssetId: "asset-404" }]
+    findings: [{ title: "invalid reference", severity: "high", impact: "test impact", affectedScope: "test scope", remediation: "test remediation", pocEvidence: ["test evidence"], reproducibleSteps: ["step"], affectedAssetId: "asset-404", victimImpact: "Victim accounts have their private records silently readable by third parties without any interaction or awareness", attackPrerequisites: "Attacker needs a valid low-privilege account and the ability to forge resource identifiers in requests", concreteLossEvidence: ["fact-1"] }]
   }, h.exec("child", "p")), /unknown asset/);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.counts.facts, 0);
@@ -512,13 +512,14 @@ test("finalize downgrades info/low-only findings to warning (SRC accepts real-ha
   await h.run("src_add_goal", { target: "https://example.test", objective: "找到真实危害漏洞", authorization: "SRC" }, parent);
   await h.run("src_add_intent", { title: "audit", detail: "x", goalId: "goal-1" }, parent);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
-  await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"] }, parent);
+  const factEvidence1 = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET / => VAppServer/6.0.0 banner", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", attackPrerequisites: "仅需网络可达目标首页，无需登录或任何用户交互", concreteLossEvidence: [factEvidence1] }, parent);
   await h.run("src_record_research", { intentId: "intent-1", category: "info-leak", hypothesis: "版本泄露", status: "verified", findingId: "finding-1" }, parent);
   // rawRequest 门禁仍会阻断；但「仅 info/low」不再是 blocker，降级为 warning
   const result = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(result.ready, false);
   assert.equal(result.blockers.some((b) => /真实危害|info\/low/.test(b)), false);
-  assert.match(result.warnings.join(" "), /仅存在 info\/low/);
+  assert.match(result.warnings.join(" "), /仅存在 low 级 finding/);
 });
 
 test("src_test_credential performs bounded credential verification and records hit", async () => {
@@ -655,7 +656,8 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_add_goal", { target: "https://app.example.test", objective: "门禁", authorization: "SRC" }, p1);
   await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, p1);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p1);
-  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取简历", severity: "high", impact: "泄露", affectedScope: "全站", remediation: "鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"] }, p1);
+  const factEvidence2 = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET /resume?id=2 -> 200 他人姓名电话", confidence: 0.9 }, p1)).id;
+  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取简历", severity: "high", impact: "泄露", affectedScope: "全站", remediation: "鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], victimImpact: "任意求职者的姓名电话邮箱可被陌生人批量读取，存在诈骗骚扰风险且无从察觉", attackPrerequisites: "攻击者仅需注册普通账号并遍历简历 ID，无管理权限", concreteLossEvidence: [factEvidence2] }, p1);
   await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p1);
   const blocked = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p1);
   assert.equal(blocked.ready, false);
@@ -665,7 +667,8 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_add_goal", { target: "https://app.example.test", objective: "通过", authorization: "SRC" }, p2);
   await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, p2);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p2);
-  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}" }, p2);
+  const factEvidence3 = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET /resume?id=2 -> 200 {\"id\":2,\"name\":\"他人\"}", confidence: 0.9 }, p2)).id;
+  await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}", victimImpact: "任意学生的简历隐私数据被陌生人读取，存在被诈骗与骚扰风险且无从察觉", attackPrerequisites: "攻击者仅需普通账号并遍历简历 ID，无管理权限", concreteLossEvidence: [factEvidence3] }, p2);
   await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p2);
   const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p2);
   assert.equal(ok.ready, true);
@@ -1011,7 +1014,8 @@ test("[local.13] src_fetch_policy fetches and strips HTML; finalize warns on pen
   // pending 用户待办
   await h.run("src_user_todo", { title: "请登录提供会话", kind: "auth-session" }, parent);
   // 一个 finding（impact 只有 5 字，触发 thin-impact warning）
-  await h.run("src_add_finding", { intentId, title: "CORS 配置错误", severity: "medium", impact: "配置不安全", affectedScope: "https://example.test", remediation: "修复 CORS", pocEvidence: ["raw poc"], reproducibleSteps: ["step1"], rawRequest: "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n" }, parent);
+  const factEvidence4 = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "GET / with Origin 反射 -> ACAO:*", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId, title: "CORS 配置错误", severity: "medium", impact: "配置不安全", affectedScope: "https://example.test", remediation: "修复 CORS", pocEvidence: ["raw poc"], reproducibleSteps: ["step1"], rawRequest: "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n", victimImpact: "已登录用户的隐私响应可被第三方站点跨域读取且全程无感知，存在批量收集风险", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户访问", concreteLossEvidence: [factEvidence4] }, parent);
   const state1 = await h.run("src_state", {}, parent);
   const findingId = state1.findings[0]?.id;
   assert.ok(findingId, "finding recorded");
@@ -1164,7 +1168,8 @@ test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同
   await h.run("src_add_goal", { target: "example.test", objective: "update" }, parent);
   const state = await h.run("src_state", {}, parent);
   const intent = await h.run("src_add_intent", { title: "CORS 验证", detail: "d", goalId: state.goal.id }, parent);
-  await h.run("src_add_finding", { intentId: intent.id, title: "CORS 配置不安全", severity: "low", impact: "太短", affectedScope: "全站", remediation: "收紧", pocEvidence: ["e1"], reproducibleSteps: ["GET /"] }, parent);
+  const factEvidence5 = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "GET /api/profile Origin 反射 -> ACAC true", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: intent.id, title: "CORS 配置不安全", severity: "low", impact: "太短", affectedScope: "全站", remediation: "收紧", pocEvidence: ["e1"], reproducibleSteps: ["GET /"], victimImpact: "已登录用户的个人资料可被第三方站点静默读取且无感知，存在隐私批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户访问", concreteLossEvidence: [factEvidence5] }, parent);
   // 重写：impact/victimImpact/severity
   const upd = await h.run("src_update_finding", {
     findingId: "finding-1",
@@ -1181,7 +1186,7 @@ test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同
   assert.ok((finding.victimImpact ?? "").includes("无任何感知"), "victimImpact written");
   assert.equal(finding.reproducibleSteps.length, 2, "steps replaced");
   // 标题冲突：新建第二个 finding 后改名为同名应拒绝
-  await h.run("src_add_finding", { intentId: intent.id, title: "第二个漏洞", severity: "info", impact: "x".repeat(50), affectedScope: "s", remediation: "r", pocEvidence: ["e2"], reproducibleSteps: ["GET /"] }, parent);
+  await h.run("src_add_finding", { intentId: intent.id, title: "第二个漏洞", severity: "low", impact: "x".repeat(50), affectedScope: "s", remediation: "r", pocEvidence: ["e2"], reproducibleSteps: ["GET /"], victimImpact: "已登录用户的资料可被第三方站点静默读取且无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户访问", concreteLossEvidence: [factEvidence5] }, parent);
   await assert.rejects(
     () => h.run("src_update_finding", { findingId: "finding-2", title: "cors 配置不安全" }, parent),
     /同名 finding/,
@@ -1198,6 +1203,63 @@ test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同
   );
 });
 
+test("[local.25] finding 准入闸：危害链三要素缺一拒绝 + 不可解析证据拒绝 + info 移除与弱信号路由", async () => {
+  const h = harness();
+  const parent = h.exec("gate25");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "准入闸验证", authorization: "SRC" }, parent);
+  const intent = await h.run("src_add_intent", { title: "CORS 验证", detail: "d", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
+  const factEvidence6 = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "登录态 GET /api/profile -> 200 {\"phone\":\"138****\"}", confidence: 0.9 }, parent)).id;
+  const base = {
+    intentId: intent.id,
+    title: "CORS 反射",
+    severity: "low",
+    impact: "攻击者可托管恶意页面诱导已登录用户访问，跨域读取响应内容并批量收集平台用户资料用于精准诈骗",
+    affectedScope: "全站",
+    remediation: "收紧 CORS 白名单",
+    pocEvidence: ["GET / with Origin: https://evil.example -> ACAO 反射 + ACAC true"],
+    reproducibleSteps: ["curl -H 'Origin: https://evil.example' https://example.test/"]
+  };
+  // 缺 victimImpact → 拒绝
+  await assert.rejects(
+    () => h.run("src_add_finding", { ...base, attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击", concreteLossEvidence: [factEvidence6] }, parent),
+    /victimImpact|受害者/,
+  );
+  // 缺 attackPrerequisites → 拒绝
+  await assert.rejects(
+    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", concreteLossEvidence: [factEvidence6] }, parent),
+    /attackPrerequisites|利用前提/,
+  );
+  // 缺 concreteLossEvidence → 拒绝
+  await assert.rejects(
+    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击" }, parent),
+    /concreteLossEvidence|损失证据/,
+  );
+  // 证据 id 不可解析 → 拒绝（服务端校验存在性）
+  await assert.rejects(
+    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击", concreteLossEvidence: ["fact-999"] }, parent),
+    /不可解析|concreteLossEvidence/,
+  );
+  // src_submit 省略 severity → mapper 回退 info → 准入闸给出弱信号路由信息
+  const childGate = h.exec("child-gate", "gate25");
+  const { intentId: _omit, severity: _omitSev, ...submitFinding } = { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击", concreteLossEvidence: [factEvidence6] };
+  await assert.rejects(
+    () => h.run("src_submit", { intentId: intent.id, facts: [], assets: [], findings: [submitFinding] }, childGate),
+    /severity=info 已移除|research/,
+  );
+  // 三要素齐全 + 真实证据指针 → 通过，新字段落库
+  await h.run("src_add_finding", { ...base, title: "CORS 反射致资料泄露", victimImpact: "已登录用户的姓名手机号等资料被第三方站点静默读取且全程无感知，可被批量收集倒卖", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击；厂商规则若要求自有域则此条不提交", concreteLossEvidence: [factEvidence6] }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const finding = state.findings.find((row) => row.id === "finding-1");
+  assert.ok(finding, "合格 finding 已入库");
+  assert.ok((finding.attackPrerequisites ?? "").includes("自有域"), "attackPrerequisites persisted");
+  assert.deepEqual(finding.concreteLossEvidence, [factEvidence6], "concreteLossEvidence persisted");
+  // src_update_finding 可重写两字段；severity=info 被 schema 拒绝
+  const upd = await h.run("src_update_finding", { findingId: finding.id, attackPrerequisites: "更新后的前提：需厂商自有域钓鱼页；任意外域场景按厂商规不收", concreteLossEvidence: [] }, parent);
+  assert.ok(upd.updated.includes("attackPrerequisites") && upd.updated.includes("concreteLossEvidence"));
+  await assert.rejects(() => h.run("src_update_finding", { findingId: finding.id, severity: "info" }, parent), /invalid arguments|info/);
+});
+
 test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；缺失时给占位提示；finalize 缺 victimImpact 警告", async () => {
   process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
@@ -1209,12 +1271,15 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
   const intent = await h.run("src_add_intent", { title: "越权验证", detail: "d", goalId: state.goal.id }, parent);
   const childRep = h.exec("child-rep", "rep1");
   await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "done", facts: [], assets: [], findings: [] }, childRep);
+  const factEvidence7 = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "GET /api/order/2 as user A -> order of user B 含收货人地址电话", confidence: 0.9 }, parent)).id;
   await h.run("src_add_finding", {
     intentId: intent.id,
     title: "越权读取他人订单",
     severity: "high",
     impact: "攻击者遍历订单 ID 即可拉取任意用户订单的收货人、地址与电话，可用于精准诈骗或倒卖数据，危害全量用户",
     victimImpact: "受害用户的收货地址与手机号泄露，可能遭遇诈骗骚扰且无法察觉泄露源头",
+    attackPrerequisites: "攻击者仅需注册普通买家账号并遍历订单 ID，无需管理权限",
+    concreteLossEvidence: [factEvidence7],
     affectedScope: "全部用户订单",
     remediation: "服务端校验归属",
     pocEvidence: ["GET /api/order/2 as user A -> order of user B"],
@@ -1290,12 +1355,15 @@ test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索�
   const intent = await h.run("src_add_intent", { title: "越权验证", detail: "d", goalId: state.goal.id }, parent);
   const childLes = h.exec("child-les", "les1");
   await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "ok", facts: [], assets: [], findings: [] }, childLes);
+  const factEvidence8 = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "GET /resume/2 -> 200 求职者姓名电话邮箱", confidence: 0.9 }, parent)).id;
   await h.run("src_add_finding", {
     intentId: intent.id,
     title: "越权读取简历",
     severity: "high",
     impact: "攻击者遍历简历 ID 可读取任意求职者姓名电话邮箱等隐私数据并批量倒卖，危害全量用户隐私安全",
     victimImpact: "求职者的姓名电话邮箱被陌生人读取，存在被诈骗与骚扰风险且无从察觉",
+    attackPrerequisites: "攻击者仅需注册普通账号并遍历简历 ID，无需管理权限",
+    concreteLossEvidence: [factEvidence8],
     affectedScope: "全部简历",
     remediation: "校验归属",
     pocEvidence: ["raw"],
@@ -1689,7 +1757,7 @@ test("[local.24] 域笔记：登记/去重/跨会话积累 + src_add_goal priorC
   assert.equal(note2.id, note.id);
   const intent = await h.run("src_add_intent", { title: "测 x", goalId: "goal-1" }, a);
   const research = await h.run("src_record_research", { intentId: intent.id, category: "authorization-bypass", hypothesis: "/admin 无鉴权可直访", status: "false-positive", stopReason: "/admin 有 302 跳登录，无直访" }, a);
-  await h.run("src_add_finding", { title: "用户ID 可枚举他人订单 (IDOR)", severity: "high", intentId: intent.id, researchId: research.id, impact: "任意登录用户可读他人订单", affectedScope: "全部订单接口", remediation: "订单查询校验属主", reproducibleSteps: ["登录 A", "GET /api/orders/2"], pocEvidence: ["GET /api/orders/2 用 sid=A 的 cookie 返回他人订单"] }, a);
+  await h.run("src_add_finding", { title: "用户ID 可枚举他人订单 (IDOR)", severity: "high", intentId: intent.id, researchId: research.id, impact: "任意登录用户可读他人订单，收货人电话地址批量泄露可被用于精准诈骗与倒卖", affectedScope: "全部订单接口", remediation: "订单查询校验属主", victimImpact: "受害用户的订单收货人电话与地址被陌生人读取并可能遭诈骗骚扰且无从察觉", attackPrerequisites: "攻击者仅需注册普通账号登录后遍历订单 ID，无需任何管理权限", concreteLossEvidence: [research.id], reproducibleSteps: ["登录 A", "GET /api/orders/2"], pocEvidence: ["GET /api/orders/2 用 sid=A 的 cookie 返回他人订单"] }, a);
   // 列表
   const state = await h.run("src_state", {}, a);
   // 注：domain_notes 未进 view，但可通过新会话 src_add_goal 的 priorContext 验证
