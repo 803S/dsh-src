@@ -83,7 +83,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, 5, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, testAccounts: 0 });
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
@@ -414,7 +414,7 @@ test("projection replay mirrors semantic deduplication", () => {
   const replayed = projection.view(state);
   assert.equal(replayed.coverage.some((c) => c.category === "bypass-verification" && c.phase === "method-bypass"), true);
   assert.equal(replayed.coverage.some((c) => c.category === "passive-collection" && c.phase === "discovery"), true);
-  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0 });
+  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
 });
 
 test("full SRC engagement end-to-end: scope → passive → research → coverage → bypass → finalize → report", async () => {
@@ -919,7 +919,7 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   const freshView = viewSrcState(JSON.parse(JSON.stringify(srcInitialState)));
   assert.equal(freshView.goal, null);
   assert.equal(freshView.infra.burpMcpPort, "9876");
-  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0 });
+  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
 
   // --- [local.12] tool outputs must survive lossless JSON snapshotting ---
   // scan_surface non-stopped path previously emitted stopped:undefined -> "value is not lossless JSON"
@@ -1672,4 +1672,76 @@ test("[local.23] 认证预算：src_test_bypass 计数 + budgetExhausted 软信�
     assert.equal(state.authBudget.limit, 30);
     assert.ok(state.authBudget.used >= 3, "认证请求应计数");
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("[local.24] 域笔记：登记/去重/跨会话积累 + src_add_goal priorContext briefing", async () => {
+  const h = harness();
+  // 会话 A：建目标 + 记域笔记 + 记已否 research + 记 finding
+  const a = h.exec("s24a");
+  await h.run("src_add_goal", { target: "cross-24.test", objective: "首轮", authorization: "t" }, a);
+  const note = await h.run("src_record_domain_note", { category: "pitfall", title: "api/v1 限流 5rps", content: "burst 会 429，需降到 2rps 才稳。" }, a);
+  assert.equal(note.updated, false);
+  assert.match(note.id, /^domainNote-/);
+  assert.equal(note.target, "cross-24.test");
+  // 同目标+title 覆盖
+  const note2 = await h.run("src_record_domain_note", { category: "pitfall", title: "api/v1 限流 5rps", content: "更正：实测 10rps 才 429。" }, a);
+  assert.equal(note2.updated, true);
+  assert.equal(note2.id, note.id);
+  const intent = await h.run("src_add_intent", { title: "测 x", goalId: "goal-1" }, a);
+  const research = await h.run("src_record_research", { intentId: intent.id, category: "authorization-bypass", hypothesis: "/admin 无鉴权可直访", status: "false-positive", stopReason: "/admin 有 302 跳登录，无直访" }, a);
+  await h.run("src_add_finding", { title: "用户ID 可枚举他人订单 (IDOR)", severity: "high", intentId: intent.id, researchId: research.id, impact: "任意登录用户可读他人订单", affectedScope: "全部订单接口", remediation: "订单查询校验属主", reproducibleSteps: ["登录 A", "GET /api/orders/2"], pocEvidence: ["GET /api/orders/2 用 sid=A 的 cookie 返回他人订单"] }, a);
+  // 列表
+  const state = await h.run("src_state", {}, a);
+  // 注：domain_notes 未进 view，但可通过新会话 src_add_goal 的 priorContext 验证
+
+  // 会话 B：同目标开局 → priorContext 应含域笔记 + 已否假设 + findings
+  const b = h.exec("s24b");
+  const goal = await h.run("src_add_goal", { target: "cross-24.test", objective: "第二轮续测", authorization: "t" }, b);
+  assert.ok(goal.priorContext, "同目标续测应返回 priorContext");
+  assert.ok(Array.isArray(goal.priorContext.notes) && goal.priorContext.notes.length === 1, "应含1条域笔记");
+  assert.equal(goal.priorContext.notes[0].title, "api/v1 限流 5rps");
+  assert.ok(Array.isArray(goal.priorContext.falsifiedHypotheses) && goal.priorContext.falsifiedHypotheses.length === 1, "应含1条已否假设");
+  assert.ok(goal.priorContext.falsifiedHypotheses[0].hypothesis.includes("/admin"), "已否假设应含 /admin 那条");
+  assert.ok(Array.isArray(goal.priorContext.findings) && goal.priorContext.findings.length === 1, "应含1条已确认 finding");
+  assert.equal(goal.priorContext.priorSessions, 1);
+
+  // 不同目标开局 → 无 priorContext
+  const c = h.exec("s24c");
+  const goal2 = await h.run("src_add_goal", { target: "unrelated-24.test", objective: "无关目标" }, c);
+  assert.equal(goal2.priorContext, undefined, "不同目标不应有 priorContext");
+});
+
+test("[local.24] 域笔记查看通道：src_list_domain_notes 只读清单 + src_state 投影", async () => {
+  const h = harness();
+  const a = h.exec("s24d");
+  await h.run("src_add_goal", { target: "list-24.test", objective: "查看通道" }, a);
+  // 未记笔记时：空清单
+  const empty = await h.run("src_list_domain_notes", {}, a);
+  assert.equal(empty.target, "list-24.test");
+  assert.deepEqual(empty.notes, []);
+  // 记两条不同 category
+  await h.run("src_record_domain_note", { category: "fingerprint", title: "技术栈 Vue3+Spring", content: "前端 Vue3，后端 Spring Boot 2.x，/api/v2 前缀。" }, a);
+  await h.run("src_record_domain_note", { category: "pitfall", title: "登录接口 5 次锁号", content: "连续 5 次错误密码锁 30 分钟。" }, a);
+  // 只读清单：含两条，不含 content（精简投影）
+  const listed = await h.run("src_list_domain_notes", {}, a);
+  assert.equal(listed.notes.length, 2);
+  assert.ok(listed.notes.every((n) => !("content" in n)), "清单不应含 content");
+  assert.ok(listed.notes.some((n) => n.category === "fingerprint" && n.title === "技术栈 Vue3+Spring"));
+  // src_state 投影：domainNotes 数组 + counts
+  const state = await h.run("src_state", {}, a);
+  assert.equal(state.domainNotes.length, 2);
+  assert.equal(state.counts.domainNotes, 2);
+  assert.ok(state.domainNotes.every((n) => !("content" in n)), "投影不应含 content");
+  // 另一会话同目标：src_state 也能看到（跨会话共享）
+  const b = h.exec("s24e");
+  await h.run("src_add_goal", { target: "list-24.test", objective: "续测视角" }, b);
+  const stateB = await h.run("src_state", {}, b);
+  assert.equal(stateB.counts.domainNotes, 2, "跨会话应共享笔记");
+  // 未初始化会话：空投影不报错
+  const c = h.exec("s24f");
+  const stateC = await h.run("src_state", {}, c);
+  assert.deepEqual(stateC.domainNotes, []);
+  assert.equal(stateC.counts.domainNotes, 0);
+  // 无 goal 会话直接调 list：应报错（requires goal）
+  await assert.rejects(() => h.run("src_list_domain_notes", {}, c), /src_add_goal/);
 });
