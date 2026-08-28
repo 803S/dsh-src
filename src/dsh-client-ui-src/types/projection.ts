@@ -57,6 +57,14 @@ export type SrcProjectionNode =
     readonly victimImpact: string
     readonly affectedAssetId: string | undefined
     readonly createdAt: number
+    /** [local.26] finding lifecycle: 'active' (default) or 'rejected' (user-pushed-back). */
+    readonly status: 'active' | 'rejected'
+    /** [local.26] reject reason text when status === 'rejected'; '' otherwise. */
+    readonly rejectReason: string
+    /** [local.26] epoch ms when rejected; 0 when active. */
+    readonly rejectedAt: number
+    /** [local.26] optional narrative attack chain (发现→利用前提→利用过程→实际损失→受害者). */
+    readonly attackChain: string
   }
 
 export interface SrcProjectionAsset {

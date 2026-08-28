@@ -769,6 +769,41 @@ test("/src-todo feedback parser validates id/status and keeps note", () => {
 	}
 });
 
+test("[local.26] /src-reject panel command: validates findingId/reason and relays to agent via followup (mirror of /src-todo)", async () => {
+  const h = harness();
+  assert.equal(h.commands.has("src-reject"), true, "src-reject registered");
+
+  const parent = h.exec("prej");
+  let followed = null;
+  parent.agent.followup = (message) => { followed = message; };
+
+  // happy path: findingId + reason -> success + followup instructing src_reject_finding
+  const ok = await h.commands.get("src-reject").handler({ rawInput: "finding-2 危害链不闭合，请补 attackChain", agent: parent.agent });
+  assert.equal(ok.kind, "success");
+  assert.ok(followed, "must followup to the agent");
+  const text = followed.content[0].text;
+  assert.match(text, /src_reject_finding/);
+  assert.match(text, /finding-2/);
+  assert.match(text, /危害链不闭合，请补 attackChain/);
+
+  // missing reason -> error, no followup
+  followed = null;
+  const noReason = await h.commands.get("src-reject").handler({ rawInput: "finding-3", agent: parent.agent });
+  assert.equal(noReason.kind, "error");
+  assert.match(noReason.text, /缺少打回理由/);
+  assert.equal(followed, null, "missing reason must not wake the agent");
+
+  // illegal finding id -> error
+  const badId = await h.commands.get("src-reject").handler({ rawInput: "find-3 理由", agent: parent.agent });
+  assert.equal(badId.kind, "error");
+  assert.match(badId.text, /不合法/);
+
+  // overlong reason (>500) -> error
+  const longReason = await h.commands.get("src-reject").handler({ rawInput: `finding-3 ${"x".repeat(501)}`, agent: parent.agent });
+  assert.equal(longReason.kind, "error");
+  assert.match(longReason.text, /过长|上限 500/);
+});
+
 test("[local.9] parseGoalHost: dirty target normalized at src_add_goal and all URL tools", async () => {
   const h = harness();
   const parent = h.exec("p");
@@ -879,7 +914,7 @@ test("observation projection carries truncated response headers/snippet for the 
 
 test("[local.11] panel commands: /src-infra direct-writes storage + synthetic event; probes registered; burp TCP pre-check gates the AI relay", async () => {
   const h = harness();
-  for (const name of ["src-todo", "src-infra", "src-proxy-test", "src-burp-test"]) assert.equal(h.commands.has(name), true, `${name} registered`);
+  for (const name of ["src-todo", "src-reject", "src-infra", "src-proxy-test", "src-burp-test"]) assert.equal(h.commands.has(name), true, `${name} registered`);
 
   // --- /src-infra: direct write, no followup, synthetic tool/call appended ---
   const parent = h.exec("pcmd");

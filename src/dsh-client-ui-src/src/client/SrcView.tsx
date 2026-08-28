@@ -227,7 +227,7 @@ type TodoRow = {
 									const n = badgeFor(tabKey);
 									if (n === 0) return null;
 									return<span className={`${css.tabBadge} ${tabKey === "todos" ? css.tabBadgeHot : ""}`}>{n}</span>;
-								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <TodoListView src={src} t={t} runCommand={runCommand} />; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
+								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={runCommand} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <TodoListView src={src} t={t} runCommand={runCommand} />; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
 		}
 		//#endregion
 		
