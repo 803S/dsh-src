@@ -152,13 +152,39 @@ export interface SrcProjectionEdge {
   readonly targetId: string
 }
 
+/** [local.32] One coverage row as carried by the wire projection (mirrors srcProjectionSchema). */
+export interface SrcProjectionCoverageRow {
+  readonly id: string
+  readonly assetId: string | undefined
+  readonly phase: string
+  readonly category: string
+  readonly status: 'planned' | 'running' | 'completed' | 'blocked' | 'not-applicable'
+  readonly evidence: readonly string[]
+  readonly limitation: string
+  readonly updatedAt: number
+}
+
+/** [local.32] One research row as carried by the wire projection (mirrors srcProjectionSchema). */
+export interface SrcProjectionResearchRow {
+  readonly id: string
+  readonly intentId: string
+  readonly category: string
+  readonly hypothesis: string
+  readonly preconditions: readonly string[]
+  readonly status: 'hypothesis' | 'testing' | 'reproduced' | 'verified' | 'false-positive' | 'blocked'
+  readonly stopReason: string
+  readonly evidence: readonly string[]
+  readonly findingId: string | undefined
+  readonly updatedAt: number
+}
+
 /** The standing src state shown by the Web view tab. */
 export interface SrcProjection {
   readonly goal: SrcProjectionGoal | null
   readonly nodes: readonly SrcProjectionNode[]
   readonly assets: readonly SrcProjectionAsset[]
-  readonly coverage: ReadonlyArray<unknown>
-  readonly research: ReadonlyArray<{ readonly id: string; readonly category: string; readonly hypothesis: string; readonly evidence?: readonly string[] }>
+  readonly coverage: ReadonlyArray<SrcProjectionCoverageRow>
+  readonly research: ReadonlyArray<SrcProjectionResearchRow>
   readonly checkpoints: readonly SrcProjectionCheckpoint[]
   readonly observations: readonly SrcProjectionObservation[]
   readonly userTodos: readonly SrcProjectionUserTodo[]

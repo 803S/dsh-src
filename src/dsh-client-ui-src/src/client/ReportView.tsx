@@ -8,7 +8,7 @@
 
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import type { SrcProjection, SrcProjectionNode } from '../../types/projection'
+import type { SrcProjection, SrcProjectionCoverageRow, SrcProjectionNode } from '../../types/projection'
 import type { PropsLocale } from '../../types/slots'
 import css from './ReportView.module.css'
 
@@ -30,6 +30,95 @@ function formatApiMeta(meta: unknown): string {
     // keep the raw text when the JSON payload is malformed
   }
   return `API/${kind}${detail === '' ? '' : `: ${detail}`}`
+}
+
+/* [local.32] 报告新增五节的渲染辅助：API 发现摘要 / 资产与测试覆盖率 / 漏洞研究矩阵 /
+   建议人工测试的 AI·威胁情报资产 / ⏸ 等你的事。内容口径与服务端 buildReport 一致，
+   呈现用 markdown 表格 + 状态徽标（预览更可读；下载的 .md 仍是标准管道表格）。 */
+
+/** 表格单元格消毒：竖线会破行，换行会破表。 */
+function mdCell(value: unknown): string {
+  return String(value ?? '').replace(/\|/g, '｜').replace(/\r?\n/g, ' ').trim()
+}
+
+function mdTable(headers: readonly string[], rows: readonly (readonly string[])[]): string[] {
+  return [
+    `| ${headers.join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+    ...rows.map((row) => `| ${row.map((cell) => mdCell(cell)).join(' | ')} |`),
+  ]
+}
+
+function researchStatusLabel(t: ReportViewProps['t'], status: string): string {
+  if (status === 'verified') return `✅ ${t('report.stVerified')}`
+  if (status === 'reproduced') return `🧪 ${t('report.stReproduced')}`
+  if (status === 'testing') return `🔄 ${t('report.stTesting')}`
+  if (status === 'false-positive') return `❌ ${t('report.stFalsePositive')}`
+  if (status === 'blocked') return `⛔ ${t('report.stBlocked')}`
+  return `💭 ${t('report.stHypothesis')}`
+}
+
+function coverageStatusLabel(t: ReportViewProps['t'], status: string): string {
+  if (status === 'completed') return `✅ ${t('report.stCompleted')}`
+  if (status === 'running') return `🔄 ${t('report.stRunning')}`
+  if (status === 'blocked') return `⛔ ${t('report.stBlocked')}`
+  if (status === 'not-applicable') return `➖ ${t('report.stNa')}`
+  return `📅 ${t('report.stPlanned')}`
+}
+
+/** API 发现摘要：统计直接用投影里服务端算好的 apiDiscovery（口径一致），示例客户端取前 5。 */
+function apiSummaryLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const stats = src.apiDiscovery ?? { total: 0, schemas: 0, graphql: 0, hints: 0, untouched: 0 }
+  const table = mdTable(
+    [t('report.apiTotal'), t('report.apiSchemas'), t('report.apiGraphql'), t('report.apiHints'), t('report.apiUntouched')],
+    [[String(stats.total), String(stats.schemas), String(stats.graphql), String(stats.hints), String(stats.untouched)]],
+  )
+  const apiAssets = src.assets.filter((asset) => asset.type === 'endpoint' && typeof asset.meta === 'string' && asset.meta.startsWith('api:'))
+  const examples = apiAssets.slice(0, 5).map((asset) => {
+    const meta = formatApiMeta(asset.meta)
+    return `- \`${asset.value}\`${meta === '' ? '' : `（${meta}）`}`
+  })
+  return [...table, ...(examples.length === 0 ? [t('report.none')] : examples)]
+}
+
+/** 资产与测试覆盖率：表格呈现（blind-spot 行归「覆盖维度声明」节，不在此重复）。 */
+function coverageTableLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const rows = (src.coverage ?? []).filter((row) => row.phase !== 'blind-spot')
+  if (rows.length === 0) return [t('report.none')]
+  return mdTable(
+    [t('report.colId'), t('report.colStatus'), t('report.colPhase'), t('report.colCategory'), t('report.colAsset'), t('report.colLimitation'), t('report.colEvidence')],
+    rows.map((row) => [row.id, coverageStatusLabel(t, row.status), row.phase, row.category, row.assetId ?? '—', row.limitation === '' ? '—' : row.limitation, row.evidence.length === 0 ? '—' : row.evidence.join('; ')]),
+  )
+}
+
+/** 漏洞研究矩阵：假设 → 测试/复现 → 结论，一张表看完研究走向。 */
+function researchTableLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const rows = src.research ?? []
+  if (rows.length === 0) return [t('report.none')]
+  return mdTable(
+    [t('report.colId'), t('report.colStatus'), t('report.colCategory'), t('report.colHypothesis'), t('report.colStopReason')],
+    rows.map((row) => [row.id, researchStatusLabel(t, row.status), row.category, row.hypothesis, row.stopReason === '' ? '—' : row.stopReason]),
+  )
+}
+
+/** 建议人工测试的 AI/威胁情报资产：列表 + 一条说明（服务端每行重复同一句，UI 收敛为一行）。 */
+function aiAssetLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const rows = src.assets.filter((asset) => asset.type === 'ai-surface' || asset.type === 'threat-intel')
+  if (rows.length === 0) return [t('report.none')]
+  return [...rows.map((asset) => `- [${asset.type}] ${asset.value}${asset.meta === '' ? '' : `（${asset.meta}）`}`), '', t('report.aiAssetsNote')]
+}
+
+/** ⏸ 等你的事：未完成待办 + 挂起（blocked）且没有对应待办的意图。 */
+function waitingOnYouLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
+  const pendingTodos = (src.userTodos ?? []).filter((todo) => todo.status === 'pending')
+  const lines = pendingTodos.map((todo) => `- [${todo.kind}] ${todo.title}${todo.detail === '' ? '' : ` — ${todo.detail}`}`)
+  const blockedIntents = src.nodes.filter((node): node is SrcProjectionNode & { kind: 'intent' } => node.kind === 'intent' && node.status === 'blocked')
+  for (const node of blockedIntents) {
+    if (pendingTodos.some((todo) => todo.intentId === node.id)) continue
+    lines.push(`- ${node.id}/${node.title} — ${t('report.waitingBlockedLabel')}${node.detail === '' ? '' : `（${node.detail}）`}: ${t('report.waitingBlocked')}`)
+  }
+  if (lines.length === 0) return [t('report.waitingEmpty')]
+  return [...lines, '', t('report.waitingHint')]
 }
 
 function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
@@ -151,7 +240,7 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
       '',
     ]
   })
-  const rejectedLines = rejectedFindings.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.title}——${t('report.rejectReason')}: ${finding.rejectReason ?? t('report.none')}${finding.rejectedAt ? `（${new Date(finding.rejectedAt).toISOString()}）` : ''}`)
+  const rejectedLines = rejectedFindings.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.title}——${t('report.rejectReason')}: ${finding.rejectReason ?? t('report.rejectReasonMissing')}${finding.rejectedAt ? `（${new Date(finding.rejectedAt).toISOString()}）` : ''}`)
   const assetLines = src.assets.map((asset) => {
     const edge = src.edges.find(candidate => candidate.kind === 'parent' && candidate.targetId === asset.id)
     const parent = edge === undefined ? undefined : src.assets.find(candidate => candidate.id === edge.sourceId)
@@ -159,7 +248,10 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
     return `- [${asset.type}] ${asset.value}${metaText === '' ? '' : ` (${metaText})`}${parent === undefined ? '' : ` <- ${parent.value}`}`
   })
   const checkpointLines = (src.checkpoints ?? []).map(row =>
-    `- ${row.id} [${row.stage}] ${row.intentId} / ${row.childSessionId}: ${row.summary || t('report.none')} (+${row.facts} facts, +${row.assets} assets, +${row.findings} findings)`)
+    `- ${row.id} [${row.stage}] ${row.intentId} / ${row.childSessionId}: ${row.summary || t('report.noSummary')} (+${row.facts} facts, +${row.assets} assets, +${row.findings} findings)`)
+  /* [local.32] 节标题全部走 report.sec.*（zh 与服务端 buildReport 逐字一致，tests 有完整性闸对比两侧集合）；
+     节顺序与 buildReport 严格相同：探索链路→漏洞发现→已打回→API 发现摘要→资产→资产与测试覆盖率→
+     漏洞研究矩阵→子 Agent 检查点→AI/威胁情报资产→覆盖维度声明→⏸ 等你的事。 */
   return [
     `# ${t('report.title')}`,
     '',
@@ -167,38 +259,50 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
     `- ${t('report.objective')}: ${src.goal.objective}`,
     `- ${t('report.authorization')}: ${src.goal.authorization === '' ? t('report.undeclared') : src.goal.authorization}`,
     '',
-    `## ${t('report.chain')}`,
+    `## ${t('report.sec.chain')}`,
     ...(chain.length === 0 ? [t('report.chainEmpty')] : chain),
     '',
-    `## ${t('report.findings')}`,
+    `## ${t('report.sec.findings')}`,
     ...(findingSections.length === 0 ? [t('report.none')] : findingSections),
     '',
-    `## ${t('report.rejected')}`,
+    `## ${t('report.sec.rejected')}`,
     ...(rejectedLines.length === 0 ? [t('report.none')] : rejectedLines),
     '',
-    `## ${t('report.assets')}`,
+    `## ${t('report.sec.apiSummary')}`,
+    ...apiSummaryLines(src, t),
+    '',
+    `## ${t('report.sec.assets')}`,
     ...(assetLines.length === 0 ? [t('report.none')] : assetLines),
     '',
-    `## ${t('report.checkpoints')}`,
+    `## ${t('report.sec.coverage')}`,
+    ...coverageTableLines(src, t),
+    '',
+    `## ${t('report.sec.research')}`,
+    ...researchTableLines(src, t),
+    '',
+    `## ${t('report.sec.checkpoints')}`,
     ...(checkpointLines.length === 0 ? [t('report.none')] : checkpointLines),
     '',
-    `## ${t('report.blindSpots')}`,
+    `## ${t('report.sec.aiAssets')}`,
+    ...aiAssetLines(src, t),
+    '',
+    `## ${t('report.sec.blindSpots')}`,
     ...blindSpotLines(src, t),
+    '',
+    `## ${t('report.sec.waitingOnYou')}`,
+    ...waitingOnYouLines(src, t),
     '',
   ].join('\n')
 }
 
 function blindSpotLines(src: SrcProjection, t: ReportViewProps['t']): string[] {
-  const rows = (src.coverage ?? []).filter((row) => {
-    if (row === null || typeof row !== 'object') return false
-    return (row as { phase?: unknown }).phase === 'blind-spot'
-  }) as ReadonlyArray<{ category?: unknown; status?: unknown; limitation?: unknown; evidence?: unknown }>
+  const rows = (src.coverage ?? []).filter((row) => row.phase === 'blind-spot')
   if (rows.length === 0) return [t('report.blindSpotsEmpty')]
-  const statusLabel = (status: unknown) => status === 'completed' ? t('report.blindSpotCovered') : status === 'blocked' ? t('report.blindSpotUncovered') : status === 'not-applicable' ? t('report.blindSpotNa') : String(status)
+  const statusLabel = (status: SrcProjectionCoverageRow['status']) => status === 'completed' ? t('report.blindSpotCovered') : status === 'blocked' ? t('report.blindSpotUncovered') : status === 'not-applicable' ? t('report.blindSpotNa') : status
   return rows.map((row) => {
-    const note = typeof row.limitation === 'string' && row.limitation !== '' ? ` — ${row.limitation}` : ''
-    const evidence = Array.isArray(row.evidence) && row.evidence.length > 0 ? `（${t('report.blindSpotEvidence')} ${row.evidence.join(',')}）` : ''
-    return `- ${String(row.category ?? '?')}: ${statusLabel(row.status)}${note}${evidence}`
+    const note = row.limitation !== '' ? ` — ${row.limitation}` : ''
+    const evidence = row.evidence.length > 0 ? `（${t('report.blindSpotEvidence')} ${row.evidence.join(',')}）` : ''
+    return `- ${row.category}: ${statusLabel(row.status)}${note}${evidence}`
   })
 }
 
@@ -215,6 +319,7 @@ function MarkdownPreview({ markdown }: { readonly markdown: string }) {
   let codeBuffer: string[] = []
   let codeKey = 0
   let paraKey = 0
+  let tableKey = 0
   /* 行内渲染：`code` 与 **bold**（不改语义，只为让报错/标识可读）。 */
   const renderInline = (text: string): ReactNode => {
     const parts: ReactNode[] = []
@@ -233,13 +338,34 @@ function MarkdownPreview({ markdown }: { readonly markdown: string }) {
     }
     return <>{parts}</>
   }
-  for (const [index, line] of lines.entries()) {
+  const isTableDelimiter = (line: string): boolean => /^\|(\s*:?-+:?\s*\|)+$/.test(line.trim())
+  const cellsOf = (line: string): string[] => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
     if (inCode) {
       if (line.trim() === '```') { rows.push(<pre key={`code-${codeKey++}`} className={css.codeblock}><code>{codeBuffer.join('\n')}</code></pre>); inCode = false; codeBuffer = []; continue }
       codeBuffer.push(line)
       continue
     }
     if (line.trim() === '```') { inCode = true; codeBuffer = []; continue }
+    /* [local.32] 管道表格：表头行 + `---` 分隔行 + 数据行 → 原生 table（斑马纹/圆角由 css 负责；
+       代码块内的表格不会被解析——inCode 分支先行）。 */
+    if (line.trim().startsWith('|') && index + 1 < lines.length && isTableDelimiter(lines[index + 1])) {
+      const header = cellsOf(line)
+      const body: string[][] = []
+      let cursor = index + 2
+      while (cursor < lines.length && lines[cursor].trim().startsWith('|')) { body.push(cellsOf(lines[cursor])); cursor += 1 }
+      rows.push(
+        <div key={`table-${tableKey++}`} className={css.tableWrap}>
+          <table className={css.table}>
+            <thead><tr>{header.map((cell, i) => <th key={i}>{renderInline(cell)}</th>)}</tr></thead>
+            <tbody>{body.map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci}>{renderInline(cell)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>,
+      )
+      index = cursor - 1
+      continue
+    }
     if (line === '') { rows.push(<div key={`blank-${index}`} className={css.blank} />); continue }
     if (line.startsWith('### ')) rows.push(<h3 key={index}>{renderInline(line.slice(4))}</h3>)
     else if (line.startsWith('## ')) rows.push(<h2 key={index}>{renderInline(line.slice(3))}</h2>)

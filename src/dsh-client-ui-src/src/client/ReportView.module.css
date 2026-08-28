@@ -146,3 +146,39 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
 }
+
+/* [local.32] 报告表格：覆盖率/研究矩阵等 markdown 管道表格渲染成的原生 table。 */
+.tableWrap {
+  margin: 6px 0 10px;
+  overflow-x: auto;
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12.5px;
+  line-height: 19px;
+}
+
+.table th,
+.table td {
+  border: 1px solid var(--dsw-alias-border-l2);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.table th {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.table tbody tr:nth-child(even) td {
+  background: var(--dsw-alias-bg-layer-1);
+}

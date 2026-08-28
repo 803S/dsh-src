@@ -2117,3 +2117,93 @@ test("[local.30] 垂直攻击链①到⑤ + app 资产应用下载行 + 前端�
   assert.ok(report.markdown.indexOf("① 发现") < report.markdown.indexOf("② 利用前提"), "① 在②之前");
   assert.ok(report.markdown.indexOf("② 利用前提") < report.markdown.indexOf("③ 利用过程"), "② 在③之前");
 });
+
+/* [local.32] 报告节完整性闸：UI reportOf（ReportView.tsx）的节标题集合必须与服务端 buildReport 逐字一致。
+   双渲染漂移第三次显灵——把「每波手工同步」变成测试闸：任何一侧增/改/删节而另一侧没跟，这里红。 */
+test("[local.32] 报告节完整性：UI reportOf 与服务端 buildReport 节标题集合一致（双渲染漂移闸）", async () => {
+  const h = harness();
+  const parent = h.exec("sec-gate");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "节完整性闸", authorization: "SRC" }, parent);
+  const report = await h.run("src_report", {}, parent);
+  const serverTitles = [...report.markdown.matchAll(/^## (.+)$/gm)].map((m) => m[1]).sort();
+  assert.ok(serverTitles.length > 0, "服务端报告应包含 ## 节");
+  const root = nodePath.resolve(nodePath.dirname(new URL(import.meta.url).pathname), "..");
+  const tsx = await fsPromises.readFile(nodePath.join(root, "src/dsh-client-ui-src/src/client/ReportView.tsx"), "utf8");
+  const usedKeys = [...new Set([...tsx.matchAll(/\bt\('(report\.sec\.[A-Za-z]+)'\)/g)].map((m) => m[1]))];
+  assert.ok(usedKeys.length > 0, "ReportView.tsx 应使用 report.sec.* 节标题词条");
+  const locales = await fsPromises.readFile(nodePath.join(root, "src/dsh-client-ui-src/src/client/locales.ts"), "utf8");
+  const zhMap = {};
+  /* zh 字典在文件前半，首个出现优先。 */
+  for (const m of locales.matchAll(/'(report\.sec\.[A-Za-z]+)':\s*'([^']+)'/g)) if (zhMap[m[1]] === void 0) zhMap[m[1]] = m[2];
+  const uiTitles = usedKeys.map((key) => zhMap[key]).sort();
+  assert.deepEqual(uiTitles, serverTitles);
+});
+
+/* [local.32] src_http 软速率帽：同会话连续两次放行请求发送间隔 ≥250ms（≈≤4rps），且都成功（延迟而非拒绝）。 */
+test("[local.32] src_http 软速率帽：连续放行请求发送间隔 ≥250ms 且不拒绝", async () => {
+  const sendAt = [];
+  const server = http.createServer((req, res) => { sendAt.push(Date.now()); res.writeHead(200, { "content-type": "text/plain" }); res.end("ok"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harness();
+  const parent = h.exec("throttle");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "速率帽验证" }, parent);
+  try {
+    const first = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/users/list`, method: "GET", justification: "读名单无破坏性" }, parent);
+    const t0 = Date.now();
+    const second = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/orders/detail`, method: "GET", justification: "读详情无破坏性" }, parent);
+    const elapsed = Date.now() - t0;
+    assert.equal(first.approval, "allowed-auto");
+    assert.equal(second.approval, "allowed-auto");
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200, "软限制不拒绝");
+    assert.equal(sendAt.length, 2, "两次都真实发出");
+    assert.ok(elapsed >= 225, `第二次调用应等待速率帽（实际 ${elapsed}ms）`);
+    assert.ok(sendAt[1] - sendAt[0] >= 235, `两次发送间隔应 ≥250ms 左右（实际 ${sendAt[1] - sendAt[0]}ms）`);
+  } finally { server.close(); }
+});
+
+/* [local.32] 基础设施默认沿用上次会话：新会话零覆盖项时 src_add_goal 自动复制最近配置过的其他会话设置；
+   本会话显式保存过任何设置则完全尊重，不自动沿用。 */
+test("[local.32] src_add_goal 默认沿用上次会话基础设施（显式设置不被覆盖）", async () => {
+  const h = harness();
+  const a = h.exec("sess-a");
+  await h.run("src_add_goal", { target: "https://a.test", objective: "先配置基础设施" }, a);
+  await h.run("src_set_infra", { key: "proxyUrl", value: "http://127.0.0.1:7890" }, a);
+  await h.run("src_set_infra", { key: "burpMcpPort", value: "9876" }, a);
+  /* 新会话 b：零覆盖项 → 建目标自动沿用。 */
+  const b = h.exec("sess-b");
+  const goalB = await h.run("src_add_goal", { target: "https://b.test", objective: "新会话免重填" }, b);
+  assert.ok(goalB.infraInherited, "应返回 infraInherited");
+  assert.match(goalB.infraInherited.summary, /proxyUrl=http:\/\/127\.0\.0\.1:7890/);
+  assert.match(goalB.infraInherited.summary, /burpMcpPort=9876/);
+  const infraB = await h.run("src_get_infra", {}, b);
+  assert.equal(infraB.infra.proxyUrl, "http://127.0.0.1:7890");
+  assert.equal(infraB.infra.burpMcpPort, "9876");
+  /* 投影同步：每个沿用项都有合成 src_set_infra 事件。 */
+  const events = h.sessions.get("sess-b").events.filter((e) => e.type === "tool/call" && e.data.name === "src_set_infra");
+  assert.equal(events.length, 2, "沿用项应有合成事件同步投影");
+  /* 会话 c：显式设置过自己的 proxyUrl → 完全不自动沿用。 */
+  const c = h.exec("sess-c");
+  await h.run("src_set_infra", { key: "proxyUrl", value: "http://127.0.0.1:9999" }, c);
+  const goalC = await h.run("src_add_goal", { target: "https://c.test", objective: "已有显式设置" }, c);
+  assert.equal(goalC.infraInherited, void 0, "显式设置过的会话不自动沿用");
+  const infraC = await h.run("src_get_infra", {}, c);
+  assert.equal(infraC.infra.proxyUrl, "http://127.0.0.1:9999");
+});
+
+/* [local.32] 401 语义修正：预检/扫描遇 401 是认证边界发现信号——不触发 requiresDecision、不停扫、不置 protectionSignal。 */
+test("[local.32] scan_surface 遇 401 不算风控：继续扫完且 protectionSignal 不置真", async () => {
+  const h = harness();
+  const parent = h.exec("p401");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "认证边界扫描", authorization: "SRC" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('{"error":"unauthorized"}', { status: 401, headers: { "content-type": "application/json" } });
+    const result = await h.run("src_scan_surface", { baseUrl: "https://example.test", paths: ["/admin", "/api/users/list"], rps: 10 }, parent);
+    assert.equal(result.requiresDecision, false, "401 预检不应触发 requiresDecision");
+    assert.equal(result.stopped, void 0, "401 不应触发停扫");
+    assert.equal(result.requested, 2, "全部路径都应扫到");
+    for (const row of result.results) assert.equal(row.protectionSignal, false, "401 不应置 protectionSignal");
+  } finally { globalThis.fetch = originalFetch; }
+});

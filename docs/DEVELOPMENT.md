@@ -136,8 +136,11 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 4. **高危请求异步挂起队列**（local.31）：集成测试中高危请求挂到 `pending_approvals` 表（本地 `MemoryDomain`，不触网）；
    批准后 `src_resolve_approval` 原样重放到本地 mock 服务器（`127.0.0.1` 随机端口）；不调真实 `dsh-user-approval`，也不需开放交互轮次。
 5. **fail-closed 验证**：必须验证挂起阶段 / 拒绝后**mock 服务器收不到任何请求**（`hitCount === 0`），这是模块一-路线A 的拦截红线。
+6. **报告节完整性闸**（local.32）：任何新增/改名报告节的改动必须同时过 `[local.32]` 双渲染闸——
+   UI `reportOf`（ReportView.tsx，节标题词条 `report.sec.*`，zh 值与服务端逐字一致）与服务端 `buildReport` 的
+   `## ` 节标题集合必须相等；节顺序两侧也必须一致。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]` 系列（18 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]` 系列（22 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用）。
 
 ## 目录结构
 
