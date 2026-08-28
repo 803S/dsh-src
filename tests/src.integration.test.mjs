@@ -3,7 +3,8 @@ import test from "node:test";
 import * as fsPromises from "node:fs/promises";
 import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
-import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState } from "../lib/src.js";
+import http from "node:http";
+import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest } from "../lib/src.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 
 class MemoryTable {
@@ -54,6 +55,15 @@ function harness() {
   };
   const run = (name, args, execution) => tools.get(name).execute(args, execution);
   return { domain, ctx, tools, sessions, projections, prompts, commands, exec, run };
+}
+/* [local.26] 带 mock 审批服务的 harness：policy="allow"→返回 allowed-once，"reject"→返回 rejected。 */
+function harnessWithApproval({ policy } = {}) {
+  const h = harness();
+  h.ctx.get = (name) => {
+    if (name === "approval") return { async request() { return policy === "reject" ? "rejected" : "allowed-once"; } };
+    return void 0;
+  };
+  return h;
 }
 
 test("SRC workflow persists, deduplicates checkpoints", async () => {
@@ -1285,10 +1295,11 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
     pocEvidence: ["GET /api/order/2 as user A -> order of user B"],
     reproducibleSteps: ["登录账号 A", "GET /api/order/2"]
   }, parent);
-  // 无 rawRequest → finalize 会 blocker；这里只关注 warning 文案。直接检查报告渲染。
+  // 直接检查报告渲染。
   const report = await h.run("src_report", {}, parent);
-  assert.ok(report.markdown.includes("攻击者视角（利用场景）: 攻击者遍历订单 ID"), "attacker perspective line");
-  assert.ok(report.markdown.includes("受害者视角（危害与损失）: 受害用户的收货地址"), "victim perspective line");
+  assert.ok(report.markdown.includes("攻击链（发现→利用前提→利用过程→损失→受害者）"), "attack chain header");
+  assert.ok(report.markdown.includes("③ 利用过程：攻击者遍历订单 ID"), "attacker perspective in chain");
+  assert.ok(report.markdown.includes("⑤ 受害者影响：受害用户的收货地址"), "victim perspective in chain");
   // 缺失场景：第二个 finding 不带 victimImpact
   await h.run("src_add_intent", { title: "信息泄露复核", detail: "d", goalId: state.goal.id }, parent).catch(() => {});
   const intents = await h.run("src_state", {}, parent);
@@ -1299,7 +1310,7 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
     await h.run("src_update_finding", { findingId: "finding-1", victimImpact: "" }, parent);
   }
   const report2 = await h.run("src_report", {}, parent);
-  assert.ok(report2.markdown.includes("未填写——须用 src_update_finding 补写：谁受害、损失什么、是否可察觉"), "missing placeholder shown");
+  assert.ok(report2.markdown.includes("⑤ 受害者影响：（未填写——须用 src_update_finding 补写"), "missing placeholder shown");
 });
 
 test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索引注入 + finalize 未沉淀警告", async () => {
@@ -1812,4 +1823,157 @@ test("[local.24] 域笔记查看通道：src_list_domain_notes 只读清单 + sr
   assert.equal(stateC.counts.domainNotes, 0);
   // 无 goal 会话直接调 list：应报错（requires goal）
   await assert.rejects(() => h.run("src_list_domain_notes", {}, c), /src_add_goal/);
+});
+
+/* [local.26] 模块一-路线A：高危动作分类纯函数（不触网，不需 mock 服务器）。 */
+test("[local.26] classifyHttpRequest 拦截红线：closeAccount GET+token+他人 id → 破坏性写入挂", () => {
+  const v = classifyHttpRequest({ method: "GET", path: "/api-c/user/v1/closeAccount", headers: { userId: "15", authorization: "Bearer t" } });
+  assert.equal(v.require, true, "closeAccount 必须挂起（真实美团红线复现）");
+  assert.equal(v.category, "破坏性写入");
+});
+test("[local.26] classifyHttpRequest 越权：有 token + 写方法 + 他人资源 id → 越权删改挂", () => {
+  const v = classifyHttpRequest({ method: "POST", path: "/api/v1/orders", headers: { authorization: "Bearer t" }, body: '{"userId":42}' });
+  assert.equal(v.require, true);
+  assert.equal(v.category, "越权删改");
+  assert.deepEqual(v.victimIds, [42]);
+});
+test("[local.26] classifyHttpRequest 未授权删改：无 token + 写方法 + 非读语义 path → 挂", () => {
+  const v = classifyHttpRequest({ method: "POST", path: "/api/v1/user/register", headers: {}, body: '{"phone":"123"}' });
+  assert.equal(v.require, true);
+  assert.equal(v.category, "未授权删改");
+});
+test("[local.26] classifyHttpRequest 放行：自己 token + 自己资源 id 的小写写不误报越权仍挂（代价可接受）", () => {
+  /* 自己资源也可能命中"他人 id"枚举；为删改零漏，写+token+枚举 id 一律挂，批准即可执行。 */
+  const v = classifyHttpRequest({ method: "POST", path: "/api/v1/profile", headers: { authorization: "Bearer t" }, body: '{"userId":1}' });
+  assert.equal(v.require, true);
+  assert.equal(v.category, "越权删改");
+});
+test("[local.26] classifyHttpRequest 放行：强读语义 path + 未授权探测 → 放行（白名单）", () => {
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/users/query?userId=3", headers: {} }).require, false);
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/orders/list", headers: {} }).require, false);
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/account/detail", headers: {} }).require, false);
+});
+test("[local.26] classifyHttpRequest 不误伤：preset 不命中 reset、enclose 不命中 close", () => {
+  /* preset/config 是读 → 放行；enclose 是 POST+无 token+非读语义 → 未授权删改挂（不含破坏性词） */
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/preset/config", headers: {} }).require, false);
+  const enclose = classifyHttpRequest({ method: "POST", path: "/api/v1/enclose", headers: {} });
+  assert.equal(enclose.require, true);
+  assert.equal(enclose.category, "未授权删改");
+});
+test("[local.26] classifyHttpRequest 破坏性词作为 GET 也挂：cancelOrder/deleteUser", () => {
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/orders/cancelOrder", headers: { authorization: "t" } }).category, "破坏性写入");
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/deleteUser", headers: { authorization: "t" } }).category, "破坏性写入");
+});
+test("[local.26] classifyHttpRequest SMS 发包（软约束）：GET + 无 token + 读语义放行（设计可接受）", () => {
+  /* sentVerificationCode 是 GET+副作用词但无破坏性词、非写方法 → 放行；发包拦截是软约束。 */
+  const v = classifyHttpRequest({ method: "GET", path: "/api/v1/sms/sentVerificationCode?regionCode=JP&phoneNumber=9012345670", headers: {} });
+  assert.equal(v.require, false);
+});
+
+/* [local.26] 模块一-路线A：src_http 工具集成——本地 mock HTTP 服务器（127.0.0.1，非厂商域名）。
+ * 验证：放行请求直接转发；破坏性/越权/未授权删改请求挂起审批，批准后才转发，拒绝/无人审 fail-closed。 */
+test("[local.26] src_http 放行读请求直接转发到本地 mock 服务器", async () => {
+  const server = http.createServer((req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end("ok-" + req.url); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const targetHost = "127.0.0.1";
+  const h = harnessWithApproval({ policy: "allow" });
+  const parent = h.exec("http1");
+  await h.run("src_add_goal", { target: targetHost, objective: "mock 验证 src_http 放行" }, parent);
+  try {
+    const result = await h.run("src_http", { url: `http://${targetHost}:${port}/api/v1/users/list`, method: "GET", justification: "读名单无破坏性" }, parent);
+    assert.equal(result.approval, "allowed-auto");
+    assert.equal(result.status, 200);
+  } finally { server.close(); }
+});
+test("[local.26] src_http 破坏性请求挂起审批——拒绝则 fail-closed 不发出（mock 收不到请求）", async () => {
+  let hitCount = 0;
+  const server = http.createServer((req, res) => { hitCount++; res.writeHead(204); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harnessWithApproval({ policy: "reject" });
+  const parent = h.exec("http2");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证破坏性审批拒绝" }, parent);
+  try {
+    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, parent);
+    assert.equal(result.approval, "rejected");
+    assert.equal(result.status, 0, "被拒绝不应发出，status 为 0");
+    assert.equal(hitCount, 0, "mock 服务器不应收到任何请求");
+  } finally { server.close(); }
+});
+test("[local.26] src_http 越权删改挂起——批准后才转发（mock 收到一次）", async () => {
+  let hitCount = 0;
+  const server = http.createServer((req, res) => { hitCount++; res.writeHead(201); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harnessWithApproval({ policy: "allow" });
+  const parent = h.exec("http3");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越权审批批准" }, parent);
+  try {
+    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/orders`, method: "POST", headers: { authorization: "Bearer t" }, body: '{"userId":42}', justification: "越权改他人订单（已审批）" }, parent);
+    assert.equal(result.approval, "allowed");
+    assert.equal(result.status, 201);
+    assert.equal(hitCount, 1, "批准后 mock 收到一次");
+  } finally { server.close(); }
+});
+test("[local.26] src_http 无审批服务 → fail-closed 抛错不发出", async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(200); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harness(); /* 无 approval 服务 */
+  const parent = h.exec("http4");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证无审批 fail-closed" }, parent);
+  try {
+    await assert.rejects(() => h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "1", authorization: "Bearer t" }, justification: "删改" }, parent), /fail-closed/);
+  } finally { server.close(); }
+});
+test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
+  const h = harnessWithApproval({ policy: "allow" });
+  const parent = h.exec("http5");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越界" }, parent);
+  await assert.rejects(() => h.run("src_http", { url: "http://example.test/evil", method: "GET", justification: "越界" }, parent), /outside the authorized goal host/);
+});
+
+/* [local.26] 模块二：打回闭环——src_reject_finding + 闸防二次提交。 */
+test("[local.26] src_reject_finding 置 status=rejected + 备注；相似 title 二次提交被闸拒绝", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("rej1");
+  await h.run("src_add_goal", { target: "example.test", objective: "打回闭环测试" }, parent);
+  const st = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "删越权", detail: "d", goalId: st.goal.id }, parent);
+  const fe = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "证据记录响应体含敏感信息", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: intent.id, title: "账号删除漏洞", severity: "high", impact: "攻击者可删任意账号造成用户无法登录与服务中断", victimImpact: "用户被删账号无法登录且无法察觉删除来源", attackPrerequisites: "需登录态且可指定 userId 遍历枚举", concreteLossEvidence: [fe], affectedScope: "全量用户", remediation: "鉴权校验归属", pocEvidence: ["e"], reproducibleSteps: ["step1"] }, parent);
+  /* 打回 */
+  const rej = await h.run("src_reject_finding", { findingId: "finding-1", reason: "没看懂，能梳理下攻击链吗？" }, parent);
+  assert.equal(rej.status, "rejected");
+  assert.equal(rej.rejectReason, "没看懂，能梳理下攻击链吗？");
+  const st2 = await h.run("src_state", {}, parent);
+  assert.equal(st2.findings[0].status, "rejected");
+  /* 相似 title 二次提交被闸拒绝 */
+  await assert.rejects(() => h.run("src_add_finding", { intentId: intent.id, title: "账号删除漏洞", severity: "high", impact: "攻击者可删任意账号造成用户无法登录", victimImpact: "用户被删账号无法登录且无法察觉", attackPrerequisites: "需登录态且可指定 userId 遍历", concreteLossEvidence: [fe], affectedScope: "全量用户", remediation: "鉴权", pocEvidence: ["e"], reproducibleSteps: ["s"] }, parent), /已打回/);
+  /* 报告含「已打回」节 + 打回备注 */
+  const report = await h.run("src_report", {}, parent);
+  assert.ok(report.markdown.includes("## 已打回"), "报告含已打回节");
+  assert.ok(report.markdown.includes("没看懂，能梳理下攻击链吗？"), "报告含打回备注");
+});
+test("[local.26] src_update_finding 补 attackChain；报告渲染攻击链叙事节", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("chain1");
+  await h.run("src_add_goal", { target: "example.test", objective: "攻击链测试" }, parent);
+  const st = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: st.goal.id }, parent);
+  const fe = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "证据", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: intent.id, title: "多跳越权", severity: "high", impact: "可改任意用户订单造成数据篡改", victimImpact: "用户订单被篡改且难以察觉", attackPrerequisites: "需登录态可遍历订单 id", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s1"], attackChain: "发现 /api/admin → 骗登录 → 改数据 → 用户损失 → 全量用户受影响" }, parent);
+  const report = await h.run("src_report", {}, parent);
+  assert.ok(report.markdown.includes("攻击链（发现→利用前提→利用过程→损失→受害者）"), "攻击链标题");
+  assert.ok(report.markdown.includes("发现 /api/admin → 骗登录"), "attackChain 叙事渲染");
+  /* 无 attackChain 时由字段拼接 */
+  await h.run("src_add_finding", { intentId: intent.id, title: "单步漏洞", severity: "medium", impact: "可读取他人订单信息造成泄露", victimImpact: "用户订单信息泄露给攻击者", attackPrerequisites: "需登录态可枚举订单 id 遍历", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s"] }, parent);
+  const report2 = await h.run("src_report", {}, parent);
+  assert.ok(report2.markdown.includes("① 发现："), "无 attackChain 时拼接渲染");
 });

@@ -122,6 +122,24 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 - **记录按单会话作用域**，无跨会话/项目续跑；重新开始一次 engagement 需新的 `src_add_goal`。子 agent 不读取原始父 transcript，主 agent 通过 `src_state`/Web 进度页观察 durable checkpoint。
 - **图布局为静态分层**（可平移缩放，节点不可拖拽）。
 
+## 测试约束（硬性红线）
+
+本仓库的测试一律遵守以下红线——**不遵守 = 危害真实厂商资产/用户，等于线上事故**：
+
+1. **绝不用真实漏洞目标做测试**。`src_http`/`src_test_bypass`/`src_scan_surface` 等触及真实网络的集成测试，
+   全部走**本地 mock HTTP 服务器**（`127.0.0.1` + 随机端口 + `node:http`），不向任何外部域名发包。
+   目标设为 `127.0.0.1`（IP → 合理公共主机校验通过），URL 指向本地服务器端口。
+2. **绝不用任何厂商域名资产做测试**。测试中出现的 `example.test`/`127.0.0.1` 等均为占位/本地地址；
+   不在测试里出现 `meituan.com`/`oppo.com` 等真实厂商域名，不构造对真实厂商接口的请求报文。
+   会话日志取证（如 `session-65695562`）只查不改、不复现，仅作审计参考。
+3. **高危动作分类（`classifyHttpRequest`）是纯函数**，不触网，单测覆盖各种请求形态即可，无需任何 mock 服务器。
+4. **审批服务 mock**：集成测试中审批用 `harnessWithApproval({ policy })` 注入伪服务（allow→allowed-once /
+   reject→rejected），不调真实 `dsh-user-approval`，也不需开放交互轮次。
+5. **fail-closed 验证**：必须验证无审批服务时 / 审批被拒时**mock 服务器收不到任何请求**（`hitCount === 0`），
+   这是模块一-路线A 的拦截红线。
+
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]` 系列（15 个，全过）。
+
 ## 目录结构
 
 ```
