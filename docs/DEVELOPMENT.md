@@ -133,12 +133,11 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
    不在测试里出现 `meituan.com`/`oppo.com` 等真实厂商域名，不构造对真实厂商接口的请求报文。
    会话日志取证（如 `session-65695562`）只查不改、不复现，仅作审计参考。
 3. **高危动作分类（`classifyHttpRequest`）是纯函数**，不触网，单测覆盖各种请求形态即可，无需任何 mock 服务器。
-4. **审批服务 mock**：集成测试中审批用 `harnessWithApproval({ policy })` 注入伪服务（allow→allowed-once /
-   reject→rejected），不调真实 `dsh-user-approval`，也不需开放交互轮次。
-5. **fail-closed 验证**：必须验证无审批服务时 / 审批被拒时**mock 服务器收不到任何请求**（`hitCount === 0`），
-   这是模块一-路线A 的拦截红线。
+4. **高危请求异步挂起队列**（local.31）：集成测试中高危请求挂到 `pending_approvals` 表（本地 `MemoryDomain`，不触网）；
+   批准后 `src_resolve_approval` 原样重放到本地 mock 服务器（`127.0.0.1` 随机端口）；不调真实 `dsh-user-approval`，也不需开放交互轮次。
+5. **fail-closed 验证**：必须验证挂起阶段 / 拒绝后**mock 服务器收不到任何请求**（`hitCount === 0`），这是模块一-路线A 的拦截红线。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]` 系列（15 个，全过）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]` 系列（18 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等）。
 
 ## 目录结构
 

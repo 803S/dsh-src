@@ -127,6 +127,24 @@ export interface SrcProjectionUserTodo {
   readonly createdAt: number
 }
 
+/** [local.31] One high-risk HTTP request hung up pending human approval (async queue). */
+export interface SrcProjectionPendingApproval {
+  readonly id: string
+  readonly intentId: string | undefined
+  readonly method: string
+  readonly url: string
+  readonly path: string
+  readonly headers: string
+  readonly body: string
+  readonly category: string
+  readonly reason: string
+  readonly justification: string
+  readonly status: 'pending' | 'approved' | 'rejected'
+  readonly note: string
+  readonly responseStatus: number
+  readonly createdAt: number
+}
+
 export interface SrcProjectionEdge {
   readonly id: string
   readonly kind: 'spawns' | 'yields' | 'derived_from' | 'proves' | 'parent'
@@ -144,6 +162,7 @@ export interface SrcProjection {
   readonly checkpoints: readonly SrcProjectionCheckpoint[]
   readonly observations: readonly SrcProjectionObservation[]
   readonly userTodos: readonly SrcProjectionUserTodo[]
+  readonly pendingApprovals: readonly SrcProjectionPendingApproval[]
   readonly infra: Readonly<Record<string, string>>
   readonly edges: readonly SrcProjectionEdge[]
   readonly apiDiscovery: {
@@ -164,6 +183,7 @@ export interface SrcProjection {
     readonly checkpoints: number
     readonly observations: number
     readonly userTodos: number
+    readonly pendingApprovals: number
   } | undefined
   /** [UI-source note] not part of the wire schema; the timeline tolerates its absence (`src.findings ?? []`). */
   readonly findings?: readonly SrcProjectionNode[]

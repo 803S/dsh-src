@@ -93,7 +93,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, 5, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 });
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
@@ -424,7 +424,7 @@ test("projection replay mirrors semantic deduplication", () => {
   const replayed = projection.view(state);
   assert.equal(replayed.coverage.some((c) => c.category === "bypass-verification" && c.phase === "method-bypass"), true);
   assert.equal(replayed.coverage.some((c) => c.category === "passive-collection" && c.phase === "discovery"), true);
-  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
+  assert.deepEqual(replayed.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 3, research: 1, checkpoints: 0, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 });
 });
 
 test("full SRC engagement end-to-end: scope → passive → research → coverage → bypass → finalize → report", async () => {
@@ -967,7 +967,7 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   const freshView = viewSrcState(JSON.parse(JSON.stringify(srcInitialState)));
   assert.equal(freshView.goal, null);
   assert.equal(freshView.infra.burpMcpPort, "9876");
-  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0, testAccounts: 0, domainNotes: 0 });
+  assert.deepEqual(freshView.counts, { intents: 0, facts: 0, findings: 0, assets: 0, coverage: 0, research: 0, checkpoints: 0, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 });
 
   // --- [local.12] tool outputs must survive lossless JSON snapshotting ---
   // scan_surface non-stopped path previously emitted stopped:undefined -> "value is not lossless JSON"
@@ -1921,45 +1921,57 @@ test("[local.26] src_http 放行读请求直接转发到本地 mock 服务器", 
     assert.equal(result.status, 200);
   } finally { server.close(); }
 });
-test("[local.26] src_http 破坏性请求挂起审批——拒绝则 fail-closed 不发出（mock 收不到请求）", async () => {
+test("[local.26/31] src_http 破坏性请求挂起待审——拒绝则不发出（mock 收不到请求）", async () => {
   let hitCount = 0;
   const server = http.createServer((req, res) => { hitCount++; res.writeHead(204); res.end(); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
-  const h = harnessWithApproval({ policy: "reject" });
+  const h = harness();
   const parent = h.exec("http2");
-  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证破坏性审批拒绝" }, parent);
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证破坏性待审拒绝" }, parent);
   try {
     const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, parent);
-    assert.equal(result.approval, "rejected");
-    assert.equal(result.status, 0, "被拒绝不应发出，status 为 0");
+    assert.equal(result.approval, "pending", "挂起待审不发出");
+    assert.equal(result.status, 0, "挂起不应发出，status 为 0");
+    assert.ok(/^approval-\d+$/.test(result.pendingApprovalId), "返回 pendingApprovalId");
     assert.equal(hitCount, 0, "mock 服务器不应收到任何请求");
+    /* 用户在面板点拒绝 → agent 调 src_resolve_approval reject：仍不发出。 */
+    const rejected = await h.run("src_resolve_approval", { id: result.pendingApprovalId, action: "reject", note: "可能误伤真实用户" }, parent);
+    assert.equal(rejected.status, "rejected");
+    assert.equal(rejected.responseStatus, 0, "拒绝不发出，responseStatus 为 0");
+    assert.equal(hitCount, 0, "拒绝后 mock 仍不应收到请求");
   } finally { server.close(); }
 });
-test("[local.26] src_http 越权删改挂起——批准后才转发（mock 收到一次）", async () => {
+test("[local.26/31] src_http 越权删改挂起——批准后才转发（mock 收到一次）", async () => {
   let hitCount = 0;
   const server = http.createServer((req, res) => { hitCount++; res.writeHead(201); res.end(); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
-  const h = harnessWithApproval({ policy: "allow" });
+  const h = harness();
   const parent = h.exec("http3");
-  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越权审批批准" }, parent);
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越权待审批准" }, parent);
   try {
-    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/orders`, method: "POST", headers: { authorization: "Bearer t" }, body: '{"userId":42}', justification: "越权改他人订单（已审批）" }, parent);
-    assert.equal(result.approval, "allowed");
-    assert.equal(result.status, 201);
+    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/orders`, method: "POST", headers: { authorization: "Bearer t" }, body: '{"userId":42}', justification: "越权改他人订单（待审）" }, parent);
+    assert.equal(result.approval, "pending", "挂起待审");
+    assert.equal(hitCount, 0, "挂起阶段 mock 不应收到请求");
+    /* 用户点批准 → agent 调 src_resolve_approval allow：发出原请求，mock 收到一次。 */
+    const approved = await h.run("src_resolve_approval", { id: result.pendingApprovalId, action: "allow", note: "可信测试账号" }, parent);
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.responseStatus, 201, "发出后返回 mock 响应码");
     assert.equal(hitCount, 1, "批准后 mock 收到一次");
   } finally { server.close(); }
 });
-test("[local.26] src_http 无审批服务 → fail-closed 抛错不发出", async () => {
+test("[local.26/31] src_http 无审批服务仍能挂起为 pending（异步队列不依赖 ctx.approval）", async () => {
   const server = http.createServer((_req, res) => { res.writeHead(200); res.end(); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
-  const h = harness(); /* 无 approval 服务 */
+  const h = harness(); /* 无 approval 服务——异步队列不依赖它 */
   const parent = h.exec("http4");
-  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证无审批 fail-closed" }, parent);
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证无审批服务仍可挂起" }, parent);
   try {
-    await assert.rejects(() => h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "1", authorization: "Bearer t" }, justification: "删改" }, parent), /fail-closed/);
+    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "1", authorization: "Bearer t" }, justification: "删改" }, parent);
+    assert.equal(result.approval, "pending", "无审批服务也挂起为 pending（不抛错）");
+    assert.ok(/^approval-\d+$/.test(result.pendingApprovalId));
   } finally { server.close(); }
 });
 test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
@@ -1967,6 +1979,44 @@ test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
   const parent = h.exec("http5");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越界" }, parent);
   await assert.rejects(() => h.run("src_http", { url: "http://example.test/evil", method: "GET", justification: "越界" }, parent), /outside the authorized goal host/);
+});
+
+/* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
+test("[local.31] src_http 同请求去重复用既有 pending（不堆队列）", async () => {
+  const h = harness();
+  const parent = h.exec("ap-dedup");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "去重验证" }, parent);
+  const first = await h.run("src_http", { url: "http://127.0.0.1:59999/api-c/user/v1/closeAccount", method: "POST", headers: { authorization: "Bearer t", userId: "3" }, body: '{"x":1}', justification: "删改" }, parent);
+  const second = await h.run("src_http", { url: "http://127.0.0.1:59999/api-c/user/v1/closeAccount", method: "POST", headers: { authorization: "Bearer t", userId: "3" }, body: '{"x":1}', justification: "重发同请求" }, parent);
+  assert.equal(first.approval, "pending");
+  assert.equal(second.approval, "pending");
+  assert.equal(second.pendingApprovalId, first.pendingApprovalId, "去重复用同一 pending id，不新增队列项");
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.counts.pendingApprovals, 1, "去重后表里只有一条 pending");
+});
+test("[local.31] src_http 挂起发 src_record_pending_approval 合成事件→投影出现待审节点", async () => {
+  const h = harness();
+  const parent = h.exec("ap-fold");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "fold 验证" }, parent);
+  const r = await h.run("src_http", { url: "http://127.0.0.1:59998/api-c/user/v1/closeAccount", method: "GET", headers: { userId: "7", authorization: "Bearer t" }, justification: "删改" }, parent);
+  const events = h.sessions.get("ap-fold").events;
+  const synth = events.find((e) => e.type === "tool/call" && e.data?.name === "src_record_pending_approval");
+  assert.ok(synth !== void 0, "发了 src_record_pending_approval 合成事件");
+  assert.equal(JSON.parse(synth.data.arguments).id, r.pendingApprovalId);
+});
+test("[local.31] src_resolve_approval 幂等：已 approved/rejected 不可重复审批", async () => {
+  const server = http.createServer((_req, res) => { res.writeHead(204); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harness();
+  const parent = h.exec("ap-idem");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "幂等验证" }, parent);
+  try {
+    const hung = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "POST", headers: { authorization: "Bearer t", userId: "2" }, body: '{"a":1}', justification: "删改" }, parent);
+    await h.run("src_resolve_approval", { id: hung.pendingApprovalId, action: "allow" }, parent);
+    /* 重复审批应报错。 */
+    await assert.rejects(() => h.run("src_resolve_approval", { id: hung.pendingApprovalId, action: "reject" }, parent), /已 approved/);
+  } finally { server.close(); }
 });
 
 /* [local.26] 模块二：打回闭环——src_reject_finding + 闸防二次提交。 */

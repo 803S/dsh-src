@@ -83,6 +83,36 @@ type TodoRow = {
 		function buttonStyle(color: string): CSSProperties {
 			return { cursor: "pointer", background: "transparent", border: `1px solid ${color}`, color, borderRadius: 999, padding: "1px 10px", fontSize: 12, lineHeight: "18px" };
 		}
+		/** [local.31] 高危请求待审区：显示完整请求本体 + 批准/拒绝按钮 + 备注 textarea。
+		 *  左右分栏布局由调用方负责，本组件只渲染右侧待审列表。 */
+		function ApprovalListView({ src, t, runCommand }: { readonly src: SrcProjection; readonly t: PropsLocale['t']; readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined }) {
+			const [busyId, setBusyId] = useState<string | null>(null);
+			const [feedback, setFeedback] = useState<string | null>(null);
+			const [noteFor, setNoteFor] = useState<{ id: string; action: string } | null>(null);
+			const [noteText, setNoteText] = useState("");
+			const approvals = (Array.isArray(src.pendingApprovals) ? src.pendingApprovals : []).slice().sort((a, b) => {
+				const rank = (row: { status: string }) => row.status === "pending" ? 0 : row.status === "approved" ? 1 : 2;
+				return rank(a) - rank(b) || (b.createdAt ?? 0) - (a.createdAt ?? 0);
+			});
+			if (approvals.length === 0) return<div className={css.empty}>暂无待审请求（高危删改/越权请求会挂在这里等你批准）</div>;
+			const sendApproval = async (id: string, action: string, note = "") => {
+				if (busyId !== null || runCommand === void 0) return;
+				setBusyId(id);
+				setFeedback(null);
+				setNoteFor(null);
+				setNoteText("");
+				try {
+					const trimmed = String(note ?? "").trim();
+					const result = await runCommand(`/src-approve ${id} ${action}${trimmed === "" ? "" : ` ${trimmed}`}`);
+					setFeedback(result.kind === "success" ? `已转达 ${id} → ${action === "allow" ? "批准" : "拒绝"}${trimmed === "" ? "" : `（备注：${trimmed.slice(0, 60)}）`}，等待 agent 发出/丢弃…` : `命令返回错误：${result.text}`);
+				} catch (error: any) {
+					setFeedback(`发送失败：${error?.message ?? String(error)}`);
+				} finally {
+					setBusyId(null);
+				}
+			};
+			return<div className={css.list}>{feedback !== null &&<div style={{ color: busyId !== null ? "#e80" : "#c33", fontSize: 12, padding: "2px 4px" }}>{feedback}</div>}{approvals.map((ap) =><div className={css.card} style={{ borderLeft: `3px solid ${ap.status === "approved" ? "#3c9" : ap.status === "rejected" ? "#999" : "#c33"}`, marginBottom: 4, padding: "6px 10px", fontSize: 13 }}><div>⚠️ <strong>{ap.method} {ap.url}</strong> <span style={{ color: "#c33" }}>{`[${ap.category}]`}</span><span style={{ color: "#aaa", marginLeft: 6, fontSize: 11 }}>{ap.id}</span></div>{ap.status !== "pending" &&<div style={{ color: ap.status === "approved" ? "#3c9" : "#999", fontSize: 12 }}>{ap.status === "approved" ? `已批准${ap.responseStatus > 0 ? ` → 响应 ${ap.responseStatus}` : ""}` : "已拒绝"}{ap.note !== "" ? `· 备注：${ap.note}` : ""}</div>}{ap.justification !== "" &&<div style={{ color: "#888" }}>{ap.justification}</div>}{ap.reason !== "" &&<div style={{ color: "#888", fontSize: 12 }}>分类理由：{ap.reason}</div>}<details style={{ marginTop: 2 }}><summary style={{ cursor: "pointer", color: "#888", fontSize: 11 }}>请求报文</summary><pre style={preStyle(240)}>{ap.method} {ap.url}{ap.headers !== "" ? `\n${ap.headers}` : ""}{ap.body !== "" ? `\n\n${ap.body}` : ""}</pre></details>{ap.status === "pending" && runCommand !== void 0 &&<div style={{ marginTop: 4 }}>{noteFor?.id === ap.id ?<><div style={{ marginTop: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(127,127,127,.3)", background: "var(--dsw-alias-bg-layer-2, rgba(127,127,127,.08))" }}><div style={{ fontSize: 11, color: "#888", marginBottom: 5 }}>{(noteFor as { action: string }).action === "allow" ? "批准——补充备注（可选，会转达给 AI）" : "拒绝——说明原因（可选，会转达给 AI）"}</div><textarea autoFocus={true} rows={3} value={noteText} placeholder={(noteFor as { action: string }).action === "allow" ? "如：可信测试账号、是自己的资源\n（Enter 发送，Shift+Enter 换行）" : "如：不批准，可能误伤真实用户\n（Enter 发送，Shift+Enter 换行）"} onChange={(event) => setNoteText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendApproval(ap.id, (noteFor as { action: string }).action, noteText); } if (event.key === "Escape") setNoteFor(null); }} style={{ display: "block", width: "100%", boxSizing: "border-box", fontSize: 13, padding: "6px 10px", borderRadius: 6, border: "1px solid rgba(127,127,127,.4)", background: "transparent", color: "inherit", resize: "vertical", minHeight: 60, fontFamily: "inherit", lineHeight: 1.5 }} /><div style={{ display: "flex", gap: 6, justifyContent: "flex-end", alignItems: "center", marginTop: 7 }}><button type="button" disabled={busyId !== null} onClick={() => void sendApproval(ap.id, (noteFor as { action: string }).action, noteText)} style={buttonStyle((noteFor as { action: string }).action === "allow" ? "#3c9" : "#999")}>{busyId !== null ? "发送中…" : "发送"}</button><button type="button" onClick={() => setNoteFor(null)} style={buttonStyle("#888")}>取消</button></div></div></> :<div style={{ display: "flex", gap: 6, alignItems: "center" }}><button type="button" disabled={busyId !== null} onClick={() => { setNoteText(""); setNoteFor({ id: ap.id, action: "allow" }); }} style={buttonStyle("#3c9")}>✓ 批准</button><button type="button" disabled={busyId !== null} onClick={() => { setNoteText(""); setNoteFor({ id: ap.id, action: "reject" }); }} style={buttonStyle("#999")}>✗ 拒绝</button>{busyId === ap.id &&<span style={{ color: "#e80", fontSize: 12 }}>发送中…</span>}</div>}</div>}</div>)}</div>;
+		}
 		function timelineDetailPre(label: string, text: string, maxHeight = 200): ReactNode {
 			return<div style={{ marginTop: 4 }}><span style={{ color: "#888", fontSize: 11 }}>{label}</span><pre style={preStyle(maxHeight)}>{text}</pre></div>;
 		}
@@ -204,6 +234,7 @@ type TodoRow = {
 			if (src === void 0 || src === null) return<div className={css.empty} data-testid="src-view"><span className={css.emptyText}>{t("view.empty")}</span></div>;
 			return<section className={css.root} data-testid="src-view"><header className={css.card}>{src.goal !== null && src.goal.objective !== "" && <p className={css.objective}>目的：{src.goal.objective}</p>}<div className={css.cardTitle} style={{ alignItems: "center" }}><h2 className={css.target} style={{ fontSize: 18 }}>{src.goal === null ? "" : src.goal.target}</h2>{src.goal !== null && src.goal.authorization !== "" && <span className={css.badge} title={src.goal.authorization}>授权：{src.goal.authorization.length > 24 ? `${src.goal.authorization.slice(0, 24)}…` : src.goal.authorization}</span>}</div>{(() => {
 								const pendingTodos = (src.userTodos ?? []).filter((row) => row.status === "pending").length;
+								const pendingApprovals = (src.pendingApprovals ?? []).filter((row) => row.status === "pending").length;
 								const stats = [
 									["意图", src.counts!.intents, ""],
 									["事实", src.counts!.facts, ""],
@@ -211,7 +242,8 @@ type TodoRow = {
 									["漏洞", src.counts!.findings, src.counts!.findings > 0 ? css.statAccent : ""],
 									["检查点", src.counts!.checkpoints ?? 0, (src.counts!.checkpoints ?? 0) === 0 ? css.statMuted : ""],
 									["探测", src.counts!.observations ?? 0, (src.counts!.observations ?? 0) === 0 ? css.statMuted : ""],
-									["待办", pendingTodos, pendingTodos > 0 ? css.statAccent : css.statMuted]
+									["待办", pendingTodos, pendingTodos > 0 ? css.statAccent : css.statMuted],
+									["待审", pendingApprovals, pendingApprovals > 0 ? css.statAccent : css.statMuted]
 								];
 								return<div className={css.statTrack}>{stats.map(([label, value, accent]) => <div className={`${css.stat} ${accent}`}><div className={css.statValue}>{value}</div><div className={css.statLabel}>{label}</div></div>)}</div>;
 							})()}{src.apiDiscovery && (src.apiDiscovery.total ?? 0) > 0 &&<p className={css.counts}>API 发现：{src.apiDiscovery.total ?? 0} · schema {src.apiDiscovery.schemas ?? 0} · GraphQL {src.apiDiscovery.graphql ?? 0} · hint {src.apiDiscovery.hints ?? 0} · 未推进 {src.apiDiscovery.untouched ?? 0}</p>}</header><nav className={css.tabs} data-testid="src-tabs">{TABS.map((tabKey) =><button type="button" className={css.tab} aria-pressed={tab === tabKey} data-testid={`src-tab-${tabKey}`} onClick={() => {
@@ -221,13 +253,13 @@ type TodoRow = {
 										if (key === "findings") return src.counts!.findings;
 										if (key === "assets") return src.counts!.assets;
 										if (key === "timeline") return (src.checkpoints?.length ?? 0) + ((src.nodes ?? []).filter((node) => node.kind === "fact").length) + (src.findings?.length ?? 0) + (src.observations?.length ?? 0);
-										if (key === "todos") return (src.userTodos ?? []).filter((row) => row.status === "pending").length;
+										if (key === "todos") return (src.userTodos ?? []).filter((row) => row.status === "pending").length + (src.pendingApprovals ?? []).filter((row) => row.status === "pending").length;
 										return 0;
 									};
 									const n = badgeFor(tabKey);
 									if (n === 0) return null;
 									return<span className={`${css.tabBadge} ${tabKey === "todos" ? css.tabBadgeHot : ""}`}>{n}</span>;
-								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={runCommand} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <TodoListView src={src} t={t} runCommand={runCommand} />; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
+								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={runCommand} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <Fragment><div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>待办事项</div><TodoListView src={src} t={t} runCommand={runCommand} /></div><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "#c33", marginBottom: 4 }}>⚠️ 高危请求待审</div><ApprovalListView src={src} t={t} runCommand={runCommand} /></div></div></Fragment>; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
 		}
 		//#endregion
 		
