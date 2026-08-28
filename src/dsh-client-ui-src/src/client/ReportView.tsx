@@ -57,51 +57,51 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
       if (list.length === 0) list.push(asset === undefined ? (src.goal?.target ?? '') : asset.value)
       return list.join('; ')
     })()
-    /* App/小程序下载方式：从影响资产 meta 提取。 */
-    const appDownload = (() => {
-      if (asset === undefined) return ''
-      const meta = String(asset.meta ?? '')
-      const m = meta.match(/(https?:\/\/[^\s'"]+)/)
-      return m === null ? (asset.value.startsWith('http') ? asset.value : '') : m[0]
-    })()
-    /* 攻击链叙事：有 attackChain 直接用，无则由结构化字段拼接。 */
-    const attackChainText = (() => {
+    /* 第 1 节：漏洞描述&发现方式、漏洞利用及危害——动态填充，空字段不显示、不占位。
+       attackChain 本身就是发现→利用→危害的闭合叙事，有则作为主叙述直接融入，不单列【攻击链】块。 */
+    const section1 = (() => {
+      const lines: string[] = []
       const chain = (finding.attackChain ?? '').trim()
-      if (chain !== '') return chain
-      return [
-        `① ${t('finding.discoveryPath')}: ${finding.discoveryPath === '' ? t('report.missing') : finding.discoveryPath}`,
-        `② ${t('finding.attackPrerequisites')}: ${(finding.attackPrerequisites ?? '') === '' ? t('report.missing') : finding.attackPrerequisites}`,
-        `③ ${t('finding.impact')}: ${finding.impact}`,
-        `④ ${t('finding.evidence')}: ${(finding.concreteLossEvidence ?? []).length > 0 ? finding.concreteLossEvidence.join(', ') : t('report.victimImpactMissing')}`,
-        `⑤ ${t('finding.victimImpact')}: ${(finding.victimImpact ?? '') === '' ? t('report.victimImpactMissing') : finding.victimImpact}`,
-      ].join('\n')
+      if (chain !== '') lines.push(chain)
+      else if (finding.description !== '') lines.push(finding.description)
+      if (lines.length === 0) lines.push(finding.title)
+      /* 危害链要素：非空才列出。有 attackChain 主叙述时 impact 已含在叙事中不重复。 */
+      if (chain === '' && (finding.impact ?? '') !== '') lines.push(`${t('finding.impact')}: ${finding.impact}`)
+      if ((finding.attackPrerequisites ?? '') !== '') lines.push(`${t('finding.attackPrerequisites')}: ${finding.attackPrerequisites}`)
+      if ((finding.victimImpact ?? '') !== '') lines.push(`${t('finding.victimImpact')}: ${finding.victimImpact}`)
+      if (finding.affectedScope !== '') lines.push(`${t('finding.scope')}: ${finding.affectedScope}`)
+      /* 发现方式 / 入口 / app 版本与下载：根据实际情况动态，非空才提。 */
+      if (finding.discoveryPath !== '') lines.push(`${t('finding.discoveryPath')}: ${finding.discoveryPath}`)
+      if (finding.entryPoint !== '') lines.push(`${t('finding.entryPoint')}: ${finding.entryPoint}`)
+      if (asset !== undefined) {
+        const meta = String(asset.meta ?? '')
+        if (asset.type === 'app' || asset.type === 'mini-program') {
+          const dl = meta.match(/(https?:\/\/[^\s'"]+)/)
+          if (dl !== null) lines.push(`${t('report.appDownload')}: ${dl[0]}`)
+        }
+      }
+      return lines.length === 0 ? t('report.none') : lines.join('\n')
     })()
-    const vulnDesc = [
-      finding.description === '' ? finding.title : finding.description,
-      '',
-      `【${t('finding.attackChain')}】`,
-      attackChainText,
-    ].join('\n')
-    /* 复现/证明过程。 */
+    /* 第 2 节：详细复现/证明过程——请求/响应/脚本走代码框，步骤清晰呈现。 */
     const reproBlock = (() => {
       const lines: string[] = []
+      if ((finding.steps ?? []).length > 0) {
+        ;(finding.steps ?? []).forEach((step, index) => lines.push(`${index + 1}. ${step}`))
+        lines.push('')
+      }
       if ((finding.rawRequest ?? '') !== '') lines.push('=== Request ===', '```', finding.rawRequest, '```')
       if ((finding.rawResponse ?? '') !== '') { if (lines.length > 0) lines.push(''); lines.push('=== Response ===', '```', finding.rawResponse, '```') }
       if ((finding.rawRequest ?? '') === '' && (finding.rawResponse ?? '') === '' && (finding.pocEvidence ?? []).length > 0) {
+        if (lines.length > 0) lines.push('')
         lines.push(`${t('finding.evidence')}:`)
         ;(finding.pocEvidence ?? []).forEach((evidence, index) => lines.push(`${index + 1}. ${evidence}`))
-      }
-      if ((finding.steps ?? []).length > 0) {
-        if (lines.length > 0) lines.push('')
-        lines.push(`${t('finding.steps')}:`)
-        ;(finding.steps ?? []).forEach((step, index) => lines.push(`Step${index + 1}: ${step}`))
       }
       /* [local.27] 一键 PoC 脚本：独立代码块，保留缩进与换行。 */
       if ((finding.pocScript ?? '').trim() !== '') {
         if (lines.length > 0) lines.push('')
         lines.push(`${t('report.pocScript')}:`, '```', finding.pocScript, '```')
       }
-      return lines.length === 0 ? t('report.none') : lines.join('\n')
+      return lines.length === 0 ? t('report.missing') : lines.join('\n')
     })()
     /* 测试源信息：从 concreteLossEvidence 指针解析。 */
     const testSource = (() => {
@@ -117,37 +117,35 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
       if (asset !== undefined) lines.push(`- ${t('finding.affected')}: [${asset.type}] ${asset.value}`)
       return lines.length === 0 ? t('report.none') : lines.join('\n')
     })()
-    const vulnType = (finding.vulnType ?? '') === '' ? `（${t('report.uncategorized')} ${finding.severity}）` : finding.vulnType
+    const vulnType = (finding.vulnType ?? '') === '' ? t('report.uncategorized') : finding.vulnType
+    /* [local.29] 美团 SRC 骨架模板：4 字段 + 漏洞风险详情 4 小节，内容动态填充，空字段不占位。 */
     return [
       `### ${finding.id} ${finding.title}`,
-      `${t('report.name')}: ${finding.title}`,
-      `${t('report.vulnType')}: ${vulnType}（${t('report.severity')}: ${finding.severity}）`,
-      `${t('report.url')}: ${urls}`,
-      `${t('report.detail')}:`,
       '',
-      `1、${t('report.section1')}`,
+      `**${t('report.name')}**：${finding.title}`,
+      `**${t('report.vulnType')}**：${vulnType}`,
+      `**${t('report.url')}**：${urls}`,
+      `**${t('report.severity')}**：${finding.severity}`,
       '',
-      `${t('finding.discoveryPath')}: ${finding.discoveryPath === '' ? t('report.missing') : finding.discoveryPath}`,
-      `${t('finding.entryPoint')}: ${finding.entryPoint === '' ? t('report.missing') : finding.entryPoint}`,
-      appDownload === '' ? null : `${t('report.appDownload')}: ${appDownload}`,
-      `${t('report.description')}: ${vulnDesc}`,
+      `**${t('report.riskDetail')}**`,
       '',
-      `2、${t('report.section2')}`,
+      `**${t('report.section1')}**`,
+      '',
+      section1,
+      '',
+      `**${t('report.section2')}**`,
       '',
       reproBlock,
       '',
-      `3、${t('report.section3')}`,
+      `**${t('report.section3')}**`,
       '',
       testSource,
       '',
-      `4、${t('report.section4')}`,
+      `**${t('report.section4')}**`,
       '',
       finding.remediation === '' ? t('report.missing') : finding.remediation,
       '',
-      `${t('finding.scope')}: ${finding.affectedScope}`,
-      `${t('finding.affected')}: ${asset === undefined ? t('report.unlinked') : `[${asset.type}] ${asset.value}`}`,
-      '',
-    ].filter((line) => line !== null)
+    ]
   })
   const rejectedLines = rejectedFindings.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.title}——${t('report.rejectReason')}: ${finding.rejectReason ?? t('report.none')}${finding.rejectedAt ? `（${new Date(finding.rejectedAt).toISOString()}）` : ''}`)
   const assetLines = src.assets.map((asset) => {
