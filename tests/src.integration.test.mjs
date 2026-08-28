@@ -2020,3 +2020,23 @@ test("[local.26] src_update_finding 补 attackChain；报告渲染攻击链叙�
   assert.ok(report2.markdown.includes("① 发现："), "无 attackChain 时拼接渲染");
   assert.ok(report2.markdown.includes("漏洞/情报类型:"), "无 vulnType 时走未分类占位");
 });
+test("[local.27] pocScript 以代码块渲染保留缩进；rawRequest 代码块保留缩进", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("script1");
+  await h.run("src_add_goal", { target: "example.test", objective: "脚本渲染测试" }, parent);
+  const st = await h.run("src_state", {}, parent);
+  const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: st.goal.id }, parent);
+  const fe = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "证据", confidence: 0.9 }, parent)).id;
+  const script = "import requests\n\ndef attack(phone):\n    r = requests.get(f\"/api?p={phone}\")\n    if r.ok:\n        print(r.json())";
+  await h.run("src_add_finding", { intentId: intent.id, title: "验证码枚举", severity: "high", impact: "可枚举验证码接管账号", victimImpact: "用户账号被接管且完全无感知，手机号与个人信息泄露，账号可被冒用充值或消费", attackPrerequisites: "攻击者仅需知道目标手机号，无需用户任何交互", concreteLossEvidence: [fe], affectedScope: "全量", remediation: "限频", pocEvidence: ["e"], reproducibleSteps: ["s1"], vulnType: "登录认证漏洞", pocScript: script, rawRequest: "GET /api/login?code=0001 HTTP/1.1\nHost: x.com\n    Authorization: Bearer t" }, parent);
+  const report = await h.run("src_report", {}, parent);
+  /* 一键脚本独立代码块 */
+  assert.ok(report.markdown.includes("一键利用脚本："), "报告含一键脚本标题");
+  assert.ok(report.markdown.includes("```\n" + script + "\n```"), "pocScript 以代码块渲染");
+  assert.ok(report.markdown.includes("    r = requests.get"), "脚本缩进保留");
+  /* rawRequest 代码块保留缩进 */
+  assert.ok(report.markdown.includes("```\nGET /api/login"), "rawRequest 以代码块渲染");
+  assert.ok(report.markdown.includes("    Authorization: Bearer t"), "rawRequest 缩进保留");
+});

@@ -71,6 +71,8 @@ export type SrcProjectionNode =
     readonly attackChain: string
     /** [local.26] vulnerability/intel category for the report template (e.g. 登录认证漏洞). */
     readonly vulnType: string
+    /** [local.27] ready-to-run PoC script, rendered as a fenced code block (indent preserved). */
+    readonly pocScript: string
   }
 
 export interface SrcProjectionAsset {

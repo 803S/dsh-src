@@ -36,6 +36,7 @@ finding 被用户打回（src_reject_finding，status=rejected + 打回备注）
 - **vulnType**（漏洞/情报类型）：类别名，如「登录认证漏洞」「越权漏洞」「信息泄露」「短信轰炸」「文件上传漏洞」「SSRF」「XSS」「逻辑漏洞」。报告「漏洞/情报类型」行用它。
 - **attackChain**（攻击链）：多跳/组合利用必填的闭合叙事；单步漏洞可不填，报告会由结构化字段拼接。
 - **rawRequest**（Burp 格式原始报文）：报告「2、漏洞的详细复现/证明过程」节的主体，含接口地址。空 rawRequest 会被 finalize 闸拦截。
+- **pocScript**（一键 PoC 脚本）：可直接运行的 Python/Bash/curl 利用脚本；报告以代码块渲染，保留缩进与换行。用户打回「写个一键脚本」时用 src_update_finding 补此字段。
 - **discoveryPath**（漏洞接口来源）/ **entryPoint**（前端功能点）：报告「1、描述&发现方式」行用它俩。
 
 报告四大节：①漏洞描述&发现方式、漏洞利用及危害 ②漏洞的详细复现/证明过程 ③测试源信息（从 concreteLossEvidence 指针解析真实证据） ④修复方案。打回的 finding 自动移出主清单、进「已打回」节保留备查，主清单只保留 active。

@@ -96,6 +96,11 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
         lines.push(`${t('finding.steps')}:`)
         ;(finding.steps ?? []).forEach((step, index) => lines.push(`Step${index + 1}: ${step}`))
       }
+      /* [local.27] 一键 PoC 脚本：独立代码块，保留缩进与换行。 */
+      if ((finding.pocScript ?? '').trim() !== '') {
+        if (lines.length > 0) lines.push('')
+        lines.push(`${t('report.pocScript')}:`, '```', finding.pocScript, '```')
+      }
       return lines.length === 0 ? t('report.none') : lines.join('\n')
     })()
     /* 测试源信息：从 concreteLossEvidence 指针解析。 */
@@ -203,15 +208,46 @@ function filenameOf(target: string): string {
 /** Render the report's small, fixed Markdown subset without interpreting HTML. */
 function MarkdownPreview({ markdown }: { readonly markdown: string }) {
   const rows: ReactNode[] = []
-  for (const [index, line] of markdown.split('\n').entries()) {
-    if (line === '') continue
-    if (line.startsWith('### ')) rows.push(<h3 key={index}>{line.slice(4)}</h3>)
-    else if (line.startsWith('## ')) rows.push(<h2 key={index}>{line.slice(3)}</h2>)
-    else if (line.startsWith('# ')) rows.push(<h1 key={index}>{line.slice(2)}</h1>)
-    else if (line.startsWith('- ')) rows.push(<p key={index} className={css.bullet}>{line.slice(2)}</p>)
-    else if (/^  \d+\. /.test(line)) rows.push(<p key={index} className={css.step}>{line.trim()}</p>)
-    else rows.push(<p key={index}>{line}</p>)
+  const lines = markdown.split('\n')
+  let inCode = false
+  let codeBuffer: string[] = []
+  let codeKey = 0
+  let paraKey = 0
+  /* 行内渲染：`code` 与 **bold**（不改语义，只为让报错/标识可读）。 */
+  const renderInline = (text: string): ReactNode => {
+    const parts: ReactNode[] = []
+    let rest = text
+    let i = 0
+    while (rest !== '') {
+      const code = rest.match(/`([^`]+)`/)
+      const bold = rest.match(/\*\*([^*]+)\*\*/)
+      const next = [code, bold].filter((m): m is RegExpMatchArray => m !== null).sort((a, b) => (a.index ?? 0) - (b.index ?? 0))[0]
+      if (next === undefined) { parts.push(rest); break }
+      const at = next.index ?? 0
+      if (at > 0) parts.push(rest.slice(0, at))
+      if (next === code) parts.push(<code key={i++} className={css.inlineCode}>{next[1]}</code>)
+      else parts.push(<strong key={i++}>{next[1]}</strong>)
+      rest = rest.slice(at + next[0].length)
+    }
+    return <>{parts}</>
   }
+  for (const [index, line] of lines.entries()) {
+    if (inCode) {
+      if (line.trim() === '```') { rows.push(<pre key={`code-${codeKey++}`} className={css.codeblock}><code>{codeBuffer.join('\n')}</code></pre>); inCode = false; codeBuffer = []; continue }
+      codeBuffer.push(line)
+      continue
+    }
+    if (line.trim() === '```') { inCode = true; codeBuffer = []; continue }
+    if (line === '') { rows.push(<div key={`blank-${index}`} className={css.blank} />); continue }
+    if (line.startsWith('### ')) rows.push(<h3 key={index}>{renderInline(line.slice(4))}</h3>)
+    else if (line.startsWith('## ')) rows.push(<h2 key={index}>{renderInline(line.slice(3))}</h2>)
+    else if (line.startsWith('# ')) rows.push(<h1 key={index}>{renderInline(line.slice(2))}</h1>)
+    else if (line.startsWith('- ')) rows.push(<p key={index} className={css.bullet}>{renderInline(line.slice(2))}</p>)
+    else if (/^  \d+\. /.test(line)) rows.push(<p key={index} className={css.step}>{line.trim()}</p>)
+    else rows.push(<p key={`p-${paraKey++}`}>{renderInline(line)}</p>)
+  }
+  /* 未闭合的代码块（rawRequest 等末尾缺少 ```` ）：把已缓冲的行收尾渲染，不丢内容。 */
+  if (inCode && codeBuffer.length > 0) rows.push(<pre key={`code-${codeKey++}`} className={css.codeblock}><code>{codeBuffer.join('\n')}</code></pre>)
   return <article className={css.markdown} data-testid="src-report-markdown">{rows}</article>
 }
 
