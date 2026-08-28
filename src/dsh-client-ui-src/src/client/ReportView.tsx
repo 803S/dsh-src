@@ -36,49 +36,115 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
   if (src.goal === null) return `# ${t('report.title')}\n\n${t('report.uninitialized')}\n`
 
   const findings = src.nodes.filter((node): node is SrcProjectionNode & { kind: 'finding' } => node.kind === 'finding')
+  const activeFindings = findings.filter((finding) => (finding.status ?? 'active') === 'active')
+  const rejectedFindings = findings.filter((finding) => (finding.status ?? 'active') === 'rejected')
   const chain = src.nodes.map((node) => {
     const anchor = src.edges.find(edge => edge.targetId === node.id)
     const relation = anchor === undefined ? '' : ` (${anchor.kind} ${anchor.sourceId})`
     if (node.kind === 'intent') return `- ${t('kind.intent')} (${node.id}) ${node.title}${node.detail === '' ? '' : `: ${node.detail}`}${relation}`
     if (node.kind === 'fact') return `- ${t('kind.fact')} (${node.id}) [${node.factKind}] ${node.target === '' ? '' : `${node.target}: `}${node.detail}${relation}`
-    return `- ${t('kind.finding')} (${node.id}) [${node.severity}] ${node.title}${relation}`
+    const rejectTag = (node.status ?? 'active') === 'rejected' ? ' ⚠' + t('report.rejected') : ''
+    return `- ${t('kind.finding')} (${node.id}) [${node.severity}] ${node.title}${rejectTag}${relation}`
   })
-  const findingSections = findings.flatMap((finding) => {
+  const findingSections = activeFindings.flatMap((finding) => {
     const asset = finding.affectedAssetId === undefined ? undefined : src.assets.find(candidate => candidate.id === finding.affectedAssetId)
-    const domain = asset === undefined
-      ? (src.goal?.target ?? '').replace(/^https?:\/\//, '').split('/')[0]
-      : asset.value.replace(/^https?:\/\//, '').split('/')[0]
-    const evidenceText = (finding.pocEvidence ?? []).join('\n') + '\n' + (finding.steps ?? []).join('\n')
-    const urlMatch = evidenceText.match(/https?:\/\/[^\s'"\\)]+/)
-    const fullUrl = urlMatch === null ? (asset === undefined ? (src.goal?.target ?? '') : asset.value) : urlMatch[0]
-    const rawPacket = [
-      finding.rawRequest !== '' ? `=== Request ===\n${finding.rawRequest}` : '',
-      finding.rawResponse !== '' ? `=== Response ===\n${finding.rawResponse}` : '',
-    ].filter(part => part !== '').join('\n\n')
-    return [
-      `### ${finding.id} [${finding.severity}] ${finding.title}`,
-      `- ${t('report.description')}: ${finding.description === '' ? finding.title : finding.description}`,
-      `- ${t('finding.impact')}: ${finding.impact}`,
-      `- ${t('finding.victimImpact')}: ${(finding.victimImpact ?? '') === '' ? t('report.victimImpactMissing') : finding.victimImpact}`,
-      `- ${t('report.domain')}: ${domain}`,
-      `- ${t('report.fullUrl')}: ${fullUrl}`,
-      finding.discoveryPath !== '' ? `- ${t('finding.discoveryPath')}: ${finding.discoveryPath}` : '',
-      finding.entryPoint !== '' ? `- ${t('finding.entryPoint')}: ${finding.entryPoint}` : '',
-      `- ${t('report.dataPacket')}:`,
-      ...(rawPacket !== ''
-        ? [rawPacket.split('\n').map(line => `  ${line}`).join('\n')]
-        : (finding.pocEvidence ?? []).length > 0
-          ? (finding.pocEvidence ?? []).map((evidence, index) => `  ${index + 1}. ${evidence}`)
-          : ['  （无）']),
-      `- ${t('report.screenshot')}: ${t('report.screenshotHint')}`,
-      `- ${t('finding.scope')}: ${finding.affectedScope}`,
-      `- ${t('finding.remediation')}: ${finding.remediation}`,
-      `- ${t('finding.affected')}: ${asset === undefined ? t('report.unlinked') : `[${asset.type}] ${asset.value}`}`,
-      `- ${t('finding.steps')}:`,
-      ...(finding.steps ?? []).map((step, index) => `  ${index + 1}. ${step}`),
+    /* 收集本 finding 涉及的所有 URL，去重，; 分隔。 */
+    const urls = (() => {
+      const found = new Set<string>()
+      const haystack = (finding.pocEvidence ?? []).join('\n') + '\n' + (finding.steps ?? []).join('\n') + '\n' + (finding.rawRequest ?? '') + '\n' + (finding.rawResponse ?? '')
+      for (const m of haystack.matchAll(/https?:\/\/[^\s'")\]]+/g)) found.add(m[0])
+      const list = [...found]
+      if (list.length === 0) list.push(asset === undefined ? (src.goal?.target ?? '') : asset.value)
+      return list.join('; ')
+    })()
+    /* App/小程序下载方式：从影响资产 meta 提取。 */
+    const appDownload = (() => {
+      if (asset === undefined) return ''
+      const meta = String(asset.meta ?? '')
+      const m = meta.match(/(https?:\/\/[^\s'"]+)/)
+      return m === null ? (asset.value.startsWith('http') ? asset.value : '') : m[0]
+    })()
+    /* 攻击链叙事：有 attackChain 直接用，无则由结构化字段拼接。 */
+    const attackChainText = (() => {
+      const chain = (finding.attackChain ?? '').trim()
+      if (chain !== '') return chain
+      return [
+        `① ${t('finding.discoveryPath')}: ${finding.discoveryPath === '' ? t('report.missing') : finding.discoveryPath}`,
+        `② ${t('finding.attackPrerequisites')}: ${(finding.attackPrerequisites ?? '') === '' ? t('report.missing') : finding.attackPrerequisites}`,
+        `③ ${t('finding.impact')}: ${finding.impact}`,
+        `④ ${t('finding.evidence')}: ${(finding.concreteLossEvidence ?? []).length > 0 ? finding.concreteLossEvidence.join(', ') : t('report.victimImpactMissing')}`,
+        `⑤ ${t('finding.victimImpact')}: ${(finding.victimImpact ?? '') === '' ? t('report.victimImpactMissing') : finding.victimImpact}`,
+      ].join('\n')
+    })()
+    const vulnDesc = [
+      finding.description === '' ? finding.title : finding.description,
       '',
-    ]
+      `【${t('finding.attackChain')}】`,
+      attackChainText,
+    ].join('\n')
+    /* 复现/证明过程。 */
+    const reproBlock = (() => {
+      const lines: string[] = []
+      if ((finding.rawRequest ?? '') !== '') lines.push('=== Request ===', '```', finding.rawRequest, '```')
+      if ((finding.rawResponse ?? '') !== '') { if (lines.length > 0) lines.push(''); lines.push('=== Response ===', '```', finding.rawResponse, '```') }
+      if ((finding.rawRequest ?? '') === '' && (finding.rawResponse ?? '') === '' && (finding.pocEvidence ?? []).length > 0) {
+        lines.push(`${t('finding.evidence')}:`)
+        ;(finding.pocEvidence ?? []).forEach((evidence, index) => lines.push(`${index + 1}. ${evidence}`))
+      }
+      if ((finding.steps ?? []).length > 0) {
+        if (lines.length > 0) lines.push('')
+        lines.push(`${t('finding.steps')}:`)
+        ;(finding.steps ?? []).forEach((step, index) => lines.push(`Step${index + 1}: ${step}`))
+      }
+      return lines.length === 0 ? t('report.none') : lines.join('\n')
+    })()
+    /* 测试源信息：从 concreteLossEvidence 指针解析。 */
+    const testSource = (() => {
+      const factNodes = src.nodes.filter((node): node is SrcProjectionNode & { kind: 'fact' } => node.kind === 'fact')
+      const lines: string[] = []
+      for (const evidenceId of (finding.concreteLossEvidence ?? [])) {
+        const fact = factNodes.find((f) => f.id === evidenceId)
+        if (fact !== undefined) { lines.push(`- ${fact.target === '' ? '' : fact.target + ': '}${fact.detail}`); continue }
+        const research = (src.research ?? []).find((r) => r.id === evidenceId)
+        if (research !== undefined) { lines.push(`- [${research.category}] ${research.hypothesis}`); continue }
+        lines.push(`- ${evidenceId}`)
+      }
+      if (asset !== undefined) lines.push(`- ${t('finding.affected')}: [${asset.type}] ${asset.value}`)
+      return lines.length === 0 ? t('report.none') : lines.join('\n')
+    })()
+    const vulnType = (finding.vulnType ?? '') === '' ? `（${t('report.uncategorized')} ${finding.severity}）` : finding.vulnType
+    return [
+      `### ${finding.id} ${finding.title}`,
+      `${t('report.name')}: ${finding.title}`,
+      `${t('report.vulnType')}: ${vulnType}（${t('report.severity')}: ${finding.severity}）`,
+      `${t('report.url')}: ${urls}`,
+      `${t('report.detail')}:`,
+      '',
+      `1、${t('report.section1')}`,
+      '',
+      `${t('finding.discoveryPath')}: ${finding.discoveryPath === '' ? t('report.missing') : finding.discoveryPath}`,
+      `${t('finding.entryPoint')}: ${finding.entryPoint === '' ? t('report.missing') : finding.entryPoint}`,
+      appDownload === '' ? null : `${t('report.appDownload')}: ${appDownload}`,
+      `${t('report.description')}: ${vulnDesc}`,
+      '',
+      `2、${t('report.section2')}`,
+      '',
+      reproBlock,
+      '',
+      `3、${t('report.section3')}`,
+      '',
+      testSource,
+      '',
+      `4、${t('report.section4')}`,
+      '',
+      finding.remediation === '' ? t('report.missing') : finding.remediation,
+      '',
+      `${t('finding.scope')}: ${finding.affectedScope}`,
+      `${t('finding.affected')}: ${asset === undefined ? t('report.unlinked') : `[${asset.type}] ${asset.value}`}`,
+      '',
+    ].filter((line) => line !== null)
   })
+  const rejectedLines = rejectedFindings.map((finding) => `- ${finding.id} [${finding.severity}] ${finding.title}——${t('report.rejectReason')}: ${finding.rejectReason ?? t('report.none')}${finding.rejectedAt ? `（${new Date(finding.rejectedAt).toISOString()}）` : ''}`)
   const assetLines = src.assets.map((asset) => {
     const edge = src.edges.find(candidate => candidate.kind === 'parent' && candidate.targetId === asset.id)
     const parent = edge === undefined ? undefined : src.assets.find(candidate => candidate.id === edge.sourceId)
@@ -99,6 +165,10 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
     '',
     `## ${t('report.findings')}`,
     ...(findingSections.length === 0 ? [t('report.none')] : findingSections),
+    '',
+    `## ${t('report.rejected')}`,
+    ...(rejectedLines.length === 0 ? [t('report.none')] : rejectedLines),
+    '',
     `## ${t('report.assets')}`,
     ...(assetLines.length === 0 ? [t('report.none')] : assetLines),
     '',

@@ -1332,7 +1332,8 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
   }, parent);
   // 直接检查报告渲染。
   const report = await h.run("src_report", {}, parent);
-  assert.ok(report.markdown.includes("攻击链（发现→利用前提→利用过程→损失→受害者）"), "attack chain header");
+  assert.ok(report.markdown.includes("漏洞/情报名称:"), "标准模板名称行");
+  assert.ok(report.markdown.includes("【攻击链】"), "attack chain header");
   assert.ok(report.markdown.includes("③ 利用过程：攻击者遍历订单 ID"), "attacker perspective in chain");
   assert.ok(report.markdown.includes("⑤ 受害者影响：受害用户的收货地址"), "victim perspective in chain");
   // 缺失场景：第二个 finding 不带 victimImpact
@@ -1993,6 +1994,11 @@ test("[local.26] src_reject_finding 置 status=rejected + 备注；相似 title 
   const report = await h.run("src_report", {}, parent);
   assert.ok(report.markdown.includes("## 已打回"), "报告含已打回节");
   assert.ok(report.markdown.includes("没看懂，能梳理下攻击链吗？"), "报告含打回备注");
+  /* [local.27] 回归：打回后主漏洞清单不再含该 finding 的标题行（用户 bug：报告里还有） */
+  const findingsSection = report.markdown.split("## 漏洞发现")[1].split("## ")[0];
+  assert.ok(!findingsSection.includes("### finding-1"), "打回后主漏洞清单不含已打回 finding");
+  assert.ok(!findingsSection.includes("漏洞/情报名称: 账号删除漏洞"), "主漏洞清单不含已打回 finding 标题");
+  assert.ok(findingsSection.includes("（无）"), "全部打回后主漏洞清单为空态");
 });
 test("[local.26] src_update_finding 补 attackChain；报告渲染攻击链叙事节", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
@@ -2003,12 +2009,14 @@ test("[local.26] src_update_finding 补 attackChain；报告渲染攻击链叙�
   const st = await h.run("src_state", {}, parent);
   const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: st.goal.id }, parent);
   const fe = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "证据", confidence: 0.9 }, parent)).id;
-  await h.run("src_add_finding", { intentId: intent.id, title: "多跳越权", severity: "high", impact: "可改任意用户订单造成数据篡改", victimImpact: "用户订单被篡改且难以察觉", attackPrerequisites: "需登录态可遍历订单 id", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s1"], attackChain: "发现 /api/admin → 骗登录 → 改数据 → 用户损失 → 全量用户受影响" }, parent);
+  await h.run("src_add_finding", { intentId: intent.id, title: "多跳越权", severity: "high", impact: "可改任意用户订单造成数据篡改", victimImpact: "用户订单被篡改且难以察觉", attackPrerequisites: "需登录态可遍历订单 id", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s1"], attackChain: "发现 /api/admin → 骗登录 → 改数据 → 用户损失 → 全量用户受影响", vulnType: "越权漏洞" }, parent);
   const report = await h.run("src_report", {}, parent);
-  assert.ok(report.markdown.includes("攻击链（发现→利用前提→利用过程→损失→受害者）"), "攻击链标题");
+  assert.ok(report.markdown.includes("漏洞/情报类型: 越权漏洞"), "vulnType 渲染");
+  assert.ok(report.markdown.includes("【攻击链】"), "攻击链标题");
   assert.ok(report.markdown.includes("发现 /api/admin → 骗登录"), "attackChain 叙事渲染");
   /* 无 attackChain 时由字段拼接 */
   await h.run("src_add_finding", { intentId: intent.id, title: "单步漏洞", severity: "medium", impact: "可读取他人订单信息造成泄露", victimImpact: "用户订单信息泄露给攻击者", attackPrerequisites: "需登录态可枚举订单 id 遍历", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s"] }, parent);
   const report2 = await h.run("src_report", {}, parent);
   assert.ok(report2.markdown.includes("① 发现："), "无 attackChain 时拼接渲染");
+  assert.ok(report2.markdown.includes("漏洞/情报类型:"), "无 vulnType 时走未分类占位");
 });

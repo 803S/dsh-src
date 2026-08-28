@@ -55,6 +55,10 @@ export type SrcProjectionNode =
     readonly rawRequest: string
     readonly rawResponse: string
     readonly victimImpact: string
+    /** [local.26] attack preconditions (利用前提). */
+    readonly attackPrerequisites: string
+    /** [local.26] ids of facts/observations/research showing actual loss. */
+    readonly concreteLossEvidence: readonly string[]
     readonly affectedAssetId: string | undefined
     readonly createdAt: number
     /** [local.26] finding lifecycle: 'active' (default) or 'rejected' (user-pushed-back). */
@@ -65,6 +69,8 @@ export type SrcProjectionNode =
     readonly rejectedAt: number
     /** [local.26] optional narrative attack chain (发现→利用前提→利用过程→实际损失→受害者). */
     readonly attackChain: string
+    /** [local.26] vulnerability/intel category for the report template (e.g. 登录认证漏洞). */
+    readonly vulnType: string
   }
 
 export interface SrcProjectionAsset {
@@ -132,7 +138,7 @@ export interface SrcProjection {
   readonly nodes: readonly SrcProjectionNode[]
   readonly assets: readonly SrcProjectionAsset[]
   readonly coverage: ReadonlyArray<unknown>
-  readonly research: ReadonlyArray<unknown>
+  readonly research: ReadonlyArray<{ readonly id: string; readonly category: string; readonly hypothesis: string; readonly evidence?: readonly string[] }>
   readonly checkpoints: readonly SrcProjectionCheckpoint[]
   readonly observations: readonly SrcProjectionObservation[]
   readonly userTodos: readonly SrcProjectionUserTodo[]
