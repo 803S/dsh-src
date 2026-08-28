@@ -57,30 +57,34 @@ function reportOf(src: SrcProjection, t: ReportViewProps['t']): string {
       if (list.length === 0) list.push(asset === undefined ? (src.goal?.target ?? '') : asset.value)
       return list.join('; ')
     })()
-    /* 第 1 节：漏洞描述&发现方式、漏洞利用及危害——动态填充，空字段不显示、不占位。
-       attackChain 本身就是发现→利用→危害的闭合叙事，有则作为主叙述直接融入，不单列【攻击链】块。 */
+    /* 第 1 节：漏洞描述&发现方式、漏洞利用及危害。结构：一句话描述 → 【攻击链】垂直从上到下（动态、空步骤不占位）→
+       前端定位信息（前端功能点/应用下载/影响范围，复现必需）。 */
     const section1 = (() => {
       const lines: string[] = []
-      const chain = (finding.attackChain ?? '').trim()
-      if (chain !== '') lines.push(chain)
-      else if (finding.description !== '') lines.push(finding.description)
-      if (lines.length === 0) lines.push(finding.title)
-      /* 危害链要素：非空才列出。有 attackChain 主叙述时 impact 已含在叙事中不重复。 */
-      if (chain === '' && (finding.impact ?? '') !== '') lines.push(`${t('finding.impact')}: ${finding.impact}`)
-      if ((finding.attackPrerequisites ?? '') !== '') lines.push(`${t('finding.attackPrerequisites')}: ${finding.attackPrerequisites}`)
-      if ((finding.victimImpact ?? '') !== '') lines.push(`${t('finding.victimImpact')}: ${finding.victimImpact}`)
-      if (finding.affectedScope !== '') lines.push(`${t('finding.scope')}: ${finding.affectedScope}`)
-      /* 发现方式 / 入口 / app 版本与下载：根据实际情况动态，非空才提。 */
-      if (finding.discoveryPath !== '') lines.push(`${t('finding.discoveryPath')}: ${finding.discoveryPath}`)
-      if (finding.entryPoint !== '') lines.push(`${t('finding.entryPoint')}: ${finding.entryPoint}`)
-      if (asset !== undefined) {
-        const meta = String(asset.meta ?? '')
-        if (asset.type === 'app' || asset.type === 'mini-program') {
-          const dl = meta.match(/(https?:\/\/[^\s'"]+)/)
-          if (dl !== null) lines.push(`${t('report.appDownload')}: ${dl[0]}`)
-        }
+      /* 一句话描述（简洁）。 */
+      if (finding.description !== '') lines.push(finding.description, '')
+      /* 攻击链：垂直从上到下。attackChain 字段非空时原样呈现；否则从结构化字段构建①到⑤，仅非空步骤、不占位。 */
+      const chainLines: string[] = []
+      const chainField = (finding.attackChain ?? '').trim()
+      if (chainField !== '') chainLines.push(chainField)
+      else {
+        if (finding.discoveryPath !== '') chainLines.push(`① 发现：${finding.discoveryPath}`)
+        if ((finding.attackPrerequisites ?? '') !== '') chainLines.push(`② 利用前提：${finding.attackPrerequisites}`)
+        if ((finding.impact ?? '') !== '') chainLines.push(`③ 利用过程：${finding.impact}`)
+        if ((finding.concreteLossEvidence ?? []).length > 0) chainLines.push(`④ 实际损失：${(finding.concreteLossEvidence ?? []).join('; ')}`)
+        if ((finding.victimImpact ?? '') !== '') chainLines.push(`⑤ 受害者影响：${finding.victimImpact}`)
       }
-      return lines.length === 0 ? t('report.none') : lines.join('\n')
+      if (chainLines.length > 0) lines.push('【攻击链】', ...chainLines, '')
+      /* 前端定位信息：复现必需。web 漏洞填前端功能点；app 漏洞要有应用下载；需登录的在②利用前提已注明登录入口。 */
+      if (finding.entryPoint !== '') lines.push(`${t('finding.entryPoint')}：${finding.entryPoint}`)
+      if (asset !== undefined && (asset.type === 'app' || asset.type === 'mini-program')) {
+        const meta = String(asset.meta ?? '')
+        const dl = meta.match(/(https?:\/\/[^\s'"]+)/)
+        const download = dl !== null ? dl[0] : (asset.value.startsWith('http') ? asset.value : (meta !== '' ? meta : asset.value))
+        lines.push(`${t('report.appDownload')}：${download}`)
+      }
+      if (finding.affectedScope !== '') lines.push(`${t('finding.scope')}：${finding.affectedScope}`)
+      return lines.length === 0 ? t('report.none') : lines.join('\n').replace(/\n+$/, '')
     })()
     /* 第 2 节：详细复现/证明过程——请求/响应/脚本走代码框，步骤清晰呈现。 */
     const reproBlock = (() => {

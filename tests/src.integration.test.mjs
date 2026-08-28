@@ -683,8 +683,8 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p2);
   assert.equal(ok.ready, true);
   const report = await h.run("src_report", {}, p2);
-  assert.match(report.markdown, /入口功能点：简历查看页-详情/);
-  assert.match(report.markdown, /发现方式：Burp proxy history/);
+  assert.match(report.markdown, /前端功能点：简历查看页-详情/);
+  assert.match(report.markdown, /① 发现：Burp proxy history/);
   assert.match(report.markdown, /=== Request ===/);
   assert.match(report.markdown, /GET \/resume\?id=2 HTTP\/1\.1/);
   assert.match(report.markdown, /=== Response ===/);
@@ -1333,8 +1333,8 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
   // 直接检查报告渲染。
   const report = await h.run("src_report", {}, parent);
   assert.ok(report.markdown.includes("**漏洞名称**：越权读取他人订单"), "标准模板名称行");
-  assert.ok(report.markdown.includes("利用方式：攻击者遍历订单 ID"), "利用方式 in section1");
-  assert.ok(report.markdown.includes("受害者影响：受害用户的收货地址"), "victim perspective in section1");
+  assert.ok(report.markdown.includes("③ 利用过程：攻击者遍历订单 ID"), "利用过程 in 攻击链③");
+  assert.ok(report.markdown.includes("⑤ 受害者影响：受害用户的收货地址"), "受害者影响 in 攻击链⑤");
   // 缺失场景：第二个 finding 不带 victimImpact
   await h.run("src_add_intent", { title: "信息泄露复核", detail: "d", goalId: state.goal.id }, parent).catch(() => {});
   const intents = await h.run("src_state", {}, parent);
@@ -1345,8 +1345,7 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
     await h.run("src_update_finding", { findingId: "finding-1", victimImpact: "" }, parent);
   }
   const report2 = await h.run("src_report", {}, parent);
-  assert.ok(!report2.markdown.includes("受害者影响："), "空 victimImpact 不渲染该行（动态模板：空字段不占位）");
-  assert.ok(!report2.markdown.includes("① 发现"), "旧拼接五步已移除");
+  assert.ok(!report2.markdown.includes("⑤ 受害者影响"), "空 victimImpact 不渲染⑤受害者影响行（动态模板：空步骤不占位）");
 });
 
 test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索引注入 + finalize 未沉淀警告", async () => {
@@ -2016,7 +2015,7 @@ test("[local.26] src_update_finding 补 attackChain；报告渲染攻击链叙�
   /* 无 attackChain 时由字段填充 */
   await h.run("src_add_finding", { intentId: intent.id, title: "单步漏洞", severity: "medium", impact: "可读取他人订单信息造成泄露", victimImpact: "用户订单信息泄露给攻击者", attackPrerequisites: "需登录态可枚举订单 id 遍历", concreteLossEvidence: [fe], affectedScope: "s", remediation: "r", pocEvidence: ["e"], reproducibleSteps: ["s"] }, parent);
   const report2 = await h.run("src_report", {}, parent);
-  assert.ok(report2.markdown.includes("利用方式：可读取他人订单信息造成泄露"), "无 attackChain 时利用方式渲染");
+  assert.ok(report2.markdown.includes("③ 利用过程：可读取他人订单信息造成泄露"), "无 attackChain 时③利用过程渲染");
   assert.ok(report2.markdown.includes("**漏洞类型**：未分类"), "无 vulnType 时走未分类占位");
 });
 test("[local.27] pocScript 以代码块渲染保留缩进；rawRequest 代码块保留缩进", async () => {
@@ -2038,4 +2037,33 @@ test("[local.27] pocScript 以代码块渲染保留缩进；rawRequest 代码块
   /* rawRequest 代码块保留缩进 */
   assert.ok(report.markdown.includes("```\nGET /api/login"), "rawRequest 以代码块渲染");
   assert.ok(report.markdown.includes("    Authorization: Bearer t"), "rawRequest 缩进保留");
+});
+
+test("[local.30] 垂直攻击链①到⑤ + app 资产应用下载行 + 前端功能点（纯 mock）", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("chain1");
+  await h.run("src_add_goal", { target: "example.test", objective: "app 漏洞报告渲染测试" }, parent);
+  const st = await h.run("src_state", {}, parent);
+  /* 构造一个 app 资产，meta 里记下载方式 */
+  const asset = await h.run("src_add_asset", { type: "app", value: "com.example.app", meta: "下载：https://app.example.test/download/v2.3.1 apk", source: "应用商店" }, parent);
+  const intent = await h.run("src_add_intent", { title: "i1", detail: "d", goalId: st.goal.id }, parent);
+  const fe = (await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "越权读取证据", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: intent.id, title: "越权读取他人相册", severity: "high", impact: "遍历 userId 读取任意用户相册造成隐私泄露", victimImpact: "用户私密照片被陌生人查看与下载，隐私严重泄露且无感知", attackPrerequisites: "需登录（登录入口 https://app.example.test/login），普通账号即可遍历 userId", concreteLossEvidence: [fe], affectedScope: "全量用户", remediation: "后端校验 userId 归属", pocEvidence: ["GET /api/album?userId=2 -> 200"], reproducibleSteps: ["登录后 GET /api/album?userId=2"], vulnType: "越权漏洞", affectedAssetId: asset.id, discoveryPath: "抓包发现 /api/album 接口", entryPoint: "个人中心-相册页" }, parent);
+  const report = await h.run("src_report", {}, parent);
+  /* 垂直攻击链①到⑤ */
+  assert.ok(report.markdown.includes("【攻击链】"), "攻击链标题");
+  assert.ok(report.markdown.includes("① 发现：抓包发现 /api/album 接口"), "① 发现");
+  assert.ok(report.markdown.includes("② 利用前提：需登录（登录入口 https://app.example.test/login）"), "② 利用前提含登录入口");
+  assert.ok(report.markdown.includes("③ 利用过程：遍历 userId"), "③ 利用过程");
+  assert.ok(report.markdown.includes("④ 实际损失："), "④ 实际损失");
+  assert.ok(report.markdown.includes("⑤ 受害者影响：用户私密照片"), "⑤ 受害者影响");
+  /* app 资产应用下载行（从 meta 提取 URL） */
+  assert.ok(report.markdown.includes("应用下载：https://app.example.test/download/v2.3.1"), "app 资产应用下载行");
+  /* 前端功能点 */
+  assert.ok(report.markdown.includes("前端功能点：个人中心-相册页"), "前端功能点行");
+  /* 各步骤从上到下顺序：① 在 ② 之前 */
+  assert.ok(report.markdown.indexOf("① 发现") < report.markdown.indexOf("② 利用前提"), "① 在②之前");
+  assert.ok(report.markdown.indexOf("② 利用前提") < report.markdown.indexOf("③ 利用过程"), "② 在③之前");
 });
