@@ -102,9 +102,22 @@ export interface ExploreViewProps {
   readonly t: PropsLocale['t']
 }
 
+/** [local.33] 域笔记分类徽标文案（分类枚举与 src_record_domain_note 一致）。 */
+const NOTE_CATEGORY_LABELS: Record<string, string> = {
+  fingerprint: '域指纹',
+  pitfall: '坑位',
+  'falsified-summary': '已否假设',
+  baseline: '基线',
+  misc: '其他',
+}
+
 export function ExploreView({ src, t }: ExploreViewProps) {
   const { nodes, edges } = useMemo(() => layoutExploration(src), [src])
   const [selectedNode, setSelectedNode] = useState<ExploreGraphNode | null>(null)
+  /* [local.33] 域笔记侧栏：跨会话只读（src_add_goal / src_record_domain_note 快照推送）；默认展开，可收起。 */
+  const notes = src.domainNotes ?? []
+  const [notesOpen, setNotesOpen] = useState(true)
+  const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null)
   const flowNodes = useMemo<FlowNode<FlowNodeData, 'src'>[]>(() =>
     nodes.map(node => ({
       id: node.id,
@@ -161,6 +174,31 @@ export function ExploreView({ src, t }: ExploreViewProps) {
           onClose={() => { setSelectedNode(null) }}
         />
       )}
+      {/* [local.33] 域笔记侧栏：只读折叠列表，绝对定位在图右上角，不干扰图布局。 */}
+      <aside className={`${css.notesPanel}${notesOpen ? '' : ` ${css.notesPanelClosed}`}`} data-testid="src-domain-notes">
+        <button type="button" className={css.notesHeader} onClick={() => { setNotesOpen(!notesOpen) }}>
+          <span>{`📚 域笔记${notes.length > 0 ? ` · ${notes.length}` : ''}`}</span>
+          <span className={css.notesToggle} aria-hidden>{notesOpen ? '▾' : '▸'}</span>
+        </button>
+        {notesOpen && (
+          <div className={css.notesList}>
+            {notes.length === 0 ? (
+              <p className={css.notesEmpty}>本目标暂无域笔记——agent 沉淀（src_record_domain_note）后跨会话可见，开局也会自动带出。</p>
+            ) : notes.map((note) => (
+              <div key={note.id} className={css.noteItem}>
+                <button type="button" className={css.noteTitle} onClick={() => { setExpandedNoteId(expandedNoteId === note.id ? null : note.id) }}>
+                  <span className={css.noteCategory}>{NOTE_CATEGORY_LABELS[note.category] ?? note.category}</span>
+                  {note.title}
+                </button>
+                {expandedNoteId === note.id && note.content !== '' && <p className={css.noteContent}>{note.content}</p>}
+                <p className={css.noteMeta}>
+                  {`来自会话 ${note.sourceSessionId === '' ? '—' : note.sourceSessionId.length > 14 ? `${note.sourceSessionId.slice(0, 14)}…` : note.sourceSessionId} · ${note.updatedAt > 0 ? new Date(note.updatedAt).toISOString().slice(0, 10) : '—'}`}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </aside>
     </div>
   )
 }

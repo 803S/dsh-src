@@ -90,7 +90,10 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.deepEqual({ facts: duplicateBatch.facts, assets: duplicateBatch.assets, findings: duplicateBatch.findings, stage: duplicateBatch.stage }, { facts: 0, assets: 0, findings: 0, stage: "completed" });
   const repeated = await h.run("src_submit", { ...batch, stage: "completed", summary: "verification complete" }, child);
   assert.equal(repeated.duplicateCheckpoint, true);
-  assert.equal(parentEvents.length, 5, "duplicate checkpoints must not append another projection event");
+  /* [local.33] 改相对断言：src_add_goal 现在会多发一条域笔记快照事件，但重复 checkpoint 仍必须零新增。 */
+  const eventsBeforeRepeat = parentEvents.length;
+  await h.run("src_submit", { ...batch, stage: "completed", summary: "verification complete" }, child);
+  assert.equal(parentEvents.length, eventsBeforeRepeat, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
   assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 });
@@ -747,6 +750,46 @@ test("projection 回放 observation/user_todo 并在 view 输出（UI 数据面�
   assert.equal(proj.observations.length, 1);
   assert.equal(proj.userTodos.length, 1);
   assert.equal(proj.counts.observations, 1);
+});
+
+/* [local.33] fold：src_auth_budget 权威计数落 state；非法参数忽略；src_add_goal 保留会话级预算。 */
+test("[local.33] fold src_auth_budget：计数落 state，非法参数忽略，跨 goal 保留", async () => {
+  const mod = await import("../lib/src.js");
+  let st = JSON.parse(JSON.stringify(mod.srcInitialState));
+  const call = (name, args) => { st = mod.applySrcEvent(st, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } }); };
+  call("src_add_goal", { target: "example.test", objective: "预算" });
+  call("src_auth_budget", { used: 7, limit: 30 });
+  let view = mod.viewSrcState(st);
+  assert.equal(view.authBudget.used, 7);
+  assert.equal(view.authBudget.limit, 30);
+  call("src_auth_budget", { used: -5, limit: 30 });
+  call("src_auth_budget", { used: "x", limit: 0 });
+  assert.equal(mod.viewSrcState(st).authBudget.used, 7, "非法 used/limit 不污染");
+  call("src_auth_budget", { used: 9, limit: 30 });
+  call("src_add_goal", { target: "other.test", objective: "重开" });
+  view = mod.viewSrcState(st);
+  assert.equal(view.authBudget.used, 9, "src_add_goal 保留会话级认证预算");
+  assert.equal(view.domainNotes.length, 0, "域笔记随 goal 重置，等快照事件重建");
+});
+
+/* [local.33] fold：src_domain_notes_snapshot 整表替换 + 脏行过滤。 */
+test("[local.33] fold src_domain_notes_snapshot：快照替换 domainNotes，脏行过滤", async () => {
+  const mod = await import("../lib/src.js");
+  let st = JSON.parse(JSON.stringify(mod.srcInitialState));
+  const call = (name, args) => { st = mod.applySrcEvent(st, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } }); };
+  call("src_add_goal", { target: "example.test", objective: "笔记" });
+  call("src_domain_notes_snapshot", { notes: [
+    { id: "domainNote-1", category: "pitfall", title: "api/v1 限流", content: "burst 会 429", sourceSessionId: "s1", createdAt: 1, updatedAt: 2 },
+    { id: "", title: "脏行缺 id" },
+    null,
+    { id: "domainNote-2", title: "缺类别默认 misc" },
+    { id: "domainNote-3" }
+  ] });
+  const view = mod.viewSrcState(st);
+  assert.equal(view.domainNotes.length, 2);
+  assert.equal(view.domainNotes[0].content, "burst 会 429");
+  assert.equal(view.domainNotes[1].category, "misc");
+  assert.equal(view.counts.domainNotes, 2);
 });
 
 test("/src-todo feedback parser validates id/status and keeps note", () => {
@@ -2206,4 +2249,71 @@ test("[local.32] scan_surface 遇 401 不算风控：继续扫完且 protectionS
     assert.equal(result.requested, 2, "全部路径都应扫到");
     for (const row of result.results) assert.equal(row.protectionSignal, false, "401 不应置 protectionSignal");
   } finally { globalThis.fetch = originalFetch; }
+});
+
+/* [local.33] 认证预算投影通道：src_test_bypass 发出认证请求后应发 src_auth_budget 合成事件（UI 头部「认证 used/limit」格数据源）。 */
+test("[local.33] src_test_bypass 认证请求后发 src_auth_budget 合成事件", async () => {
+  const h = harness();
+  const parent = h.exec("g33bud");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "预算投影", authorization: "t" }, parent);
+  const intent = await h.run("src_add_intent", { title: "auth", goalId: "goal-1" }, parent);
+  const research = await h.run("src_record_research", { intentId: intent.id, category: "authorization-bypass", hypothesis: "auth bypass", status: "hypothesis" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response("ok", { status: 200, headers: { "content-type": "application/json" } });
+    const result = await h.run("src_test_bypass", {
+      intentId: intent.id, researchId: research.id, category: "authorization-bypass", baseUrl: "https://example.test",
+      baseline: { method: "GET", path: "/api/me", headers: { cookie: "sid=abc" } },
+      variants: [{ method: "GET", path: "/api/admin", headers: { cookie: "sid=abc" } }]
+    }, parent);
+    assert.equal(result.requiresDecision, false);
+    assert.equal(result.authBudgetExhausted, void 0, "2 次认证请求不应触顶");
+    /* 合成事件携带权威计数（fold → 投影 → UI）。 */
+    const events = h.sessions.get("g33bud").events.filter((e) => e.type === "tool/call" && e.data.name === "src_auth_budget");
+    assert.equal(events.length, 1, "应恰好一条 src_auth_budget 事件");
+    const payload = JSON.parse(events[0].data.arguments);
+    assert.equal(payload.used, 2, "baseline + variant 各计一次");
+    assert.equal(payload.limit, 30);
+    /* 未发认证请求的调用不应发事件。 */
+    await h.run("src_test_bypass", {
+      intentId: intent.id, researchId: research.id, category: "method-bypass", baseUrl: "https://example.test",
+      baseline: { method: "GET", path: "/api/me" }, variants: [{ method: "POST", path: "/api/me" }]
+    }, parent);
+    const eventsAfter = h.sessions.get("g33bud").events.filter((e) => e.type === "tool/call" && e.data.name === "src_auth_budget");
+    assert.equal(eventsAfter.length, 1, "无认证请求不发事件");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+/* [local.33] 域笔记快照投影通道：src_add_goal 开局推送 + src_record_domain_note 落库刷新 + 跨会话可见。 */
+test("[local.33] src_add_goal / src_record_domain_note 推送域笔记快照事件（跨会话可见）", async () => {
+  const h = harness();
+  const a = h.exec("g33note-a");
+  await h.run("src_add_goal", { target: "https://note.test", objective: "首轮", authorization: "t" }, a);
+  let snaps = h.sessions.get("g33note-a").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
+  assert.equal(snaps.length, 1, "开局应有一条快照");
+  assert.deepEqual(JSON.parse(snaps[0].data.arguments).notes, [], "新目标开局快照为空");
+  await h.run("src_record_domain_note", { category: "pitfall", title: "api/v1 限流", content: "burst 会 429" }, a);
+  snaps = h.sessions.get("g33note-a").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
+  assert.equal(snaps.length, 2, "落库后刷新快照");
+  const notesA = JSON.parse(snaps[1].data.arguments).notes;
+  assert.equal(notesA.length, 1);
+  assert.equal(notesA[0].title, "api/v1 限流");
+  assert.equal(notesA[0].content, "burst 会 429", "快照含 content 全文");
+  assert.equal(notesA[0].category, "pitfall");
+  /* 新会话同目标续测：开局快照带出历史域笔记（跨会话）。 */
+  const b = h.exec("g33note-b");
+  await h.run("src_add_goal", { target: "https://note.test", objective: "续测", authorization: "t" }, b);
+  const snapsB = h.sessions.get("g33note-b").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
+  assert.equal(snapsB.length, 1);
+  const notesB = JSON.parse(snapsB[0].data.arguments).notes;
+  assert.equal(notesB.length, 1, "历史域笔记应被带出");
+  assert.equal(notesB[0].id, notesA[0].id, "同一条笔记（store 权威 id）");
+  /* 快照事件可直接被 fold 消费成投影（UI 渲染数据面）。 */
+  const { applySrcEvent, srcInitialState, viewSrcState } = await import("../lib/src.js");
+  let st = JSON.parse(JSON.stringify(srcInitialState));
+  st = applySrcEvent(st, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "note.test", objective: "续测" }) } });
+  st = applySrcEvent(st, { type: "tool/call", data: { name: "src_domain_notes_snapshot", arguments: JSON.stringify({ notes: notesB }) } });
+  const view = viewSrcState(st);
+  assert.equal(view.domainNotes.length, 1);
+  assert.equal(view.domainNotes[0].content, "burst 会 429");
 });

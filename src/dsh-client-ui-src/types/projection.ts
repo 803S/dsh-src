@@ -178,6 +178,17 @@ export interface SrcProjectionResearchRow {
   readonly updatedAt: number
 }
 
+/** [local.33] One domain note as carried by the snapshot wire projection (mirrors srcProjectionSchema). */
+export interface SrcProjectionDomainNote {
+  readonly id: string
+  readonly category: string
+  readonly title: string
+  readonly content: string
+  readonly sourceSessionId: string
+  readonly createdAt: number
+  readonly updatedAt: number
+}
+
 /** The standing src state shown by the Web view tab. */
 export interface SrcProjection {
   readonly goal: SrcProjectionGoal | null
@@ -189,6 +200,10 @@ export interface SrcProjection {
   readonly observations: readonly SrcProjectionObservation[]
   readonly userTodos: readonly SrcProjectionUserTodo[]
   readonly pendingApprovals: readonly SrcProjectionPendingApproval[]
+  /** [local.33] 会话级认证预算（src_test_bypass 认证请求计数，src_auth_budget 合成事件推送）；头部统计格渲染。 */
+  readonly authBudget?: { readonly used: number; readonly limit: number }
+  /** [local.33] 目标域笔记快照（跨会话；src_add_goal / src_record_domain_note 时整表推送），explore 侧栏只读列表。 */
+  readonly domainNotes?: readonly SrcProjectionDomainNote[]
   readonly infra: Readonly<Record<string, string>>
   readonly edges: readonly SrcProjectionEdge[]
   readonly apiDiscovery: {

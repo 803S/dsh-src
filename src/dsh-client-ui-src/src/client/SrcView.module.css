@@ -18,6 +18,7 @@
 .statValue{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:20px;font-variant-numeric:tabular-nums}
 .statLabel{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:14px;margin-top:1px}
 .statAccent .statValue{color:var(--dsw-alias-state-error-primary)}
+.statWarn .statValue{color:var(--dsw-alias-state-warn-primary)}
 .statMuted .statValue{color:var(--dsw-alias-label-tertiary);font-weight:500}
 .metaRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 10px;font-size:11px;line-height:18px;overflow-wrap:anywhere;max-width:100%}

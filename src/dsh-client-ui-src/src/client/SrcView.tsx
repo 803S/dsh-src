@@ -235,6 +235,9 @@ type TodoRow = {
 			return<section className={css.root} data-testid="src-view"><header className={css.card}>{src.goal !== null && src.goal.objective !== "" && <p className={css.objective}>目的：{src.goal.objective}</p>}<div className={css.cardTitle} style={{ alignItems: "center" }}><h2 className={css.target} style={{ fontSize: 18 }}>{src.goal === null ? "" : src.goal.target}</h2>{src.goal !== null && src.goal.authorization !== "" && <span className={css.badge} title={src.goal.authorization}>授权：{src.goal.authorization.length > 24 ? `${src.goal.authorization.slice(0, 24)}…` : src.goal.authorization}</span>}</div>{(() => {
 								const pendingTodos = (src.userTodos ?? []).filter((row) => row.status === "pending").length;
 								const pendingApprovals = (src.pendingApprovals ?? []).filter((row) => row.status === "pending").length;
+								/* [local.33] 认证预算：src_test_bypass 认证请求计数 used/limit（会话级）。≥80% 变警示色，触顶红。 */
+								const authBudget = src.authBudget;
+								const authBudgetAccent = authBudget === void 0 || authBudget.used === 0 ? css.statMuted : authBudget.used >= authBudget.limit ? css.statAccent : authBudget.used * 5 >= authBudget.limit * 4 ? css.statWarn : "";
 								const stats = [
 									["意图", src.counts!.intents, ""],
 									["事实", src.counts!.facts, ""],
@@ -243,7 +246,8 @@ type TodoRow = {
 									["检查点", src.counts!.checkpoints ?? 0, (src.counts!.checkpoints ?? 0) === 0 ? css.statMuted : ""],
 									["探测", src.counts!.observations ?? 0, (src.counts!.observations ?? 0) === 0 ? css.statMuted : ""],
 									["待办", pendingTodos, pendingTodos > 0 ? css.statAccent : css.statMuted],
-									["待审", pendingApprovals, pendingApprovals > 0 ? css.statAccent : css.statMuted]
+									["待审", pendingApprovals, pendingApprovals > 0 ? css.statAccent : css.statMuted],
+									["认证", authBudget === void 0 ? "—" : `${authBudget.used}/${authBudget.limit}`, authBudgetAccent]
 								];
 								return<div className={css.statTrack}>{stats.map(([label, value, accent]) => <div className={`${css.stat} ${accent}`}><div className={css.statValue}>{value}</div><div className={css.statLabel}>{label}</div></div>)}</div>;
 							})()}{src.apiDiscovery && (src.apiDiscovery.total ?? 0) > 0 &&<p className={css.counts}>API 发现：{src.apiDiscovery.total ?? 0} · schema {src.apiDiscovery.schemas ?? 0} · GraphQL {src.apiDiscovery.graphql ?? 0} · hint {src.apiDiscovery.hints ?? 0} · 未推进 {src.apiDiscovery.untouched ?? 0}</p>}</header><nav className={css.tabs} data-testid="src-tabs">{TABS.map((tabKey) =><button type="button" className={css.tab} aria-pressed={tab === tabKey} data-testid={`src-tab-${tabKey}`} onClick={() => {
