@@ -15,10 +15,18 @@
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 75%,transparent);
   border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-1);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 65%,transparent);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 1px 2px rgba(0,0,0,.02);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+
+.finding:hover {
+  border-color: color-mix(in oklab,var(--dsw-alias-border-l1) 90%,transparent);
+  box-shadow: 0 4px 12px -4px rgba(0,0,0,.06);
 }
 
 .header {
@@ -28,29 +36,45 @@
   min-width: 0;
 }
 
-.severity {
+.severity{
   flex: none;
-  padding: 0 10px;
+  padding: 2px 12px;
   border-radius: 999px;
   background: var(--dsw-alias-bg-layer-2);
-  font-size: 12px;
-  line-height: 22px;
+  font-size: 11.5px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--dsw-alias-label-secondary);
+  position: relative;
+  overflow: hidden;
 }
 
+.severity::before{
+  content:"";
+  position:absolute;
+  inset:0;
+  background:currentColor;
+  opacity:0;
+  pointer-events:none;
+}
+
+/* critical+high: 红底高光标签，带晕 */
 .severity[data-severity='critical'],
 .severity[data-severity='high'] {
   color: #fff;
-  background: var(--dsw-alias-state-error-primary);
+  background: linear-gradient(135deg, var(--dsw-alias-state-error-primary) 0%, color-mix(in srgb,var(--dsw-alias-state-error-primary) 82%, black) 100%);
+  box-shadow: 0 1px 4px rgba(0,0,0,.10), 0 0 0 1px inset rgba(255,255,255,.1);
 }
 
 .severity[data-severity='medium'] {
   color: #fff;
-  background: var(--dsw-alias-state-warn-primary);
+  background: linear-gradient(135deg, var(--dsw-alias-state-warn-primary), color-mix(in srgb,var(--dsw-alias-state-warn-primary) 80%, black));
+  box-shadow: 0 1px 3px rgba(0,0,0,.06);
 }
 
-.severity[data-severity='low'] {
-  color: #fff;
+.severity[data-severity='low'],.severity[data-severity='info'] {
+  color:#fff;
   background: var(--dsw-alias-state-business-primary);
 }
 
@@ -128,19 +152,44 @@
 /* [local.36] Collapsible long-form sections: keeps multi-finding pages scannable;
    only the severity header + description/impact stay open by default. */
 .fold {
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
   border-radius: 8px;
-  background: var(--dsw-alias-bg-base);
-  padding: 6px 10px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-base) 80%,transparent);
+  padding: 8px 12px;
+  backdrop-filter: blur(4px);
+  transition: border-color 130ms ease;
+}
+
+.fold:hover {
+  border-color: color-mix(in oklab,var(--dsw-alias-border-l1) 80%,transparent);
 }
 
 .foldSummary {
   cursor: pointer;
   font-size: 12px;
   line-height: 20px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--dsw-alias-label-tertiary);
   user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.foldSummary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transition: transform 120ms ease;
+  transform: translateY(0.5px);
+  opacity: .6;
+}
+
+.fold[open] .foldSummary::before {
+  transform: rotate(90deg);
 }
 
 .foldSummary:hover {
@@ -148,7 +197,8 @@
 }
 
 .fold[open] .foldSummary {
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  color: var(--dsw-alias-label-secondary);
 }
 
 .fold .stepsBlock {

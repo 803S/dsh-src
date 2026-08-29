@@ -81,7 +81,23 @@ type TodoRow = {
 		}
 		/** Shared inline style for the small todo action buttons. */
 		function buttonStyle(color: string): CSSProperties {
-			return { cursor: "pointer", background: "transparent", border: `1px solid ${color}`, color, borderRadius: 999, padding: "1px 10px", fontSize: 12, lineHeight: "18px" };
+			return { 
+				cursor: "pointer", 
+				background: "color-mix(in oklab, var(--dsw-alias-bg-layer-2) 80%, transparent)", 
+				border: "1px solid var(--dsw-alias-border-l1)",
+				borderRadius: "999px", 
+				padding: "4px 14px", 
+				fontSize: "12px", 
+				fontWeight: "500",
+				color: "var(--dsw-alias-label-primary)",
+				lineHeight: "18px",
+				backdropFilter: "blur(4px)",
+				transition: "border-color 130ms ease, box-shadow 130ms ease, transform 120ms ease",
+				boxShadow: "0 1px 2px rgba(0,0,0,.03)",
+				borderImageWidth: "1px",
+				borderImageSlice: "1",
+				borderImageSource: `linear-gradient(135deg, ${color} 0%, transparent 100%)`
+			};
 		}
 		/** [local.31] 高危请求待审区：显示完整请求本体 + 批准/拒绝按钮 + 备注 textarea。
 		 *  左右分栏布局由调用方负责，本组件只渲染右侧待审列表。 */

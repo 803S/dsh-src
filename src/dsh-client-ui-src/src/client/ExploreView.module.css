@@ -5,30 +5,42 @@
   position: relative;
   flex: 1 1 auto;
   min-height: 320px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
+  border-radius: 12px;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base);
+  background: color-mix(in oklab,var(--dsw-alias-bg-base) 75%, transparent);
+}
+
+.graph::before {
+  content:'';
+  position:absolute;
+  inset:0;
+  background: radial-gradient(1200px 800px at 50% 0%, var(--dsw-alias-brand-primary) 1%, transparent 55%), radial-gradient(800px 600px at 100% 100%, var(--dsw-alias-state-business-primary) 0.5%, transparent 45%);
+  opacity:.035;
+  pointer-events:none;
+  z-index:1;
 }
 
 /* React Flow ships a white control bar. Scope the override to this graph so
    the controls follow the DSH light/dark semantic tokens. */
 .graph :global(.react-flow__controls) {
   overflow: hidden;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  box-shadow: none;
-  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px -4px rgba(0,0,0,.08);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 82%,transparent);
+  backdrop-filter: blur(8px);
 }
 
 .graph :global(.react-flow__controls-button) {
   border-bottom-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-1);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 82%,transparent);
   color: var(--dsw-alias-label-secondary);
+  transition: background 130ms ease, color 130ms ease;
 }
 
 .graph :global(.react-flow__controls-button:hover) {
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-2) 65%,transparent);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -56,22 +68,27 @@
   width: 236px;
   height: 120px;
   overflow: hidden;
-  padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
+  border-radius: 12px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 68%,transparent);
+  backdrop-filter: blur(4px);
   font-size: 12px;
   line-height: 18px;
   cursor: pointer;
+  transition: border-color 130ms ease, box-shadow 130ms ease, transform 100ms ease;
 }
 
 .node:hover {
-  border-color: var(--dsw-alias-border-l1);
+  border-color: color-mix(in oklab,var(--dsw-alias-border-l1) 85%,transparent);
+  box-shadow: 0 4px 12px -6px rgba(0,0,0,.08);
+  transform: translateY(-1px);
 }
 
 .node[data-kind='goal'] {
-  border-color: var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
+  border-color: color-mix(in oklab,var(--dsw-alias-brand-primary) 35%,transparent);
+  background: color-mix(in oklab,var(--dsw-alias-brand-primary) 6%,var(--dsw-alias-bg-layer-2));
+  box-shadow: 0 2px 8px -3px rgba(0,0,0,.06);
 }
 
 .handle {
@@ -163,19 +180,21 @@
 /* [local.33] 域笔记侧栏：绝对定位在图右上角的只读折叠列表，不干扰图布局。 */
 .notesPanel {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 268px;
-  max-height: calc(100% - 16px);
+  top: 12px;
+  right: 12px;
+  width: 280px;
+  max-height: calc(100% - 24px);
   display: flex;
   flex-direction: column;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-2) 72%,transparent);
+  backdrop-filter: blur(16px) saturate(1.2);
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l1) 70%,transparent);
+  border-radius: 14px;
+  box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(255,255,255,.04) inset;
   z-index: 6;
   font-size: 12px;
   overflow: hidden;
+  transition: all 200ms ease;
 }
 
 .notesPanelClosed {

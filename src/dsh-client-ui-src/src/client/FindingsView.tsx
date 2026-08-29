@@ -43,14 +43,18 @@ export interface FindingsViewProps {
 /** Small inline-button style, matching the todo action buttons in SrcView. */
 function buttonStyle(color: string): CSSProperties {
   return {
-    padding: '4px 10px',
+    padding: '5px 14px',
     fontSize: 12,
     lineHeight: 1.5,
-    borderRadius: 6,
-    border: '1px solid rgba(127,127,127,.4)',
-    background: 'transparent',
-    color,
+    borderRadius: 999,
+    border: '1px solid var(--dsw-alias-border-l1)',
+    background: 'color-mix(in oklab, var(--dsw-alias-bg-layer-2) 80%, transparent)',
+    color: 'var(--dsw-alias-label-primary)',
     cursor: 'pointer',
+    fontWeight: 500,
+    backdropFilter: 'blur(4px)',
+    boxShadow: '0 1px 2px rgba(0,0,0,.03)',
+    transition: 'border-color 130ms ease, box-shadow 130ms ease, transform 100ms ease',
   }
 }
 

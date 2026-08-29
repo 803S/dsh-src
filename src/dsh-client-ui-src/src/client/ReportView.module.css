@@ -28,19 +28,23 @@
 
 .action {
   appearance: none;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  padding: 5px 10px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 75%,transparent);
+  backdrop-filter: blur(8px);
+  color: var(--dsw-alias-label-primary);
   font-size: 13px;
+  font-weight: 500;
   line-height: 20px;
   cursor: pointer;
+  transition: all 140ms ease;
 }
 
 .action:hover {
-  color: var(--dsw-alias-label-primary);
   border-color: var(--dsw-alias-brand-primary);
+  color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 2px 8px -2px rgba(0,0,0,.08);
 }
 
 .error {
@@ -55,14 +59,15 @@
   flex: 1 1 auto;
   min-height: 240px;
   margin: 0;
-  padding: 14px;
+  padding: 20px 24px;
   overflow: auto;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-base);
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
+  border-radius: 14px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-base) 85%,transparent);
+  backdrop-filter: blur(4px);
   color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 13.5px;
+  line-height: 22px;
   overflow-wrap: anywhere;
 }
 
