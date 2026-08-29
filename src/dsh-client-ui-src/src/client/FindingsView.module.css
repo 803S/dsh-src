@@ -124,3 +124,35 @@
   text-align: center;
   color: var(--dsw-alias-label-caption);
 }
+
+/* [local.36] Collapsible long-form sections: keeps multi-finding pages scannable;
+   only the severity header + description/impact stay open by default. */
+.fold {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  padding: 6px 10px;
+}
+
+.foldSummary {
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-tertiary);
+  user-select: none;
+}
+
+.foldSummary:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.fold[open] .foldSummary {
+  margin-bottom: 6px;
+}
+
+.fold .stepsBlock {
+  border: none;
+  padding: 4px 0 0;
+  background: transparent;
+}

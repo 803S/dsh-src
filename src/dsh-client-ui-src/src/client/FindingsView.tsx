@@ -137,33 +137,40 @@ export function FindingsView({ src, t, runCommand }: FindingsViewProps) {
             <p className={css.description}>{t('finding.scope')}: {finding.affectedScope}</p>
             <p className={css.description}>{t('finding.remediation')}: {finding.remediation}</p>
             {(finding.rawRequest !== '' || finding.rawResponse !== '') && (
-              <div className={css.stepsBlock}>
-                {finding.rawRequest !== '' && (
-                  <>
-                    <span className={css.stepsLabel}>{t('finding.rawRequest')}</span>
-                    <pre className={css.steps} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{finding.rawRequest}</pre>
-                  </>
-                )}
-                {finding.rawResponse !== '' && (
-                  <>
-                    <span className={css.stepsLabel}>{t('finding.rawResponse')}</span>
-                    <pre className={css.steps} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{finding.rawResponse}</pre>
-                  </>
-                )}
-              </div>
+              <details className={css.fold}>
+                <summary className={css.foldSummary}>{t('finding.rawRequest')} / {t('finding.rawResponse')}</summary>
+                <div className={css.stepsBlock}>
+                  {finding.rawRequest !== '' && (
+                    <>
+                      <span className={css.stepsLabel}>{t('finding.rawRequest')}</span>
+                      <pre className={css.steps} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{finding.rawRequest}</pre>
+                    </>
+                  )}
+                  {finding.rawResponse !== '' && (
+                    <>
+                      <span className={css.stepsLabel}>{t('finding.rawResponse')}</span>
+                      <pre className={css.steps} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{finding.rawResponse}</pre>
+                    </>
+                  )}
+                </div>
+              </details>
             )}
-            <div className={css.stepsBlock}>
-              <span className={css.stepsLabel}>{t('finding.evidence')}</span>
-              <ol className={css.steps}>
-                {(finding.pocEvidence ?? []).map((evidence, index) => <li key={index}>{evidence}</li>)}
-              </ol>
-            </div>
-            <div className={css.stepsBlock}>
-              <span className={css.stepsLabel}>{t('finding.steps')}</span>
-              <ol className={css.steps}>
-                {finding.steps.map((step, index) => <li key={index}>{step}</li>)}
-              </ol>
-            </div>
+            <details className={css.fold}>
+              <summary className={css.foldSummary}>{t('finding.evidence')}</summary>
+              <div className={css.stepsBlock}>
+                <ol className={css.steps}>
+                  {(finding.pocEvidence ?? []).map((evidence, index) => <li key={index}>{evidence}</li>)}
+                </ol>
+              </div>
+            </details>
+            <details className={css.fold}>
+              <summary className={css.foldSummary}>{t('finding.steps')}</summary>
+              <div className={css.stepsBlock}>
+                <ol className={css.steps}>
+                  {finding.steps.map((step, index) => <li key={index}>{step}</li>)}
+                </ol>
+              </div>
+            </details>
             {asset !== undefined && (
               <p className={css.asset}>{t('finding.affected')}: [{asset.type}] {asset.value}</p>
             )}
