@@ -28,23 +28,25 @@
 
 .action {
   appearance: none;
-  border: 1px solid var(--dsw-alias-border-l1);
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l1) 80%,transparent);
   border-radius: 999px;
-  padding: 6px 14px;
-  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 75%,transparent);
+  padding: 7px 16px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 70%,transparent);
   backdrop-filter: blur(8px);
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
   cursor: pointer;
-  transition: all 140ms ease;
+  transition: all 160ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03), 0 4px 12px -6px rgba(0,0,0,.06);
 }
 
 .action:hover {
   border-color: var(--dsw-alias-brand-primary);
   color: var(--dsw-alias-brand-primary);
-  box-shadow: 0 2px 8px -2px rgba(0,0,0,.08);
+  box-shadow: 0 4px 16px -4px rgba(0,0,0,.12), 0 0 0 3px color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent);
+  transform: translateY(-1px);
 }
 
 .error {
@@ -163,18 +165,21 @@
   width: 100%;
   font-size: 12.5px;
   line-height: 19px;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 .table th,
 .table td {
-  border: 1px solid var(--dsw-alias-border-l2);
-  padding: 5px 9px;
+  border-bottom: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 70%,transparent);
+  padding: 6px 10px;
   text-align: left;
   vertical-align: top;
 }
 
 .table th {
-  background: var(--dsw-alias-bg-layer-1);
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 55%,transparent);
+  backdrop-filter: blur(4px) saturate(1.1);
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
   white-space: nowrap;
@@ -184,6 +189,14 @@
   color: var(--dsw-alias-label-secondary);
 }
 
-.table tbody tr:nth-child(even) td {
-  background: var(--dsw-alias-bg-layer-1);
+.table tbody tr {
+  transition: background 120ms ease;
+}
+
+.table tbody tr:hover {
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 60%,transparent);
+}
+
+.table tbody tr:last-child td {
+  border-bottom-width: 0;
 }

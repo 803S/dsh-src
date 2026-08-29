@@ -13,20 +13,20 @@
 .finding {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 75%,transparent);
-  border-radius: 12px;
-  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 65%,transparent);
-  backdrop-filter: blur(4px);
-  box-shadow: 0 1px 2px rgba(0,0,0,.02);
-  transition: box-shadow 160ms ease, border-color 160ms ease;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in oklab,var(--dsw-alias-border-l2) 60%,transparent);
+  border-radius: 16px;
+  background: color-mix(in oklab,var(--dsw-alias-bg-layer-1) 55%,transparent);
+  backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 1px 2px rgba(0,0,0,.03), 0 4px 12px -4px rgba(0,0,0,.04), 0 0 0 1px rgba(255,255,255,.02) inset, 0 -2px 8px -4px rgba(0,0,0,.06) inset;
+  transition: all 200ms ease;
 }
 
 .finding:hover {
-  border-color: color-mix(in oklab,var(--dsw-alias-border-l1) 90%,transparent);
-  box-shadow: 0 4px 12px -4px rgba(0,0,0,.06);
+  border-color: color-mix(in oklab,var(--dsw-alias-border-l1) 85%,transparent);
+  box-shadow: 0 8px 16px -6px rgba(0,0,0,.08), 0 24px 40px -12px rgba(0,0,0,.05), 0 0 0 2px rgba(255,255,255,.06) inset;
 }
 
 .header {
@@ -38,16 +38,17 @@
 
 .severity{
   flex: none;
-  padding: 2px 12px;
+  padding: 4px 14px;
   border-radius: 999px;
   background: var(--dsw-alias-bg-layer-2);
   font-size: 11.5px;
   line-height: 20px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
   color: var(--dsw-alias-label-secondary);
   position: relative;
   overflow: hidden;
+  text-transform: uppercase;
 }
 
 .severity::before{
@@ -59,23 +60,40 @@
   pointer-events:none;
 }
 
-/* critical+high: 红底高光标签，带晕 */
+.severity::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  border-radius:inherit;
+  background:linear-gradient(135deg,transparent 0%,rgba(255,255,255,.35) 40%, transparent 100%);
+  opacity:.3;
+  pointer-events:none;
+}
+
+/* critical+high: 深红渐变，带内部高光 */
 .severity[data-severity='critical'],
 .severity[data-severity='high'] {
   color: #fff;
-  background: linear-gradient(135deg, var(--dsw-alias-state-error-primary) 0%, color-mix(in srgb,var(--dsw-alias-state-error-primary) 82%, black) 100%);
-  box-shadow: 0 1px 4px rgba(0,0,0,.10), 0 0 0 1px inset rgba(255,255,255,.1);
+  background: linear-gradient(135deg, var(--dsw-alias-state-error-primary), color-mix(in srgb,var(--dsw-alias-state-error-primary) 78%, black));
+  box-shadow: 0 2px 8px -2px rgba(220,38,38,.3), inset 0 1px 0 rgba(255,255,255,.28);
+  font-weight: 650;
 }
 
 .severity[data-severity='medium'] {
   color: #fff;
-  background: linear-gradient(135deg, var(--dsw-alias-state-warn-primary), color-mix(in srgb,var(--dsw-alias-state-warn-primary) 80%, black));
-  box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  background: linear-gradient(135deg, var(--dsw-alias-state-warn-primary), color-mix(in srgb,var(--dsw-alias-state-warn-primary) 78%, black));
+  box-shadow: 0 2px 6px -2px rgba(146,91,0,.2), inset 0 1px 0 rgba(255,255,255,.26);
 }
 
-.severity[data-severity='low'],.severity[data-severity='info'] {
-  color:#fff;
-  background: var(--dsw-alias-state-business-primary);
+.severity[data-severity='low'] {
+  color: #fff;
+  background: linear-gradient(135deg, var(--dsw-alias-state-business-primary), color-mix(in srgb,var(--dsw-alias-state-business-primary) 80%, black));
+  box-shadow: 0 2px 6px -2px rgba(0,50,150,.18);
+}
+
+.severity[data-severity='info'] {
+  color: #fff;
+  background: color-mix(in srgb,var(--dsw-alias-state-business-primary) 80%,transparent);
 }
 
 .title {
