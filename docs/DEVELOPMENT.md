@@ -143,8 +143,11 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
    `output.schema.properties` 声明（dsh 核心运行时按 `additionalProperties:false` 校验，undeclared 键直接报
    invalid output）；测试 harness 的 `run()` 漏斗已内置同样检查，全量测试自动覆盖所有工具调用。
    同理：投影 view 输出新字段必须同步投影 zod schema（local.33 教训，zod 是静默 strip 不报错）。
+8. **域笔记沉淀软闸**（local.35）：finalize 时本会话遇到防护/限流信号（protectionSignal 或
+   429/403/503 observation）或已否/受阻假设（false-positive/blocked research）却零域笔记新增 → 警告提醒
+   补记（软闸不阻断；401 是认证边界发现信号不算信号，与 local.32 语义一致）。提示词改进与闸同步。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]` 系列（27 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]` 系列（28 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸）。
 
 ## 目录结构
 

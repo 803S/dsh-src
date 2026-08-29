@@ -2383,3 +2383,39 @@ test("[local.34] 工具输出 schema 一致性闸：零参工具输出键 ⊆ �
   assert.ok(Array.isArray(st.pendingApprovals) && st.pendingApprovals.length >= 1, "src_state 应输出 pendingApprovals（回归点）");
   assert.equal(st.pendingApprovals[0].status, "pending");
 });
+
+/* [local.35] 域笔记沉淀闸（软警告）：本会话踩过防护/限流信号或已否假设但零域笔记新增 → finalize 警告；记过则无。
+   401 是认证边界发现信号（local.32 语义），不算沉淀信号。 */
+test("[local.35] finalize 域笔记沉淀闸：有目标特有信号零笔记 → 警告；记过/无信号 → 无警告", async () => {
+  const h = harness();
+  const parent = h.exec("g35note");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "域笔记闸", authorization: "t" }, parent);
+  const intent = await h.run("src_add_intent", { title: "侦察", goalId: "goal-1" }, parent);
+  const BLIND = [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }];
+  /* 场景①：本会话有 protectionSignal observation + false-positive research，零域笔记 → 警告 */
+  await h.run("src_record_observation", { intentId: intent.id, method: "GET", path: "/admin", httpStatus: 403, protectionSignal: true, source: "scan", decision: "WAF 拦截" }, parent);
+  const research = await h.run("src_record_research", { intentId: intent.id, category: "waf-bypass", hypothesis: "分块绕过", status: "false-positive", stopReason: "分块不被支持" }, parent);
+  assert.equal(research.updated, false);
+  const warned = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
+  const warnText = warned.warnings.join(" ");
+  assert.match(warnText, /未沉淀任何域笔记/, "有信号零笔记应警告");
+  assert.match(warnText, /1 个防护\/限流信号、1 条已否\/受阻假设/);
+  /* 场景②：同会话记一条域笔记后警告消失 */
+  await h.run("src_record_domain_note", { category: "pitfall", title: "admin 全域 WAF", content: "403 challenge 页" }, parent);
+  const clean = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
+  assert.doesNotMatch(clean.warnings.join(" "), /未沉淀任何域笔记/, "记过笔记后不应再警告");
+  /* 场景③：401 observation 是认证边界信号不算沉淀信号（无信号+零笔记 → 无域笔记警告） */
+  const h2 = harness();
+  const p2 = h2.exec("g35auth401");
+  await h2.run("src_add_goal", { target: "https://auth.example.test", objective: "401 语义", authorization: "t" }, p2);
+  const it2 = await h2.run("src_add_intent", { title: "认证面", goalId: "goal-1" }, p2);
+  await h2.run("src_record_observation", { intentId: it2.id, method: "GET", path: "/api/me", httpStatus: 401, protectionSignal: false, source: "scan", decision: "认证边界" }, p2);
+  const fin2 = await h2.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, p2);
+  assert.doesNotMatch(fin2.warnings.join(" "), /未沉淀任何域笔记/, "仅 401 不触发域笔记警告（认证语义保留）");
+  /* 场景④：别的会话在同一目标记过笔记、本会话零新增 → 仍警告（sourceSessionId 区分） */
+  const other = h.exec("g35other");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "别会话记的", authorization: "t" }, other);
+  await h.run("src_record_domain_note", { category: "fingerprint", title: "别会话的笔记", content: "不应抵消本会话义务" }, other);
+  const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
+  assert.match(fin3.warnings.join(" "), /未沉淀任何域笔记/, "其他会话的笔记不能抵消本会话的沉淀义务");
+});
