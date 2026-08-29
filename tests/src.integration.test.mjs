@@ -31,6 +31,18 @@ function harness() {
   const projections = new Map();
   const prompts = [];
   const commands = new Map();
+  /* [local.34] 工具输出 schema 一致性闸：dsh 核心运行时按 additionalProperties:false 校验工具输出，
+     undeclared 键直接报错（local.31 给 view 加 pendingApprovals 漏了 src_state schema 即炸）。
+     测试 harness 直连 execute 不经过核心校验，所以在漏斗里补同样的闸：每个 h.run 都检查。 */
+  const conformToolOutput = (name, tool, out) => {
+    const schema = tool?.output?.schema;
+    if (!schema || schema.additionalProperties !== false || schema.properties === void 0) return;
+    if (out === null || typeof out !== "object") return;
+    const declared = new Set(Object.keys(schema.properties));
+    for (const key of Object.keys(out)) {
+      if (!declared.has(key)) throw new Error(`[schema-gate] ${name} 输出键「${key}」未在 output schema 声明（运行时 additionalProperties:false 会报 invalid output）`);
+    }
+  };
   const ctx = {
     storageDomain: { open: async () => domain },
     tools: { register(tool) { tools.set(tool.name, tool); } },
@@ -53,7 +65,16 @@ function harness() {
     }
     return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
   };
-  const run = (name, args, execution) => tools.get(name).execute(args, execution);
+  const run = (name, args, execution) => {
+    const tool = tools.get(name);
+    const out = tool.execute(args, execution);
+    /* [local.34] 全工具过 schema 闸（异步结果在 resolve 后检查）。 */
+    if (out !== null && typeof out === "object" && typeof out.then === "function") {
+      return out.then((v) => { conformToolOutput(name, tool, v); return v; });
+    }
+    conformToolOutput(name, tool, out);
+    return out;
+  };
   return { domain, ctx, tools, sessions, projections, prompts, commands, exec, run };
 }
 /* [local.26] 带 mock 审批服务的 harness：policy="allow"→返回 allowed-once，"reject"→返回 rejected。 */
@@ -2316,4 +2337,49 @@ test("[local.33] src_add_goal / src_record_domain_note 推送域笔记快照事�
   const view = viewSrcState(st);
   assert.equal(view.domainNotes.length, 1);
   assert.equal(view.domainNotes[0].content, "burst 会 429");
+});
+
+/* [local.34] 工具输出 schema 一致性闸：零参视图工具的实际输出键必须 ⊆ output schema 声明属性。
+   dsh 核心运行时按 additionalProperties:false 校验工具输出，undeclared 键直接报错——local.31 给
+   store.view 加了 pendingApprovals 却没在 src_state output schema 声明，导致真实运行时每次
+   src_state 都炸；测试 harness 直连 execute 不过 schema 校验所以全绿漏网。此闸防再犯。 */
+test("[local.34] 工具输出 schema 一致性闸：零参工具输出键 ⊆ 声明属性（fresh + 含待审/笔记/待办的会话）", async () => {
+  const h = harness();
+  const fresh = h.exec("g34fresh");
+  const full = h.exec("g34full");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "schema 闸", authorization: "本地自测" }, full);
+  await h.run("src_add_intent", { title: "侦察", goalId: "goal-1" }, full);
+  await h.run("src_user_todo", { title: "提供登录态", detail: "需要 cookie", kind: "auth-session" }, full);
+  await h.run("src_record_domain_note", { category: "pitfall", title: "api/v1 限流", content: "burst 会 429" }, full);
+  /* 高危请求 → 异步挂起（不发网络），store pending_approvals 表有行——复现用户实测报错的数据形态。 */
+  let hitCount = 0;
+  const server = http.createServer((req, res) => { hitCount++; res.writeHead(204); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const pending = await h.run("src_http", { url: `http://127.0.0.1:${server.address().port}/api/v1/user/7/settings`, method: "POST", headers: { authorization: "Bearer t" }, body: '{"userId":7}', justification: "schema 闸待审样本" }, full);
+    assert.equal(pending.approval, "pending", "高危请求应挂起");
+    assert.equal(hitCount, 0, "挂起不发网络");
+  } finally { server.close(); }
+  const conform = (name, out) => {
+    const schema = h.tools.get(name)?.output?.schema;
+    assert.ok(schema, `${name} 应有 output schema`);
+    if (schema.additionalProperties === false && schema.properties !== void 0) {
+      const declared = new Set(Object.keys(schema.properties));
+      for (const key of Object.keys(out)) assert.ok(declared.has(key), `${name} 输出键「${key}」未在 output schema 声明（运行时 additionalProperties:false 会炸）`);
+    }
+    for (const [key, prop] of Object.entries(schema.properties ?? {})) {
+      if (prop && prop.required === true) assert.ok(key in out, `${name} 缺 required 键「${key}」`);
+    }
+  };
+  for (const sess of [fresh, full]) {
+    for (const name of ["src_state", "src_graph", "src_report", "src_get_infra", "src_list_domain_notes"]) {
+      let out;
+      try { out = await h.run(name, {}, sess); } catch { continue; }
+      if (out === void 0 || out === null) continue;
+      conform(name, out);
+    }
+  }
+  const st = await h.run("src_state", {}, full);
+  assert.ok(Array.isArray(st.pendingApprovals) && st.pendingApprovals.length >= 1, "src_state 应输出 pendingApprovals（回归点）");
+  assert.equal(st.pendingApprovals[0].status, "pending");
 });

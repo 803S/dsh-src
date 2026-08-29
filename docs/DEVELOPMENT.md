@@ -139,8 +139,12 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 6. **报告节完整性闸**（local.32）：任何新增/改名报告节的改动必须同时过 `[local.32]` 双渲染闸——
    UI `reportOf`（ReportView.tsx，节标题词条 `report.sec.*`，zh 值与服务端逐字一致）与服务端 `buildReport` 的
    `## ` 节标题集合必须相等；节顺序两侧也必须一致。
+7. **工具输出 schema 一致性闸**（local.34）：任何给工具返回对象新增/改名顶层键的改动，必须同步该工具
+   `output.schema.properties` 声明（dsh 核心运行时按 `additionalProperties:false` 校验，undeclared 键直接报
+   invalid output）；测试 harness 的 `run()` 漏斗已内置同样检查，全量测试自动覆盖所有工具调用。
+   同理：投影 view 输出新字段必须同步投影 zod schema（local.33 教训，zod 是静默 strip 不报错）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]` 系列（26 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]` 系列（27 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸）。
 
 ## 目录结构
 
