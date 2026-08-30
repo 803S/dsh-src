@@ -10,7 +10,7 @@ export type SrcAssetType =
   | 'root-domain' | 'subdomain' | 'ip' | 'service' | 'app' | 'endpoint'
   | 'mini-program' | 'client' | 'firmware' | 'ai-surface' | 'threat-intel'
 export type SrcEdgeKind = 'spawns' | 'yields' | 'derived_from' | 'proves' | 'parent'
-export type SrcIntentStatus = 'planned' | 'running' | 'completed' | 'blocked' | 'failed'
+export type SrcIntentStatus = 'planned' | 'running' | 'completed' | 'blocked' | 'failed' | 'deprecated'
 
 export interface SrcProjectionGoal {
   readonly id: string
@@ -26,6 +26,8 @@ export type SrcProjectionNode =
     readonly title: string
     readonly detail: string
     readonly status: SrcIntentStatus
+    /** [local.42] Decide 优先级 1-9（9 最高）；未设置按中优先级处理 */
+    readonly priority?: number
     readonly createdAt: number
   }
   | {

@@ -2709,3 +2709,66 @@ test("[local.41] src_read_capability：docs 探测/指定文件/穿越拒绝/未
     await assert.rejects(() => h.run("src_read_capability", { id: "jshook" }, parent), /未安装/);
   } finally { restore(); await env.restore(); }
 });
+
+/* ─────────────── [local.42] Decide 重规划：intent 废弃 + 优先级 ─────────────── */
+
+test("[local.42] intent priority：建链带优先级、单独调整、src_state 输出行携带 P 标记", async () => {
+  const h = harness();
+  const parent = h.exec("g42a");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "replan priority", authorization: "SRC" }, parent);
+  const i1 = await h.run("src_add_intent", { title: "低优方向", detail: "d", goalId: "goal-1", priority: 3 }, parent);
+  const i2 = await h.run("src_add_intent", { title: "高优方向", detail: "d", goalId: "goal-1", priority: 8 }, parent);
+  let st = await h.run("src_state", {}, parent);
+  const row1 = st.intents.find((r) => r.id === i1.id);
+  const row2 = st.intents.find((r) => r.id === i2.id);
+  assert.deepEqual({ p1: row1.priority, p2: row2.priority }, { p1: 3, p2: 8 }, "store rows carry priority");
+  /* 单独调优先级（不带 status） */
+  const upd = await h.run("src_update_intent", { intentId: i1.id, priority: 9 }, parent);
+  assert.equal(upd.priority, 9);
+  assert.equal(upd.status, "planned", "status untouched when only priority given");
+  /* status-only 更新保持向后兼容 */
+  const up2 = await h.run("src_update_intent", { intentId: i2.id, status: "running" }, parent);
+  assert.equal(up2.status, "running");
+  assert.equal(up2.priority, 8, "priority untouched when only status given");
+  /* 非法参数 */
+  await assert.rejects(() => h.run("src_update_intent", { intentId: i1.id }, parent), /requires status or priority/);
+  await assert.rejects(() => h.run("src_update_intent", { intentId: i1.id, priority: 12 }, parent), /1\.\.9/);
+  await assert.rejects(() => h.run("src_update_intent", { intentId: i1.id, priority: 2.5 }, parent), /1\.\.9/);
+  /* fold 投影：priority 与 deprecated 都进 node */
+  const { applySrcEvent } = await import("../lib/src.js");
+  const ev = (name, args) => ({ type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  let state = JSON.parse(JSON.stringify(srcInitialState));
+  state = applySrcEvent(state, ev("src_add_goal", { target: "https://t.test", objective: "o", authorization: "a" }));
+  state = applySrcEvent(state, ev("src_add_intent", { title: "T", detail: "", goalId: "goal-1", priority: 7 }));
+  const node = state.nodes.find((n) => n.kind === "intent");
+  assert.equal(node.priority, 7);
+  state = applySrcEvent(state, ev("src_update_intent", { intentId: node.id, status: "deprecated" }));
+  assert.equal(state.nodes.find((n) => n.kind === "intent").status, "deprecated");
+  state = applySrcEvent(state, ev("src_update_intent", { intentId: node.id, priority: 2 }));
+  const after = state.nodes.find((n) => n.kind === "intent");
+  assert.deepEqual({ status: after.status, priority: after.priority }, { status: "deprecated", priority: 2 });
+  /* 非法 priority 被 fold 忽略 */
+  state = applySrcEvent(state, ev("src_update_intent", { intentId: node.id, priority: 99 }));
+  assert.equal(state.nodes.find((n) => n.kind === "intent").priority, 2);
+});
+
+test("[local.42] deprecated：planned 可废弃；completed 拒绝；finalize 不阻塞且出警告", async () => {
+  const h = harness();
+  const parent = h.exec("g42b");
+  await h.run("src_add_goal", { target: "https://shop.example.test", objective: "deprecate gate", authorization: "SRC" }, parent);
+  const dep = await h.run("src_add_intent", { title: "子域爆破方向", detail: "评估后放弃", goalId: "goal-1" }, parent);
+  const fin = await h.run("src_update_intent", { intentId: dep.id, status: "deprecated" }, parent);
+  assert.equal(fin.status, "deprecated");
+  /* finalize：deprecated 不算未完成，无 blocker，出现废弃警告 */
+  const done = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  assert.equal(done.ready, true, "deprecated intent must not block finalize");
+  assert.deepEqual(done.blockers, []);
+  assert.match(done.warnings.join(" "), /已主动废弃/);
+  /* completed 不能废弃 */
+  const ok = await h.run("src_add_intent", { title: "正常方向", detail: "d", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: ok.id, status: "completed" }, parent);
+  await assert.rejects(() => h.run("src_update_intent", { intentId: ok.id, status: "deprecated" }, parent), /已完成，不能废弃/);
+  /* 孤儿巡检不再盯 deprecated（status 已脱离 running） */
+  const st = await h.run("src_state", {}, parent);
+  assert.equal((st.orphanIntents ?? []).length, 0);
+});
