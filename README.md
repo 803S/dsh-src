@@ -11,6 +11,7 @@
 ### 探索链路方法论
 - **结构化记录**：`goal → intent → fact → finding` 四层节点 + `spawns / yields / derived_from / proves` 关系边，每次 `src_*` 工具调用都落库并可重放，图与日志永远一致。
 - **子代理并发委派**：主 agent 按事实拆分研究方向，fork 子代理并发执行；每个子代理通过 `src_submit` 直写父 intent 并留下 durable checkpoint——父会话崩溃也能恢复现场（`src_recover_child`）。
+- **动态重规划**：每个研究方向（intent）带优先级（P1–P9）与废弃态（deprecated）——agent 随证据积累上调/下调优先级、主动废弃低产方向并留档依据，`src_state` 始终按优先级降序呈现搜索前沿，而非按创建顺序僵化推进（借鉴自动化渗透架构 Decide 语义）。
 - **AI 发现漏斗**：被动采集（crt.sh/HackerTarget/Google dorks/robots/sitemap/JS 接口 hint）→ API endpoint 资产化 → 自动生成 coverage/research skeleton → 逐项推进验证，防止「发现了接口但没真正测」。
 
 ### Web 面板（七个标签页）
@@ -20,11 +21,11 @@
 | 漏洞 | finding 卡片：severity、危害双视角论证、可复现步骤、POC、原始请求/响应 |
 | 资产 | 资产树 + 分组列表，来源/方式/置信度/状态四维溯源 |
 | 时间线 | 时间轴 + 详情双栏，observation 可展开看完整请求响应头与体 |
-| 待办 | agent 发起的用户待办（如登录态抓包），勾选后自动写回会话 |
+| 待办 | 左栏：agent 发起的用户待办（如登录态抓包），勾选后自动写回；右栏待审区：高危请求与外部能力脚本执行（RUN）的人工审批 |
 | 基础设施 | 代理 / Burp MCP / 测试凭据配置，带连通性测试按钮，新会话可一键沿用 |
 | 报告 | 结构化 Markdown 报告，可直接复制提交 SRC 平台 |
 
-### 人机命令（面板直写存储，不打扰 agent）
+### 人机命令
 | 命令 | 作用 |
 |---|---|
 | `/src-infra <key> <value>` | 保存基础设施设置（`-` 恢复默认） |
@@ -32,6 +33,8 @@
 | `/src-proxy-test` | 经代理请求探针，直出连通性结果 |
 | `/src-burp-test` | Burp MCP 端到端实测（tools/list + 拉 history） |
 | `/src-todo <id> <status> [note]` | 用户待办完成/放弃反馈 |
+| `/src-reject <findingId> <打回理由>` | 漏洞打回——agent 补全危害链/证据后重新提交 |
+| `/src-approve <approvalId> <allow\|reject> [备注]` | 待审区批准/拒绝（高危请求、能力脚本 RUN） |
 
 ### 安全纪律（提示词与工具双重约束）
 - 只测有授权的目标（SRC 平台注册即视为默认授权）；支持直接输入公司名/品牌名，自动解析为官网主域后开测，仅当无法唯一确定时才会向你确认。
@@ -114,7 +117,7 @@ mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/
 
 ## 可选：接入外部能力（JS 逆向 / 二进制 / 移动端…）
 
-以 docker compose 式体验接入任意外部 MCP 能力：**只维护一份 `~/.dsh/capabilities.yaml`，跑一次 sync，重启生效**。能力本体统一安装在 `~/.dsh/capabilities/<id>/`，接线由脚本生成，不手改 patch。
+以 docker compose 式体验接入任意外部能力，两种形态：**MCP 型**（接 MCP 工具面，重启后出现 `mcp__<id>__*` 工具）与 **skill 型**（任意「文档 + 脚本」项目——纯 CLI、分析器仓库、SKILL.md 知识包；agent 读其文档、经审批执行白名单脚本，同步完即可用无需重启）。**只维护一份 `~/.dsh/capabilities.yaml`，跑一次 sync，重启生效**。能力本体统一安装在 `~/.dsh/capabilities/<id>/`，接线由脚本生成，不手改 patch。
 
 **懒人方式（推荐）**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
 
@@ -143,6 +146,13 @@ capabilities:
     build: pnpm install && pnpm build
     entry: dist/index.js
     enabled: true
+
+  - id: apkx                                    # skill 型：任意「文档+脚本」项目
+    from: git:https://github.com/example/apkx
+    kind: skill                                 # 省略默认 mcp
+    docs: SKILL.md                              # 省略则自动探测 SKILL.md > README.md
+    scripts: [scripts/extract-endpoints.sh]     # 白名单脚本（执行前挂起待审，人工批准才运行）
+    when: 拿到 APK/小程序包需要反编译、提取端点/密钥时
 ```
 
 </details>
@@ -162,7 +172,7 @@ settings:
 
 > 挖掘 https://xxx.example.com 的 SRC，授权说明：SRC 平台注册账号 ID 12345
 
-agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派子代理 → 逐项验证 → finalize 门禁检查 → 出报告。「基础设施」页建议先配好出站代理（国内目标直连更快，google/github 等域名自动走代理）。
+agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派子代理 → 按证据重规划（调优先级 / 废弃低产方向）→ 逐项验证 → finalize 门禁检查 → 出报告。「基础设施」页建议先配好出站代理（国内目标直连更快，google/github 等域名自动走代理）。
 
 ## 数据与隐私
 

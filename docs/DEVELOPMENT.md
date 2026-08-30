@@ -181,6 +181,36 @@ dsh-src/                   # 项目根 = bundle 包 @lihua_dis/dsh-src（零依�
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
+## 迭代补记（local.13 → local.42，2026-08-22 ~ 2026-08-30）
+
+> local.13~19 与 local.22~42 期间的版本日志未随提交同步入库，此处按 git 提交记录补记；
+> 完整改动细节见各 commit message。local.39 未发布（local.38 后直接进入 local.40）。
+
+- **local.13**（545f2e8）：待办挂起不中断任务；Burp MCP 取包优先（不再索要 HAR）；impact 危害论证门禁；Burp SSE 探测定位（端点在根路径且仅 HTTP）；新增 `src_fetch_policy` 拉取厂商 SRC 规则。
+- **local.14**（c192199）：基础设施一键沿用（`/src-infra-copy` + 面板按钮）；Burp 接线示例修正为实测配置。
+- **local.15**（f030dde）：智能代理直连路由（仅名单域名走代理）；finalize 受限声明 undefined 污染修复（snapshot 剥 undefined——lossless 边界防线确立）；`src_recover_child` 免 checkpoint 唤醒。
+- **local.16**（5d006a6 / ed93a33）：报告双视角 + POC 受控托管服务器说明；skill 式经验库（lessons 双层：内置 + 用户数据目录）；`src_update_finding` 面板落库修订；Burp MCP 自愈桥替换官方 mcp-proxy.jar（SSE 断连 -32603 无法自愈）。
+- **local.17**（23bd6b5 等 5 提交）：子代理沿父链解析 goal/infra；委派工具一致性；面板 UI 重构（基础设施 tab 分组卡片化）；三轮修复（facts/observations 表对象型数据炸读取、tab 标签、`src_submit` 数组入参可选）。
+- **local.18 / 19**（7cae53b / d97948d）：Burp 接线自动化收尾 + 文档全面修正；caps-sync 缺清单优雅退出；README 写明不再需要官方 jar。
+- **local.22**（8f6cb0e 等 5 提交）：开源整备——内网 IP 清理、品牌名目标防护（parseGoalHost）、静态检查 CI；UI 源码工程入库（TSX 图纸补全，产物行为一致）；测透与诚实第一波：盲区声明闸 + 测试环境分诊。
+- **local.23**（ef667ed）：多账号矩阵——testAccounts 列表 + 交叉矩阵 persona + 认证态独立预算 + 一致性 lint。
+- **local.24**（afdb32f + 5d0b540）：域笔记 + 跨会话 briefing（不钻枯井的机制基础）；src_state 输出 schema 补齐三字段。
+- **local.25**（19b33bf）：finding 准入闸——危害链三要素强制 + 移除 info 等级。
+- **local.26**（ec711d9 + 2bb8028）：高危动作授权闸（异步挂起审批）+ 漏洞打回闭环（UI 按钮 + `/src-reject`）+ 报告攻击链。
+- **local.27**（56cb3f4）：报告标准化模板（vulnType + 攻击链 + 四节）。
+- **local.28**（5a436f7）：报告代码块保留缩进 + pocScript 一键脚本字段。
+- **local.29**（86d5360）：报告改美团 SRC 官方骨架模板，内容动态填充。
+- **local.30**（65368f4）：报告第 1 节垂直攻击链①~⑤ + 复现定位信息（前端功能点/应用下载/登录入口）。
+- **local.31**（9b0cd1c）：高危删改审批改异步挂起队列（pendingApprovals + `src_resolve_approval` + `/src-approve` + 待办 tab 左右分栏：左待办、右待审）。
+- **local.32**（53b2d0e）：报告双渲染对齐 + 软速率帽 + 401 语义修正 + 基础设施默认沿用。
+- **local.33**（e33c61b）：认证预算徽标 + 域笔记 explore 侧栏（投影 schema 补 domainNotes/authBudget——zod 静默 strip 教训）。
+- **local.34**（b4c1b1e）：修复 src_state 输出 schema 漏声明 pendingApprovals（运行时 additionalProperties:false 报错）；harness.run() 内置 schema 检查闸（全部工具调用自动过闸）。
+- **local.35**（b231d45）：域笔记沉淀软闸（finalize 遇防护/限流信号零笔记→警告）。
+- **local.36 / 37 / 38**（7c416fd / 230690e / 289b70b）：UI 视觉三轮打磨——FindingsView 折叠化 + Token 化颜色 → shadcn/Vercel 式极简 + 拟态玻璃 → 拟光阴影 + 叙事密度重写。
+- **local.40**（4cc115a 清理 + 0f8c108）：孤儿 intent 巡检（src_state orphanIntents + hint）+ Burp 误报三根因修复（提示词/哨兵工具）。
+- **local.41**（0a25580）：caps-sync v2 双形态——skill 型（文档 + 白名单脚本 + 审批执行）+ mcp 型；index.json 能力索引；`src_read/run/resolve_capability` 工具。E2E 验证 mcp 进程级拉起。
+- **local.42**（15fd2b7 + 6dec19f）：intent 重规划——deprecated 废弃态 + priority 优先级（Cairn_Y Decide 三动作借鉴）；lossless-JSON 边界两处 undefined 泄漏修复（headless 真实会话实弹首发现，新增深扫 undefined 键回归）；headless 实弹 7/7 全链路验证。
+
 ## 0.1.0-local.12（真实测试第四轮 2 问题：scan_surface lossless JSON 报错 / 新会话无基础设施页）
 
 - **[修复·关键] `tool "src_scan_surface" returned invalid output: value is not lossless JSON`**：工具返回值会经过 dsh-session 的 lossless JSON 快照校验，**任何值为 `undefined` 的自有属性都会让整体判失败**。src_scan_surface 正常完成路径的返回里写了 `stopped: stopped ? "protection-signal" : void 0`——未触发停机时 stopped 为 undefined，整个输出被拒。之前没暴露是因为真实目标多��� WAF 提前 return；扫无防护目标必炸。同款炸弹还有 src_test_bypass 错误路径 `{ ...req, status: void 0, ... }`（spread 覆盖产生 undefined 自有属性），一并修复：改为条件展开/解构剔除，绝不产出 undefined 值属性。
