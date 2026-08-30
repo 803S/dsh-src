@@ -53,13 +53,13 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
     测试 harness 不走 lossless-JSON 序列化（JSON.stringify 会静默丢键），故新增工具输出字段必须配
     `collectUndefinedKeys` 深扫回归（tests 内有现成 helper）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]` 系列（108 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]` 系列（110 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
 
 ## 参考项目
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
-## 迭代补记（local.13 → local.42，2026-08-22 ~ 2026-08-30）
+## 迭代补记（local.13 → local.43，2026-08-22 ~ 2026-08-31）
 
 > local.13~19 与 local.22~42 期间的版本日志未随提交同步入库，此处按 git 提交记录补记；
 > 完整改动细节见各 commit message。local.39 未发布（local.38 后直接进入 local.40）。
@@ -88,6 +88,7 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 - **local.40**（4cc115a 清理 + 0f8c108）：孤儿 intent 巡检（src_state orphanIntents + hint）+ Burp 误报三根因修复（提示词/哨兵工具）。
 - **local.41**（0a25580）：caps-sync v2 双形态——skill 型（文档 + 白名单脚本 + 审批执行）+ mcp 型；index.json 能力索引；`src_read/run/resolve_capability` 工具。E2E 验证 mcp 进程级拉起。
 - **local.42**（15fd2b7 + 6dec19f）：intent 重规划——deprecated 废弃态 + priority 优先级（Cairn_Y Decide 三动作借鉴）；lossless-JSON 边界两处 undefined 泄漏修复（headless 真实会话实弹首发现，新增深扫 undefined 键回归）；headless 实弹 7/7 全链路验证。
+- **local.43**：授权模型 v4「资产清单即许可」（小米会话实战诊断驱动：①父 LLM 简报自由发挥「授权含 *.mi.com」被闸拦 ②闸外子代理改用 bash curl 探测得手——片面闸会教代理绕闸，闸必须与真实授权一致）。探测类 6 工具（src_http/src_scan_surface/src_test_bypass/src_test_credential/src_collect_dorks/src_collect_passive）按「goal 主域内 **或** 资产清单内」放行：`assetGrantHosts` 从资产自由文本 value 派生 host（URL/裸 host/通配符，excluded 不作为授权依据；dorks 对主域做双向覆盖）；`src_add_asset` 升级（source 必填审计线索 + 沿父链写入 engagement 共享清单 + 输出补 duplicate/assetHost）；recon/audit 子代理放开 src_add_asset + persona 授权边界规则（被拒→判定归属→登记→重试一次→否则停手上报）；COMMANDER 简报禁自行转述/扩大授权范围；src_state 输出 `assetScope`（model/totalAssets/grantableHosts/distinctDomains/topDomains）+ render 授权边界说明。bash curl 绕过属上游沙箱边界（dsh-bash-sandbox 不管网络），提示词层禁止。
 
 ## 0.1.0-local.12（真实测试第四轮 2 问题：scan_surface lossless JSON 报错 / 新会话无基础设施页）
 

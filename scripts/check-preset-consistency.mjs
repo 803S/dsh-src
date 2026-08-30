@@ -12,7 +12,9 @@ const text = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf
 const lines = text.split("\n");
 
 const TOOL_RE = /\b(src_[a-z_]+)\b/g;
-const COMMANDER_TOOLS = ["src_add_goal", "src_add_intent", "src_add_test_account", "src_finalize_engagement", "src_set_infra", "src_fetch_policy", "src_set_goal_target", "src_add_fact", "src_add_finding", "src_add_asset", "src_update_intent", "src_update_finding", "src_record_lesson", "src_record_domain_note", "src_reject_finding", "src_resolve_approval", "src_read_capability", "src_run_capability"];
+/* [local.43] src_add_asset 移出指挥官专用清单：授权模型「资产清单即许可」——recon/audit 子代理
+ * 自查归属后可登记资产（沿父链写入同一份清单，闸按「goal 主域内或资产清单内」放行）；verify 仍 deny。 */
+const COMMANDER_TOOLS = ["src_add_goal", "src_add_intent", "src_add_test_account", "src_finalize_engagement", "src_set_infra", "src_fetch_policy", "src_set_goal_target", "src_add_fact", "src_add_finding", "src_update_intent", "src_update_finding", "src_record_lesson", "src_record_domain_note", "src_reject_finding", "src_resolve_approval", "src_read_capability", "src_run_capability"];
 
 // 切块：每个 - id: ... 开始一个 entry，直到下一个同级 - id 或文件末尾。
 const entries = [];

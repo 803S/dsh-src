@@ -1762,7 +1762,7 @@ test("[local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派�
   assert.match(withEvidence.warnings.join(" "), /multi-account-cross-authz|未建对应 src_user_todo/);
 
   // ⑤ 信号派生：wss 资产存在却未声明 websocket → 缺项阻断
-  await h.run("src_add_asset", { type: "endpoint", value: "wss://api.example.test/ws", meta: "api:websocket" }, parent);
+  await h.run("src_add_asset", { type: "endpoint", value: "wss://api.example.test/ws", source: "JS 提取", meta: "api:websocket" }, parent);
   const wsMissing = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
     { dimension: "http-authz-surface", status: "notApplicable" },
     { dimension: "cors-headers", status: "notApplicable" },
@@ -2045,6 +2045,50 @@ test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
   const parent = h.exec("http5");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越界" }, parent);
   await assert.rejects(() => h.run("src_http", { url: "http://example.test/evil", method: "GET", justification: "越界" }, parent), /outside the authorized goal host/);
+});
+
+test("[local.43] 资产清单即许可：src_add_asset 登记后探测放行（含子域/URL 形态值），excluded 不放行", async () => {
+  const h = harnessWithApproval({ policy: "allow" });
+  const parent = h.exec("http6");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "资产授权验证" }, parent);
+  /* 未登记：goal 主域外的 host 仍拒绝，报错带资产清单指引 */
+  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "未登记" }, parent), /outside the authorized goal host and not in the asset inventory/);
+  /* 登记资产（candidate 默认）→ 精确 host 过授权闸（后续报网络错误而非越界） */
+  const a1 = await h.run("src_add_asset", { type: "subdomain", value: "ai.mi.test", source: "CT 日志发现" }, parent);
+  assert.match(a1.id, /^asset-\d+$/);
+  const notGate = (e) => { assert.ok(!/outside the authorized goal host/.test(e.message), `应过授权闸，实际: ${e.message}`); return true; };
+  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "已登记" }, parent), notGate);
+  /* 资产子域同样覆盖 */
+  await assert.rejects(() => h.run("src_http", { url: "http://preview.ai.mi.test/x", method: "GET", justification: "子域" }, parent), notGate);
+  /* URL 形态值 + 描述尾巴的派生 */
+  await h.run("src_add_asset", { type: "endpoint", value: "https://open.api.test/ (HTTP/2 200, MIFE)", source: "JS 提取" }, parent);
+  await assert.rejects(() => h.run("src_http", { url: "http://open.api.test/x", method: "GET", justification: "URL 形态登记" }, parent), notGate);
+  /* excluded 资产不作为授权依据 */
+  await h.run("src_add_asset", { type: "subdomain", value: "parked.test", source: "通配符解析误报", status: "excluded" }, parent);
+  await assert.rejects(() => h.run("src_http", { url: "http://parked.test/x", method: "GET", justification: "已排除" }, parent), /outside the authorized goal host/);
+});
+
+test("[local.43] src_state 输出 assetScope（schema 同步）+ 资产大小写不敏感合并升状态 + dorks 双向覆盖 + lossless", async () => {
+  const h = harness();
+  const parent = h.exec("g43a");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "assetScope 验证" }, parent);
+  await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "miui.test", source: "CT 日志" }, parent);
+  const dup = await h.run("src_add_asset", { type: "subdomain", value: "MIUI.TEST", source: "DNS 确认", status: "confirmed" }, parent);
+  assert.equal(dup.duplicate, true, "大小写不敏感去重合并");
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.assetScope.model, "asset-inventory");
+  assert.ok(state.assetScope.grantableHosts >= 1, "至少 1 个可测 host");
+  assert.ok(state.assetScope.topDomains.some((t) => t.host === "miui.test"));
+  assert.deepEqual(collectUndefinedKeys(state.assetScope), [], "assetScope 零 undefined 键");
+  /* collect_dorks 双向覆盖：资产 host 在 domain 下 → domain 放行（过闸后正常生成查询） */
+  await h.run("src_add_asset", { type: "subdomain", value: "sub.dorks.test", source: "DNS" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('<a class="result__a" href="https://github.com/x/y/blob/main/.env">github.com/x/y .env leak</a>', { status: 200, headers: { "content-type": "text/html" } });
+    const dorks = await h.run("src_collect_dorks", { intentId: "intent-1", domain: "dorks.test" }, parent);
+    assert.ok(dorks.queries >= 15, "domain 被资产双向覆盖，过闸成功");
+  } finally { globalThis.fetch = originalFetch; }
 });
 
 /* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
