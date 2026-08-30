@@ -2297,6 +2297,44 @@ test("[local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事�
   assert.ok(st.assets.some((a) => a.value === "other-brand.test" && a.status === "excluded"), "投影资产含否决域");
 });
 
+/* [local.47] 全域往返校验：流程写完后，所有域表所有记录必须全部通过各自 valueSchema。
+   存储域「写入时不校验、开盘时全量 zod 校验」——schema 与 writer 漂移只有往返测试能抓
+   （local.44 给 ASSET 待审行写 method:"ASSET" 但 schema 枚举漏加，重启后开盘即炸，本测试就是补这个盲区）。 */
+test("[local.47] 域往返：全流程落库记录全部通过开盘 schema（ASSET 待审行含 method=ASSET）", async () => {
+  const { srcDomainSpec, __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("l47");
+  await h.run("src_add_goal", { target: "example.com", objective: "往返校验" }, parent);
+  await h.run("src_request_asset_confirm", { domain: "partner-brand.test", evidence: "疑似合作方" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const row = state.pendingApprovals.find((r) => r.method === "ASSET" && r.status === "pending");
+  const cmd = h.commands.get("src-approve");
+  await cmd.handler({ rawInput: `${row.id} allow 确认`, agent: { session: parent.agent.session, followup: async () => {} } });
+  /* 模拟开盘 loadAll：拿回 harness 的 MemoryDomain，逐表逐条过 spec schema */
+  const domain = await h.ctx.storageDomain.open();
+  let checked = 0;
+  for (const [name, tableSpec] of Object.entries(srcDomainSpec.tables)) {
+    const table = domain.tables.get(name);
+    if (table === void 0) continue;
+    for (const [key, value] of table.rows) {
+      const r = tableSpec.valueSchema.safeParse(value);
+      if (!r.success) throw new Error(`[roundtrip] ${name}:${key} 开盘会拒绝：${JSON.stringify(r.error.issues.map((x) => ({ p: x.path.join("."), m: x.message })))}`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 3, `至少校验了 goal/待审/资产等 ${checked} 条记录`);
+  /* 用户盘上的真实形状：method=ASSET 的已决行（approved/rejected + note + responseStatus 0）必须能过开盘校验 */
+  const paSpec = srcDomainSpec.tables.pending_approvals.valueSchema;
+  for (const diskLike of [
+    { id: "approval-1", sessionId: "session-x", method: "ASSET", url: "partner-brand.test", path: "", headers: "", body: "", category: "asset-attribution", reason: "UI 验证：疑似合作方域", justification: "请确认…", status: "approved", note: "确认是", responseStatus: 0, createdAt: 1788129967356, updatedAt: 1788130043355 },
+    { id: "approval-2", sessionId: "session-x", method: "ASSET", url: "other-brand.test", path: "", headers: "", body: "", category: "asset-attribution", reason: "UI 验证：第二个疑似域", justification: "请确认…", status: "rejected", note: "", responseStatus: 0, createdAt: 1788129967368, updatedAt: 1788130043355 }
+  ]) {
+    const r = paSpec.safeParse(diskLike);
+    assert.equal(r.success, true, `盘上形状 method=ASSET（${diskLike.status}）必须能过开盘校验：${r.success ? "" : JSON.stringify(r.error.issues)}`);
+  }
+});
+
 /* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
 test("[local.31] src_http 同请求去重复用既有 pending（不堆队列）", async () => {
   const h = harness();
