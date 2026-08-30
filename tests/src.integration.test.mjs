@@ -2772,3 +2772,52 @@ test("[local.42] deprecated：planned 可废弃；completed 拒绝；finalize �
   const st = await h.run("src_state", {}, parent);
   assert.equal((st.orphanIntents ?? []).length, 0);
 });
+
+/* ─────────────── [local.42] lossless 边界回归：工具输出不得含 undefined 键 ───────────────
+ * 真实会话首发（headless 实弹）：src_list_capabilities 对 skill 型条目裸返 wired: undefined、
+ * scripts: undefined → lossless-JSON 序列化炸 "value is not lossless JSON"（local.15 同类）。
+ * src_state 孤儿巡检的无 checkpoint 分支同样裸返 4 个 undefined 键。测试 harness 不走 lossless
+ * 序列化，故用深扫 undefined 键直接镜像该边界。 */
+function collectUndefinedKeys(value, path = "$", out = []) {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => collectUndefinedKeys(v, `${path}[${i}]`, out));
+  } else if (value !== null && typeof value === "object") {
+    for (const key of Object.keys(value)) {
+      if (value[key] === undefined) out.push(`${path}.${key}`);
+      else collectUndefinedKeys(value[key], `${path}.${key}`, out);
+    }
+  }
+  return out;
+}
+
+test("[local.42] lossless 边界：src_list_capabilities（skill+mcp 条目）输出零 undefined 键", async () => {
+  const env = await makeCapsEnv("caps42-lossless-");
+  const restore = setDshHome(env.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("g42c");
+    const out = await h.run("src_list_capabilities", {}, parent);
+    const leaks = collectUndefinedKeys(out);
+    assert.deepEqual(leaks, [], `undefined 键泄漏: ${leaks.join(", ")}`);
+    /* skill 条目不落 wired 键（原来裸返 undefined）；mcp 条目 wired 必须在 */
+    const apkx = out.items.find((i) => i.id === "apkx");
+    assert.equal("wired" in apkx, false, "skill 条目不得带 wired 键");
+    const jshook = out.items.find((i) => i.id === "jshook");
+    assert.equal(typeof jshook.wired, "boolean");
+  } finally { restore(); await env.restore(); }
+});
+
+test("[local.42] lossless 边界：src_state 孤儿巡检（无 checkpoint 分支）输出零 undefined 键", async () => {
+  const h = harness();
+  const parent = h.exec("g42d");
+  await h.run("src_add_goal", { target: "https://orphan.example.test", objective: "lossless orphan", authorization: "SRC" }, parent);
+  const it = await h.run("src_add_intent", { title: "孤儿方向", detail: "running 但无 checkpoint", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: it.id, status: "running" }, parent);
+  const out = await h.run("src_state", {}, parent);
+  assert.equal(out.orphanIntents.length, 1);
+  assert.match(out.orphanIntents[0].hint, /无任何 checkpoint/);
+  const leaks = collectUndefinedKeys(out);
+  assert.deepEqual(leaks, [], `undefined 键泄漏: ${leaks.join(", ")}`);
+  /* 未设优先级的 intent 也不带 priority 键 */
+  assert.equal("priority" in out.intents.find((r) => r.id === it.id), false);
+});
