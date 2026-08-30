@@ -83,6 +83,54 @@ agent-presets:
 
 3. 打开对话输入目标开始挖掘；侧栏出现 **SRC** 视图即可看到探索链路各标签页。
 
+## 更新与卸载
+
+### 查看已装版本
+
+```bash
+dsh plugin --profile web list --depth 0 | grep dsh-src
+# └── @lihua_dis/dsh-src@0.1.0-local.42
+```
+
+### 更新
+
+上游发布新 Release 后**无需卸载**，直接用新版资产 URL 重新执行安装命令——同一包名会原地替换，依赖声明自动改指新版，重启 dsh 生效：
+
+```bash
+dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/lihua_dis-dsh-src-<新版本>.tgz
+```
+
+从源码安装的：`git pull && npm pack` 后用新 tgz 重新 `file:` 安装即可。
+
+### 卸载
+
+```bash
+dsh plugin --profile web remove @lihua_dis/dsh-src
+```
+
+内部转发 `pnpm remove`：移除 profile 依赖声明并删除安装副本，重启后 SRC 模式与面板即消失。面板接线（SRC tab、src_* 工具、存储路由、预设注册）写在包自身的 bundle patch 里，随包自动卸载，无需手动清理。
+
+**卸载只删插件本体，不动你的数据。** 以下内容全部存放在 `$DSH_HOME`（默认 `~/.dsh`），更新、卸载、重装均不受影响：
+
+| 数据 | 位置 |
+|---|---|
+| 挖掘数据（目标 / intent / 事实 / **资产** / findings / 域笔记 / 审批记录） | `$DSH_HOME/storages/src-sessions.db` |
+| 沉淀的经验文档（lessons） | `$DSH_HOME/storages/src-lessons/` |
+| 外部能力（声明 + 本体 + 索引） | `$DSH_HOME/capabilities.yaml`、`$DSH_HOME/capabilities/` |
+| Burp 自愈桥 | `$DSH_HOME/tools/burp-mcp-bridge.mjs` |
+
+> 通过「接入外部能力」装过 MCP 能力的，profile 的 `cordis.patch.yml` 会留有 `mcp-burp` 接线块与 `dsh-src capabilities` 生成区段——不再需要时手动删除这两块即可。
+
+### 彻底清除（含全部数据，一般不需要）
+
+```bash
+dsh plugin --profile web remove @lihua_dis/dsh-src
+rm -f  "$DSH_HOME"/storages/src-sessions.db*   # 挖掘数据（含 -wal/-shm）
+rm -rf "$DSH_HOME"/storages/src-lessons        # 沉淀的经验文档
+rm -rf "$DSH_HOME"/capabilities "$DSH_HOME"/capabilities.yaml
+rm -f  "$DSH_HOME"/tools/burp-mcp-bridge.mjs   # Burp 自愈桥
+```
+
 ## 可选：接入 Burp MCP
 
 不接 Burp 插件照常工作（HAR/raw 文件导入兜底）。要实时导入浏览流量、把抓包直接喂给 agent：
