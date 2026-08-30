@@ -992,7 +992,10 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   const sessionLog = h.sessions.get("pcmd").events;
   const callEvents = sessionLog.filter((event) => event.type === "tool/call");
   assert.equal(callEvents.length, 1, "synthetic tool/call appended exactly once");
-  assert.deepEqual(callEvents[0].data, { name: "src_set_infra", arguments: JSON.stringify({ key: "testPhone", value: "13800138000,13900139000" }) });
+  /* [local.46] 合成事件统一带 turn/step/callId（客户端会话解析按 callId 配对，缺 callId 会在第二条时抛 more-than-one-start） */
+  assert.equal(callEvents[0].data.name, "src_set_infra");
+  assert.equal(callEvents[0].data.arguments, JSON.stringify({ key: "testPhone", value: "13800138000,13900139000" }));
+  assert.ok(typeof callEvents[0].data.callId === "string" && callEvents[0].data.callId !== "", "合成事件带唯一 callId");
   const infraAfter = await h.run("src_get_infra", {}, parent);
   assert.equal(infraAfter.infra.testPhone, "13800138000,13900139000", "direct write landed in storage");
 
@@ -1176,7 +1179,10 @@ test("[local.14] /src-infra-copy copies latest other session's infra overrides; 
   // 合成 tool/call 与直写一致（投影 fold 可见）
   const callEvents = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
   assert.equal(callEvents.length, 1);
-  assert.deepEqual(callEvents[0].data, { name: "src_set_infra", arguments: JSON.stringify({ key: "proxyUrl", value: "http://192.0.2.88:7893" }) });
+  /* [local.46] 合成事件带唯一 callId；name/arguments 不变 */
+  assert.equal(callEvents[0].data.name, "src_set_infra");
+  assert.equal(callEvents[0].data.arguments, JSON.stringify({ key: "proxyUrl", value: "http://192.0.2.88:7893" }));
+  assert.ok(typeof callEvents[0].data.callId === "string" && callEvents[0].data.callId !== "");
 
   // 投影视图端到端：目标会话视图里能看到沿用来的值
   let state = JSON.parse(JSON.stringify(srcInitialState));
@@ -2246,6 +2252,49 @@ test("[local.45] legacy 资产 method 归一化：domain open 能加载旧版自
   const sparse = srcAssetSchema.safeParse({ id: "a", sessionId: "s", type: "root-domain", value: "y.test" });
   assert.equal(sparse.success, true);
   assert.equal(sparse.success ? sparse.data.method : "", "passive");
+});
+
+/* [local.46] /src-approve 直写同步投影：合成 src_add_asset 事件（修面板 0 资产双账本漂移）；
+   resolve 事件走 helper 带唯一 callId（修第二条起会话解析抛 more-than-one-start → 历史加载失败横幅）。 */
+test("[local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事件 callId 唯一", async () => {
+  const h = harness();
+  const parent = h.exec("l46");
+  await h.run("src_add_goal", { target: "example.com", objective: "l46 验证" }, parent);
+  await h.run("src_request_asset_confirm", { domain: "partner-brand.test", evidence: "疑似合作方" }, parent);
+  await h.run("src_request_asset_confirm", { domain: "other-brand.test", evidence: "疑似第二个" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const rows = state.pendingApprovals.filter((r) => r.method === "ASSET" && r.status === "pending");
+  const idPartner = rows.find((r) => r.url === "partner-brand.test").id;
+  const idOther = rows.find((r) => r.url === "other-brand.test").id;
+  const cmd = h.commands.get("src-approve");
+  await cmd.handler({ rawInput: `${idPartner} allow 确认`, agent: { session: parent.agent.session, followup: async () => {} } });
+  await cmd.handler({ rawInput: `${idOther} reject 否`, agent: { session: parent.agent.session, followup: async () => {} } });
+  const events = h.sessions.get("l46").events;
+  /* resolve 事件：唯一真实 callId（undefined 会让客户端解析器把所有无 callId 事件归到同一 key） */
+  const resolves = events.filter((e) => e.type === "tool/call" && e.data?.name === "src_resolve_approval");
+  assert.equal(resolves.length, 2);
+  const callIds = resolves.map((e) => e.data.callId);
+  for (const c of callIds) assert.ok(typeof c === "string" && c !== "" && c !== "undefined", "resolve 事件必须带真实 callId");
+  assert.notEqual(callIds[0], callIds[1], "两次审批的 callId 互不相同");
+  /* 资产事件：直写落库同步合成 src_add_asset，投影与 store 双账本一致 */
+  const addAssets = events.filter((e) => e.type === "tool/call" && e.data?.name === "src_add_asset");
+  assert.equal(addAssets.length, 2, "两次归属决定各合成一条 src_add_asset");
+  const a1 = JSON.parse(addAssets[0].data.arguments);
+  assert.equal(a1.value, "partner-brand.test");
+  assert.equal(a1.type, "root-domain");
+  assert.equal(a1.status, "confirmed");
+  assert.equal(a1.method, "user-confirmed");
+  assert.equal(a1.confidence, 1);
+  assert.ok(typeof a1.source === "string" && a1.source.includes("用户归属确认"), "source 标注用户决定");
+  const a2 = JSON.parse(addAssets[1].data.arguments);
+  assert.equal(a2.value, "other-brand.test");
+  assert.equal(a2.status, "excluded");
+  /* 合成事件能被投影 fold 正常消费（UI 资产 tab/计数的最终消费者） */
+  const { applySrcEvent, srcInitialState } = await import("../lib/src.js");
+  let st = srcInitialState;
+  for (const ev of addAssets) st = applySrcEvent(st, ev);
+  assert.ok(st.assets.some((a) => a.value === "partner-brand.test" && a.status === "confirmed"), "投影资产含确认域");
+  assert.ok(st.assets.some((a) => a.value === "other-brand.test" && a.status === "excluded"), "投影资产含否决域");
 });
 
 /* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
