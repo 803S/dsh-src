@@ -2207,6 +2207,47 @@ test("[local.44] assetScope.byStatus 状态分布 + finalize 未决归属确认�
   assert.doesNotMatch(fin2.warnings.join(" "), /资产归属确认仍待用户处理/, "处理后不再警告");
 });
 
+/* [local.45] domain 打开失败自愈：legacy 脏记录卡开 → 修数据后重试应恢复，不再永久重放 rejected promise。 */
+test("[local.45] domain() 打开失败后自愈：清实例级 rejected promise，下次调用重新 open（不永久卡死）", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  /* 内存域：首开时 assets 表里藏着一条 legacy 非法 method 记录，模拟旧版写入的盘上数据 */
+  const domain = new MemoryDomain();
+  domain.table("assets").put("session-legacy:asset-90", { id: "asset-90", sessionId: "session-legacy", type: "subdomain", value: "hr.mi.com", method: "active" });
+  let openCalls = 0;
+  const h0 = harness();
+  /* 换上可控 open：前 1 次直接把带脏数据的域返回给 loadAll 之外的路径不可行——
+     MemoryDomain 是 table() 直返，没有 loadAll 校验环节，无法在 harness 里复现 facility 的 open 校验。
+     改为模拟：open() 第一次抛 invalid-record 域错误，第二次返回干净域。 */
+  const err = Object.assign(new Error("domain 'src': stored record 'session-legacy:asset-90' in table 'assets' does not match its schema"), { code: "invalid-record" });
+  h0.ctx.storageDomain = { open: async () => { openCalls++; if (openCalls === 1) throw err; return domain; } };
+  const parent = h0.exec("retry-sess");
+  /* 第一次 src 工具调用 → domain() 首开失败 */
+  await assert.rejects(h0.run("src_state", {}, parent), /does not match its schema/, "首开被 legacy 记录拒绝");
+  assert.equal(openCalls, 1);
+  /* [修复前 bug] rejected promise 被实例永久持有：数据修复后重试仍重放同一错误。
+     [修复后] domain() 清掉 rejected promise，下次调用重新 open（此时数据已修）→ 成功。 */
+  domain.table("assets").delete("session-legacy:asset-90");
+  const state = await h0.run("src_state", {}, parent);
+  assert.equal(openCalls, 2, "第二次调用触发了重新 open");
+  assert.equal(state.initialized, false, "重试后 domain 正常服务（干净域返回初始状态）");
+  __resetSharedDomainOpensForTests();
+});
+test("[local.45] legacy 资产 method 归一化：domain open 能加载旧版自由文本记录（active→authorized-active）", async () => {
+  const { srcAssetSchema } = await import("../lib/src.js");
+  /* 旧版（枚举约束前）写入的记录：method 是自由文本 */
+  const legacy = srcAssetSchema.safeParse({ id: "asset-90", sessionId: "s", type: "subdomain", value: "hr.mi.com", meta: "国内业务子域", source: "DNS + HTTP 探测", method: "active", confidence: 0.95, status: "confirmed" });
+  assert.equal(legacy.success, true, "legacy 记录能过 schema（资产只增不删，不丢数据）");
+  assert.equal(legacy.success ? legacy.data.method : "", "authorized-active", "active 归一化为 authorized-active");
+  /* 新写入仍受枚举约束（工具入参走的是这份 schema 的 strict 面） */
+  const bad = srcAssetSchema.safeParse({ id: "a", sessionId: "s", type: "subdomain", value: "x.test", method: "nonsense" });
+  assert.equal(bad.success, false, "未知 method 仍拒绝");
+  /* 缺省字段仍自动补全 */
+  const sparse = srcAssetSchema.safeParse({ id: "a", sessionId: "s", type: "root-domain", value: "y.test" });
+  assert.equal(sparse.success, true);
+  assert.equal(sparse.success ? sparse.data.method : "", "passive");
+});
+
 /* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
 test("[local.31] src_http 同请求去重复用既有 pending（不堆队列）", async () => {
   const h = harness();
