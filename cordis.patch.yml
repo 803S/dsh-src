@@ -47,7 +47,6 @@
   config:
     backend: json
     routes:
-      pentest: sqlite
       src: src-sqlite
 
 # DSH rc.6 replaces this row's configured roots with its bundled preset root
