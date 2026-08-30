@@ -12,7 +12,7 @@ const text = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf
 const lines = text.split("\n");
 
 const TOOL_RE = /\b(src_[a-z_]+)\b/g;
-const COMMANDER_TOOLS = ["src_add_goal", "src_add_intent", "src_add_test_account", "src_finalize_engagement", "src_set_infra", "src_fetch_policy", "src_set_goal_target", "src_add_fact", "src_add_finding", "src_add_asset", "src_update_intent", "src_update_finding", "src_record_lesson", "src_record_domain_note", "src_reject_finding", "src_resolve_approval"];
+const COMMANDER_TOOLS = ["src_add_goal", "src_add_intent", "src_add_test_account", "src_finalize_engagement", "src_set_infra", "src_fetch_policy", "src_set_goal_target", "src_add_fact", "src_add_finding", "src_add_asset", "src_update_intent", "src_update_finding", "src_record_lesson", "src_record_domain_note", "src_reject_finding", "src_resolve_approval", "src_read_capability", "src_run_capability"];
 
 // 切块：每个 - id: ... 开始一个 entry，直到下一个同级 - id 或文件末尾。
 const entries = [];

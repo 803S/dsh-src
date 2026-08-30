@@ -6,11 +6,22 @@
 # 用法：node scripts/caps-sync.mjs   （读本文件 → 安装 git 型到 ~/.dsh/capabilities/<id>/
 #       → 生成 profile cordis.patch.yml 的能力区段 → 重启 dsh web 生效）
 #
-# 示例（取消注释即启用）：
-#
 # capabilities:
 #   - id: jshook
 #     from: npm:@jshookmcp/jshook@latest
 #     enabled: true
 #     env: { MCP_TOOL_PROFILE: search, npm_config_omit: optional }
-#     when: 遇到 JS 混淆/加密签名/Webpack 打包需要运行时 Hook、AST 还原时
+#     when: >
+#       遇到 JS 混淆/加密签名/Webpack 打包需要运行时 Hook、AST 还原时
+#
+# skill 型示例（v2）：任意「文档 + 脚本」项目（纯 CLI、分析器仓库、SKILL.md 知识包）；
+# 不接 MCP 工具面，agent 用 src_read_capability 读文档、src_run_capability 执行白名单脚本
+# （执行前挂待审，人工批准才运行）。
+# capabilities:
+#   - id: apkx
+#     from: git:https://github.com/example/apkx
+#     kind: skill
+#     docs: SKILL.md                        # 省略则自动探测 SKILL.md > README.md
+#     scripts: [scripts/extract-endpoints.sh, scripts/apkx.mjs]   # 白名单（内联数组）
+#     when: >
+#       拿到 APK/小程序包需要反编译、提取端点/密钥时

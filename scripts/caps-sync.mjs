@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// dsh-src 外部能力 sync：capabilities.yaml → 安装(git 型) → 生成 profile patch 能力区段。
+// dsh-src 外部能力 sync：capabilities.yaml → 安装(git/npm 型) → 生成 profile patch 能力区段（mcp 型）
+// 与能力索引 index.json（全部 kind，skill 型带 dir/docs/scripts 供插件 src_read/run_capability 用）。
 // 规范见 docs/CAPABILITIES.md。零依赖（node:24 内置模块 + 手写受限 yaml 子集解析）。
 //
 // 用法：node scripts/caps-sync.mjs [--yaml <路径>] [--profile-dir <路径>] [--dry-run]
@@ -47,6 +48,7 @@ function parseCapsYaml(text) {
 			if (v === "{}") cur[k] = {};
 			else if (v === "" || v === ">" || v === "|") { curKey = k; if (v !== "") cur[k] = ""; }
 			else if (v.startsWith("{")) cur[k] = parseInlineMap(v, no);
+			else if (/^\[.*\]$/.test(v.trim())) cur[k] = v.trim().slice(1, -1).split(",").map((s) => coerce(stripQuotes(s.trim()))).filter(Boolean);
 			else cur[k] = coerce(stripQuotes(v));
 			continue;
 		}
@@ -109,6 +111,14 @@ async function run(cmd, args, opts = {}) {
 	});
 }
 async function pathExists(p) { try { await access(p); return true; } catch { return false; } }
+/* [local.41] npm 引用 → 包名（支持 @scope/pkg@1.2.3 与 pkg@1.2.3）。 */
+function npmPkgName(from) {
+	const s = from.slice(4);
+	const at = s.lastIndexOf("@");
+	return at > 0 ? s.slice(0, at) : s;
+}
+/* [local.41] skill 型能力的实际目录：git 型=clone 目录；npm 型=dest/node_modules/<pkg>。 */
+function skillCapDir(c) { return c.from.startsWith("git:") ? path.join(capsDir, c.id) : path.join(capsDir, c.id, "node_modules", npmPkgName(c.from)); }
 function log(msg) { console.log(msg); }
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1); }
 //#endregion
@@ -187,6 +197,14 @@ for (const c of caps) {
 	seen.add(c.id);
 	if (!/^[a-z][a-z0-9-]{1,30}$/.test(c.id)) die(`id「${c.id}」不合法（小写字母开头，仅小写字母/数字/连字符，≤31 字符）`);
 	if (!/^(npm|git):/.test(c.from)) die(`${c.id}: from 必须以 npm: 或 git: 开头`);
+	/* [local.41] kind: mcp（默认）= 接 MCP 工具面；skill = 文档+白名单脚本（审批后本地执行）。 */
+	if (!["mcp", "skill"].includes(c.kind ?? "mcp")) die(`${c.id}: kind 必须是 mcp 或 skill（省略默认 mcp）`);
+	if ((c.kind ?? "mcp") === "skill") {
+		if (c.scripts !== void 0 && !Array.isArray(c.scripts)) die(`${c.id}: scripts 必须是内联数组，如 scripts: [scripts/a.sh, scripts/b.py]`);
+		if (Array.isArray(c.scripts) && c.scripts.some((s) => typeof s !== "string" || s === "" || s.includes("..") || path.isAbsolute(s))) die(`${c.id}: scripts 每项必须是能力目录内的相对路径（禁止空串/../绝对路径）`);
+		if (c.entry !== void 0) die(`${c.id}: skill 型不需要 entry（entry 仅 mcp 型使用）`);
+		if (c.docs !== void 0 && (typeof c.docs !== "string" || c.docs === "" || c.docs.includes("..") || path.isAbsolute(c.docs))) die(`${c.id}: docs 必须是能力目录内的相对路径`);
+	}
 }
 
 // ── ① 安装 git 型到统一目录 ─────────────────────────────────────────────
@@ -219,8 +237,26 @@ for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("git
 	}
 }
 
+// ── ①½ 安装 npm 型 skill（npm install 到能力目录，node_modules/<pkg> 即能力目录）────
+for (const c of caps.filter((x) => x.enabled !== false && (x.kind ?? "mcp") === "skill" && x.from.startsWith("npm:"))) {
+	const dest = path.join(capsDir, c.id);
+	const marker = path.join(dest, ".caps-src");
+	const pkg = npmPkgName(c.from);
+	const already = existsSync(marker) ? JSON.parse(await readFile(marker, "utf8")) : null;
+	if (already?.from === c.from && existsSync(path.join(dest, "node_modules", pkg))) {
+		log(`= ${c.id}: 已安装在 ${dest}（来源一致，跳过；更新请删目录重跑）`);
+	} else {
+		if (dryRun) { log(`[dry] ${c.id}: 将 npm install ${c.from.slice(4)} → ${dest}`); continue; }
+		log(`→ ${c.id}: npm install ${c.from.slice(4)} → ${dest}`);
+		await mkdir(dest, { recursive: true });
+		const r = await run("npm", ["install", "--prefix", dest, c.from.slice(4)], { env: proxyEnv });
+		if (r.code !== 0) { log(`✗ ${c.id}: npm install 失败（该能力本轮不就绪）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
+		await writeFile(marker, JSON.stringify({ from: c.from, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
+	}
+}
+
 // ── ② 生成接线片段并写入 profile patch ─────────────────────────────────
-const active = caps.filter((c) => c.enabled !== false && !notReady.has(c.id));
+const active = caps.filter((c) => c.enabled !== false && !notReady.has(c.id) && (c.kind ?? "mcp") === "mcp");
 const blockLines = [];
 blockLines.push(MARK_BEGIN);
 blockLines.push("# 由 scripts/caps-sync.mjs 生成。新增/停用能力请改 ~/.dsh/capabilities.yaml 后重跑 sync。");
@@ -253,6 +289,29 @@ for (const c of active) {
 blockLines.push(MARK_END);
 const blockText = blockLines.join(EOL);
 
+// ── ②½ 生成能力索引（全部 kind；skill 型带 dir/docs/scripts，供插件 src_read/run_capability 使用）──
+if (!dryRun && caps.length > 0) {
+	const indexItems = [];
+	for (const c of caps) {
+		const kind = c.kind ?? "mcp";
+		const enabled = c.enabled !== false;
+		const base = { id: c.id, kind, from: c.from, ref: c.ref ?? null, enabled, when: typeof c.when === "string" ? c.when : "", docs: kind === "skill" ? (typeof c.docs === "string" && c.docs !== "" ? c.docs : null) : null, scripts: kind === "skill" ? (Array.isArray(c.scripts) ? c.scripts : []) : [], env: c.env && Object.keys(c.env).length > 0 ? c.env : null };
+		if (!enabled) { indexItems.push({ ...base, status: "disabled" }); continue; }
+		if (notReady.has(c.id)) { indexItems.push({ ...base, status: "failed" }); continue; }
+		if (kind === "skill") {
+			const dir = skillCapDir(c);
+			const installed = existsSync(dir) && (existsSync(path.join(dir, ".caps-src")) || existsSync(path.join(dir, "package.json")));
+			indexItems.push({ ...base, status: installed ? "installed" : "failed", ...(installed ? { dir } : {}) });
+		} else {
+			indexItems.push({ ...base, status: "installed" });
+		}
+	}
+	await mkdir(capsDir, { recursive: true });
+	const indexPath = path.join(capsDir, "index.json");
+	await writeFile(indexPath, JSON.stringify({ generatedAt: new Date().toISOString(), capabilities: indexItems }, null, 2) + EOL);
+	log(`✓ 能力索引已更新 → ${indexPath}`);
+}
+
 const patchPath = path.join(profileDir, "cordis.patch.yml");
 if (!existsSync(patchPath)) die(`未找到 ${patchPath}（可加 --profile-dir 指定其它 profile）`);
 const oldPatch = await readFile(patchPath, "utf8");
@@ -262,7 +321,6 @@ if (re.test(oldPatch)) {
 	newPatch = oldPatch.replace(re, blockText + EOL);
 	log(`↻ 已替换 ${patchPath} 中既有能力区段`);
 } else {
-	newPatch = oldPatch.replace(/$/, (m) => m) ;
 	newPatch = oldPatch.endsWith(EOL) ? oldPatch + EOL + blockText + EOL : oldPatch + EOL + blockText + EOL;
 	log(`↻ 已在 ${patchPath} 尾部追加能力区段`);
 }

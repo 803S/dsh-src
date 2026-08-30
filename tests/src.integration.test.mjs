@@ -4,6 +4,8 @@ import * as fsPromises from "node:fs/promises";
 import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
 import http from "node:http";
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest } from "../lib/src.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 
@@ -2504,4 +2506,206 @@ test("src_state orphanIntents renders actionable guidance", async () => {
   const text = rendered.map((r) => r.text).join("");
   assert.match(text, /Orphan running intents/);
   assert.match(text, /src_recover_child/);
+});
+
+/* ═══════════════ [local.41] caps-sync v2（skill 型）+ src_read/run_capability ═══════════════
+   caps-sync 用真实子进程跑（git file:// clone 到 temp DSH_HOME）；插件工具用 harness 直连 +
+   process.env.DSH_HOME 指向 temp（工具在 execute 时才读 env，try/finally 恢复）。
+   脚本执行测试全部本地 echo/touch，不触网。 */
+
+/* 构造带能力索引的临时 DSH_HOME：apkx（skill，含 run.sh/slow.sh/noop.sh）+ jshook（mcp）。 */
+async function makeCapsEnv(prefix) {
+  const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), prefix));
+  const capDir = nodePath.join(tmp, "capabilities", "apkx");
+  await fsPromises.mkdir(nodePath.join(capDir, "scripts"), { recursive: true });
+  await fsPromises.writeFile(nodePath.join(capDir, "SKILL.md"), "# apkx\n用法：跑 scripts/run.sh <arg>，提取端点\n");
+  await fsPromises.writeFile(nodePath.join(capDir, "scripts", "run.sh"), "#!/usr/bin/env bash\necho \"ran:$1\"\ntouch \"$PWD/ran.flag\"\n");
+  await fsPromises.writeFile(nodePath.join(capDir, "scripts", "slow.sh"), "#!/usr/bin/env bash\nsleep 5\necho done-slow\n");
+  await fsPromises.writeFile(nodePath.join(capDir, "scripts", "noop.sh"), "#!/usr/bin/env bash\ntouch \"$PWD/noop.flag\"\n");
+  await fsPromises.mkdir(nodePath.join(tmp, "capabilities"), { recursive: true });
+  await fsPromises.writeFile(nodePath.join(tmp, "capabilities", "index.json"), JSON.stringify({ generatedAt: "test", capabilities: [
+    { id: "apkx", kind: "skill", from: "git:file:///tmp/apkx", enabled: true, when: "APK 逆向", docs: "SKILL.md", scripts: ["scripts/run.sh", "scripts/slow.sh", "scripts/noop.sh"], env: null, status: "installed", dir: capDir },
+    { id: "jshook", kind: "mcp", from: "npm:@x/y@latest", enabled: true, when: "JS hook", docs: null, scripts: [], env: null, status: "installed" }
+  ] }, null, 2));
+  return {
+    tmp, capDir,
+    restore() { return fsPromises.rm(tmp, { recursive: true, force: true }); }
+  };
+}
+/* 工具在 execute 时才读 DSH_HOME —— 测试内设置并在 finally 恢复。 */
+function setDshHome(tmp) {
+  const prev = process.env.DSH_HOME;
+  process.env.DSH_HOME = tmp;
+  return () => { if (prev === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prev; };
+}
+const fileExists = (p) => existsSync(p);
+
+test("[local.41] caps-sync v2: skill 型安装 + index.json 生成 + patch 只接 mcp 型 + 校验", async () => {
+  const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "caps41-"));
+  try {
+    /* 两个本地 git 仓库：mini-mcp（mcp 型）与 mini-skill（skill 型） */
+    const mkRepo = async (name, files) => {
+      const repo = nodePath.join(tmp, name);
+      await fsPromises.mkdir(repo, { recursive: true });
+      for (const [rel, content] of Object.entries(files)) {
+        const abs = nodePath.join(repo, rel);
+        await fsPromises.mkdir(nodePath.dirname(abs), { recursive: true });
+        await fsPromises.writeFile(abs, content);
+      }
+      const git = (args) => spawnSync("git", ["-c", "user.email=t@t.test", "-c", "user.name=t", ...args], { cwd: repo, encoding: "utf8" });
+      git(["init", "-b", "main"]);
+      git(["add", "."]);
+      const cm = git(["commit", "-m", "init"]);
+      assert.equal(cm.status, 0, `git commit failed: ${cm.stderr}`);
+      return repo;
+    };
+    const repoMcp = await mkRepo("repo-mcp", { "package.json": JSON.stringify({ name: "mini-mcp", version: "0.0.1", main: "index.js" }, null, 2), "index.js": "process.stdin.resume();\n" });
+    const repoSkill = await mkRepo("repo-skill", { "SKILL.md": "# mini skill\n用法：跑 scripts/run.sh\n", "scripts/run.sh": "#!/usr/bin/env bash\necho \"run:$1\"\n", "scripts/evil.sh": "echo evil\n" });
+    await fsPromises.writeFile(nodePath.join(tmp, "capabilities.yaml"), `capabilities:\n  - id: minicap\n    from: git:file://${repoMcp}\n    entry: index.js\n    when: 测试 mcp\n  - id: miniskill\n    from: git:file://${repoSkill}\n    kind: skill\n    scripts: [scripts/run.sh]\n    when: 测试 skill\n`);
+    await fsPromises.mkdir(nodePath.join(tmp, "profiles", "web"), { recursive: true });
+    await fsPromises.writeFile(nodePath.join(tmp, "profiles", "web", "cordis.patch.yml"), "# test patch\n");
+    const runSync = (yaml) => spawnSync(process.execPath, ["scripts/caps-sync.mjs", "--yaml", yaml, "--profile-dir", nodePath.join(tmp, "profiles", "web")], { cwd: process.cwd(), encoding: "utf8", env: { ...process.env, DSH_HOME: tmp } });
+
+    const r1 = runSync(nodePath.join(tmp, "capabilities.yaml"));
+    assert.equal(r1.status, 0, `caps-sync failed: ${r1.stderr || r1.stdout}`);
+    const index = JSON.parse(await fsPromises.readFile(nodePath.join(tmp, "capabilities", "index.json"), "utf8"));
+    const mcp = index.capabilities.find((c) => c.id === "minicap");
+    const skill = index.capabilities.find((c) => c.id === "miniskill");
+    assert.equal(mcp.kind, "mcp");
+    assert.equal(mcp.status, "installed");
+    assert.equal(skill.kind, "skill");
+    assert.equal(skill.status, "installed");
+    assert.deepEqual(skill.scripts, ["scripts/run.sh"]);
+    assert.equal(skill.dir !== undefined && fileExists(nodePath.join(skill.dir, "SKILL.md")), true, "skill repo cloned and indexed with dir");
+    const patch = await fsPromises.readFile(nodePath.join(tmp, "profiles", "web", "cordis.patch.yml"), "utf8");
+    assert.match(patch, /id: mcp-minicap\b/);
+    assert.doesNotMatch(patch, /miniskill/, "skill 型不得进 MCP 接线区段");
+    /* 幂等：重跑仍成功 */
+    const r2 = runSync(nodePath.join(tmp, "capabilities.yaml"));
+    assert.equal(r2.status, 0, `caps-sync rerun failed: ${r2.stderr || r2.stdout}`);
+    /* 非法 kind 报错退出 */
+    await fsPromises.writeFile(nodePath.join(tmp, "bad.yaml"), `capabilities:\n  - id: badcap\n    from: git:file://${repoMcp}\n    kind: bogus\n`);
+    const r3 = runSync(nodePath.join(tmp, "bad.yaml"));
+    assert.notEqual(r3.status, 0, "bogus kind must fail");
+    assert.match(r3.stderr, /kind 必须是 mcp 或 skill/);
+    /* scripts 越目录路径报错退出 */
+    await fsPromises.writeFile(nodePath.join(tmp, "bad2.yaml"), `capabilities:\n  - id: bad2\n    from: git:file://${repoSkill}\n    kind: skill\n    scripts: [../evil.sh]\n`);
+    const r4 = runSync(nodePath.join(tmp, "bad2.yaml"));
+    assert.notEqual(r4.status, 0, "script path traversal must fail");
+    assert.match(r4.stderr, /相对路径/);
+  } finally { await fsPromises.rm(tmp, { recursive: true, force: true }); }
+});
+
+test("[local.41] src_list_capabilities 读 index.json 并渲染 skill 状态与白名单", async () => {
+  const env = await makeCapsEnv("caps41-list-");
+  const restore = setDshHome(env.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("parent");
+    const out = await h.run("src_list_capabilities", {}, parent);
+    assert.equal(out.items.length, 2);
+    const apkx = out.items.find((i) => i.id === "apkx");
+    assert.equal(apkx.kind, "skill");
+    assert.equal(apkx.status, "installed");
+    assert.deepEqual(apkx.scripts, ["scripts/run.sh", "scripts/slow.sh", "scripts/noop.sh"]);
+    const tool = h.tools.get("src_list_capabilities");
+    const text = tool.output.render({}, out).map((r) => r.text).join("");
+    assert.match(text, /✓已安装 \[skill\] apkx/);
+    assert.match(text, /白名单脚本:scripts\/run\.sh scripts\/slow\.sh scripts\/noop\.sh/);
+    assert.match(text, /○已启用但未接线.*jshook/);
+  } finally { restore(); await env.restore(); }
+});
+
+test("[local.41] src_run_capability：goal 闸/mcp 拒绝/白名单闸/挂起待审/同参去重", async () => {
+  const env = await makeCapsEnv("caps41-run-");
+  const restore = setDshHome(env.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("g41c"); /* 唯一会话 id：domain 开启是跨测试共享的，"parent" 可能带着历史 goal */
+    /* 未初始化 goal → 拒绝 */
+    await assert.rejects(() => h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh" }, parent), /requires an initialized SRC goal/);
+    await h.run("src_add_goal", { target: "https://example.test", objective: "capability run check", authorization: "ticket-42" }, parent);
+    /* mcp 型能力拒绝走 run */
+    await assert.rejects(() => h.run("src_run_capability", { id: "jshook", script: "x.sh" }, parent), /mcp 型/);
+    /* 非白名单脚本拒绝 */
+    await assert.rejects(() => h.run("src_run_capability", { id: "apkx", script: "scripts/evil.sh" }, parent), /白名单/);
+    /* 越目录路径在白名单闸即拒（不在清单） */
+    await assert.rejects(() => h.run("src_run_capability", { id: "apkx", script: "../outside.sh" }, parent), /白名单/);
+    /* timeoutMs 越界拒绝 */
+    await assert.rejects(() => h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh", timeoutMs: 999999 }, parent), /timeoutMs/);
+    /* 正常挂起：返回 pendingApprovalId 且脚本未执行 */
+    const p1 = await h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh", args: ["probe"], justification: "测试执行授权说明" }, parent);
+    assert.equal(p1.dedupe, false);
+    assert.match(p1.pendingApprovalId, /^approval-/);
+    assert.equal(p1.url, "capability://apkx/scripts/run.sh");
+    assert.equal(fileExists(nodePath.join(env.capDir, "ran.flag")), false, "script must NOT run before approval");
+    /* 同参重复提交复用既有 pending */
+    const p2 = await h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh", args: ["probe"] }, parent);
+    assert.equal(p2.dedupe, true);
+    assert.equal(p2.pendingApprovalId, p1.pendingApprovalId);
+    /* pending 落库且 src_state 可见（method=RUN + capability-run 分类 + justification） */
+    const state = await h.run("src_state", {}, parent);
+    const row = (state.pendingApprovals ?? []).find((r) => r.id === p1.pendingApprovalId);
+    assert.ok(row, "RUN pending must be visible in src_state.pendingApprovals");
+    assert.equal(row.method, "RUN");
+    assert.equal(row.category, "capability-run");
+    assert.match(row.justification, /测试执行授权说明/);
+  } finally { restore(); await env.restore(); }
+});
+
+test("[local.41] src_resolve_approval allow 执行 RUN 脚本返回 runOutput；reject 不执行；超时 SIGKILL", async () => {
+  const env = await makeCapsEnv("caps41-resolve-");
+  const restore = setDshHome(env.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("g41d");
+    await h.run("src_add_goal", { target: "https://example.test", objective: "capability resolve check", authorization: "ticket-42" }, parent);
+    /* allow → 真执行：runOutput 含脚本输出，副作用文件落盘 */
+    const p1 = await h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh", args: ["probe"] }, parent);
+    const r1 = await h.run("src_resolve_approval", { id: p1.pendingApprovalId, action: "allow", note: "批准" }, parent);
+    assert.equal(r1.status, "approved");
+    assert.equal(r1.method, "RUN");
+    assert.equal(r1.responseStatus, 0);
+    assert.match(r1.runOutput, /ran:probe/);
+    assert.equal(fileExists(nodePath.join(env.capDir, "ran.flag")), true, "script must execute on allow");
+    /* 幂等：已审批不可重复 */
+    await assert.rejects(() => h.run("src_resolve_approval", { id: p1.pendingApprovalId, action: "allow" }, parent), /已 approved/);
+    /* 超时：slow.sh sleep 5 > timeoutMs 400 → SIGKILL，输出带 [timeout] 标记，不悬挂 */
+    const p2 = await h.run("src_run_capability", { id: "apkx", script: "scripts/slow.sh", timeoutMs: 400 }, parent);
+    const r2 = await h.run("src_resolve_approval", { id: p2.pendingApprovalId, action: "allow" }, parent);
+    assert.match(r2.runOutput, /\[timeout\]/);
+    /* reject → 不执行（noop.flag 不存在），runOutput 不出现 */
+    const p3 = await h.run("src_run_capability", { id: "apkx", script: "scripts/noop.sh" }, parent);
+    const r3 = await h.run("src_resolve_approval", { id: p3.pendingApprovalId, action: "reject", note: "不做" }, parent);
+    assert.equal(r3.status, "rejected");
+    assert.equal(r3.runOutput, undefined);
+    assert.equal(fileExists(nodePath.join(env.capDir, "noop.flag")), false, "script must NOT execute on reject");
+    /* 审批事件入投影流（UI 待审面板数据源） */
+    const events = h.sessions.get("g41d").events.filter((e) => e.type === "tool/call" && e.data.name === "src_record_pending_approval").map((e) => JSON.parse(e.data.arguments));
+    assert.equal(events.length, 3, "each hang-up must emit src_record_pending_approval");
+    assert.equal(events[0].method, "RUN");
+  } finally { restore(); await env.restore(); }
+});
+
+test("[local.41] src_read_capability：docs 探测/指定文件/穿越拒绝/未安装拒绝", async () => {
+  const env = await makeCapsEnv("caps41-read-");
+  const restore = setDshHome(env.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("g41e");
+    /* 默认探测 docs=SKILL.md */
+    const t1 = await h.run("src_read_capability", { id: "apkx" }, parent);
+    assert.equal(t1.file, "SKILL.md");
+    assert.match(t1.text, /apkx/);
+    assert.equal(t1.truncated, false);
+    /* 指定能力目录内文件 */
+    const t2 = await h.run("src_read_capability", { id: "apkx", file: "scripts/run.sh" }, parent);
+    assert.match(t2.text, /ran:\$1/);
+    /* 路径穿越拒绝 */
+    await assert.rejects(() => h.run("src_read_capability", { id: "apkx", file: "../evil.txt" }, parent), /非法|越出/);
+    await assert.rejects(() => h.run("src_read_capability", { id: "apkx", file: "/etc/hosts" }, parent), /非法|越出/);
+    /* 未知能力 / mcp 型能力 */
+    await assert.rejects(() => h.run("src_read_capability", { id: "nope" }, parent), /不在清单中/);
+    await assert.rejects(() => h.run("src_read_capability", { id: "jshook" }, parent), /未安装/);
+  } finally { restore(); await env.restore(); }
 });

@@ -1,7 +1,13 @@
-# dsh-src 外部能力接入规范 v1
+# dsh-src 外部能力接入规范 v2
 
-> 让 dsh-src 以「docker compose 式」体验接入任意外部 MCP 能力（JS 逆向、二进制分析、
+> 让 dsh-src 以「docker compose 式」体验接入任意外部能力（JS 逆向、二进制分析、
 > 移动端、抓包代理等）。用户只维护一份 `~/.dsh/capabilities.yaml`，跑一次 sync，重启生效。
+>
+> **两类形态**（v2 新增 skill 型）：
+> - **mcp 型**（默认）：接 MCP 工具面，重启后工具面出现 `mcp__<id>__*` 工具；
+> - **skill 型**：任意「文档 + 脚本」形态的项目（纯 CLI、SKILL.md 知识库、分析器仓库都行）——
+>   agent 用 `src_read_capability` 读其文档，用 `src_run_capability` 执行其**白名单内**脚本
+>   （执行前挂起待审，人工批准才真正运行）。纯 MCP 项目接不进来时，skill 型是兜底通道。
 
 ---
 
@@ -10,13 +16,15 @@
 ```
 $DSH_HOME/                          # 通常是 ~/.dsh/
 ├── capabilities.yaml               # ← 用户唯一要维护的声明文件（能力清单）
-├── tools/                          # Burp 自愈桥安装点（caps-sync 自动从包内拷贝）
-│   └── burp-mcp-bridge.mjs
-└── capabilities/                   # ← 所有外部能力的统一落点（sync 自动创建）
-    └── <id>/                       # 每个能力一个目录，目录名 = 声明里的 id
-        ├── .caps-src               # 标记文件：JSON {from, ref, installedAt}
-        ├── <clone 的仓库内容>       # git 型：整个仓库 clone 到这里
-        └── dist/index.js 等         # build 后的产物也在本目录内
+├── capabilities/
+│   ├── index.json                  # ← 能力索引（caps-sync 生成，全部 kind；插件读它）
+│   └── <id>/                       # 每个能力一个目录，目录名 = 声明里的 id
+│       ├── .caps-src               # 标记文件：JSON {from, ref, installedAt}
+│       ├── <clone 的仓库内容>       # git 型：整个仓库 clone 到这里
+│       └── dist/index.js 等         # build 后的产物也在本目录内
+│       # npm 型 skill 的实际目录在 <id>/node_modules/<包名>/
+└── tools/                          # Burp 自愈桥安装点（caps-sync 自动从包内拷贝）
+    └── burp-mcp-bridge.mjs
 ```
 
 铁律：
@@ -24,7 +32,8 @@ $DSH_HOME/                          # 通常是 ~/.dsh/
 2. **接线配置不手写**：`scripts/caps-sync.mjs` 从 `capabilities.yaml` 生成，写入
    profile 的 `cordis.patch.yml` 中由 `# ── dsh-src capabilities:8< ──` 包裹的区段；
    区段外的内容 sync 绝不触碰。
-3. npx 型能力**不落地**到 capabilities/（npm 缓存即存放层），只有 `git:` 型才 clone。
+3. npm 型 **mcp 能力不落地**到 capabilities/（npm 缓存即存放层）；npm 型 **skill 能力**落地为
+   `<id>/node_modules/<包名>/`（sync 用 `npm install --prefix` 安装）。
 4. 删除能力 = yaml 里删条目 + 重跑 sync + 手动删目录（sync 不做破坏性删除）。
 
 ## 二、capabilities.yaml 格式
@@ -45,7 +54,23 @@ capabilities:
     when: >                          # 给 agent 看的路由提示：什么场景该用它
       遇到 JS 混淆/加密签名/Webpack 打包需要运行时 Hook 时
     evidence: src_record_observation # 证据回灌工具（固定值，留作纪律提醒）
+
+  # skill 型（v2）：任意「文档 + 脚本」项目——纯 CLI、分析器仓库、SKILL.md 知识包
+  - id: apkx                         # 目录名与审批 url 前缀
+    from: git:https://github.com/example/apkx
+    kind: skill                      # 必须；省略默认 mcp
+    # docs: SKILL.md                 # 文档入口相对路径（省略则自动探测 SKILL.md > README.md）
+    scripts: [scripts/extract-endpoints.sh, scripts/apkx.mjs]   # 白名单（必须内联数组）
+    when: >
+      拿到 APK/小程序包需要反编译、提取端点/密钥时
 ```
+
+字段说明（skill 型新增）：
+- `kind: skill`——形态标记。skill 型不接 MCP 工具面，不写 `entry`。
+- `docs`——agent 用 `src_read_capability` 读的入口文档；省略则按 SKILL.md > README.md > README_CN.md 探测。
+- `scripts`——**白名单**，只有列出的相对路径能被 `src_run_capability` 执行；改白名单 = 改 yaml + 重跑 sync。
+  支持的解释器按扩展名自动选：`.sh/.bash`→bash、`.js/.mjs/.cjs`→node、`.py`→python3、无扩展名→直接执行
+  （需可执行位）。argv 直传不经 shell，无注入面。npm 型 skill 的 `from: npm:<pkg>` 会安装到本地目录。
 
 ## 三、使用流程
 
@@ -65,6 +90,20 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs -
 验证：面板对 agent 说「列出 mcp__jshook__ 开头的工具并调用一个只读的」，或直接让 agent 调 src_list_capabilities / src_test_capability。
 证据纪律：外部产出一律经 `src_record_observation(tool='<id>')` 固化，未固化不算数。
 
+### skill 型的使用方式
+
+skill 型**不产生工具面工具**。agent 侧流程（提示词【外部能力路由】已内置）：
+
+1. `src_list_capabilities`——看到 `✓已安装 [skill] <id> — 白名单脚本:…`；
+2. `src_read_capability(id)`——读 `docs`/SKILL.md/README.md 了解用法（只读、截断）；
+3. `src_run_capability(id, script, args)`——提交白名单脚本。**脚本不会立刻执行**：异步挂起到
+   「待办」tab 待审区（method=RUN 的卡片，参数与授权说明可见）；用户点批准 →
+   agent 收到 followup 调 `src_resolve_approval(id, allow)` → 此刻才真正 spawn，脚本
+   stdout/stderr 随审批结果回给 agent；拒绝则不执行。同参数重复提交会复用既有待审项。
+
+caps-sync 对 skill 型额外产出：`~/.dsh/capabilities/index.json`（全部 kind 的安装状态、
+dir/docs/scripts——插件工具的数据源，勿手改）。
+
 ## 三点五、自定义代理占位（settings.proxy）
 
 清单顶部可加：
@@ -81,4 +120,7 @@ settings:
 - 只接注册在案、来源可信的能力；`failOnStartupError: false` 由 sync 统一写死——
   单个能力起不来绝不阻塞其它功能。
 - 外部 MCP = 任意代码执行面：能力结论进 finding 前仍走 finalize 门禁复核。
+- **skill 型 = 更直接的命令执行面**，因此三重闸：①只执行白名单内脚本 ②每次执行前挂起待审
+  （人工批准才运行）③解释器按扩展名白名单化、argv 直传不经 shell、目录内相对路径（禁 `..`）。
+  审批记录（method=RUN）与 HTTP 待审同队列同审计，`runOutput` 落库可回查。
 - `env` 里不要放明文密钥；需要凭据的场景走 infra（src_set_infra / 面板基础设施页）。
