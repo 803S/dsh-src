@@ -2091,6 +2091,122 @@ test("[local.43] src_state 输出 assetScope（schema 同步）+ 资产大小写
   } finally { globalThis.fetch = originalFetch; }
 });
 
+/* [local.44] 资产归属人工确认：提交→去重→三档跳过；/src-approve 直写落库；工具自批封死；byStatus+finalize 软警告。 */
+test("[local.44] src_request_asset_confirm：挂队待审 + 同域去重 + goal 内/已覆盖/已否决跳过 + lossless", async () => {
+  const h = harness();
+  const parent = h.exec("g44a");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "归属确认验证" }, parent);
+  /* 正常提交：返回 pendingApprovalId，status pending */
+  const p1 = await h.run("src_request_asset_confirm", { domain: "sfgy1.com", evidence: "品牌相似+证书 CN 命中" }, parent);
+  assert.equal(p1.status, "pending");
+  assert.match(p1.pendingApprovalId, /^approval-\d+$/);
+  assert.equal(p1.duplicate, false);
+  assert.deepEqual(collectUndefinedKeys(p1), [], "零 undefined 键");
+  /* 同域重复提交（带 *. 前缀）：归一化后去重复用 */
+  const p2 = await h.run("src_request_asset_confirm", { domain: "*.sfgy1.com", evidence: "再次发现" }, parent);
+  assert.equal(p2.duplicate, true);
+  assert.equal(p2.pendingApprovalId, p1.pendingApprovalId, "*. 前缀归一化后同域去重");
+  /* 挂队行进投影，method=ASSET，category=asset-attribution */
+  const state1 = await h.run("src_state", {}, parent);
+  const row = (state1.pendingApprovals ?? []).find((r) => r.id === p1.pendingApprovalId);
+  assert.ok(row !== void 0, "待审行进投影");
+  assert.equal(row.method, "ASSET");
+  assert.equal(row.category, "asset-attribution");
+  assert.equal(row.status, "pending");
+  /* goal 主域内：跳过不挂队 */
+  const s1 = await h.run("src_request_asset_confirm", { domain: "shop.xiaomi.test", evidence: "主域内" }, parent);
+  assert.equal(s1.status, "skipped");
+  /* 已被资产覆盖：跳过 */
+  await h.run("src_add_asset", { type: "subdomain", value: "brand.test", source: "官网导航" }, parent);
+  const s2 = await h.run("src_request_asset_confirm", { domain: "brand.test", evidence: "已登记" }, parent);
+  assert.equal(s2.status, "skipped");
+  /* 已否决（excluded 覆盖）：跳过并提示翻案路径 */
+  await h.run("src_add_asset", { type: "subdomain", value: "parked.test", source: "误报", status: "excluded" }, parent);
+  const s3 = await h.run("src_request_asset_confirm", { domain: "parked.test", evidence: "翻案" }, parent);
+  assert.equal(s3.status, "skipped");
+  assert.match(s3.message, /否决/);
+  /* 非法域名（单标签/带路径）：拒绝 */
+  await assert.rejects(() => h.run("src_request_asset_confirm", { domain: "localhost", evidence: "x" }, parent), /不是合法域名/);
+  await assert.rejects(() => h.run("src_request_asset_confirm", { domain: "a.test/path", evidence: "x" }, parent), /不是合法域名/);
+  /* 无 goal 会话：拒绝 */
+  const other = h.exec("g44b");
+  await assert.rejects(() => h.run("src_request_asset_confirm", { domain: "sfgy1.com", evidence: "x" }, other), /requires an initialized SRC goal/);
+});
+
+test("[local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed 闸放行 / reject→excluded），src_resolve_approval 工具禁自批", async () => {
+  const h = harnessWithApproval({ policy: "allow" });
+  const parent = h.exec("g44c");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "确认落库" }, parent);
+  const p1 = await h.run("src_request_asset_confirm", { domain: "partner.test", evidence: "业务关联" }, parent);
+  /* agent 自批被拒：工具层闸 */
+  await assert.rejects(() => h.run("src_resolve_approval", { id: p1.pendingApprovalId, action: "allow" }, parent), /只能由用户/);
+  /* 用户在面板/命令行确认：/src-approve <id> allow —— 直接落库 confirmed 资产 + followup + 合成事件 */
+  const cmd = h.commands.get("src-approve");
+  assert.ok(cmd !== void 0, "src-approve 命令已注册");
+  const followups = [];
+  const reply = await cmd.handler({ rawInput: `${p1.pendingApprovalId} allow 是合作方域`, agent: { session: parent.agent.session, followup: async (m) => { followups.push(m); } } });
+  assert.equal(reply.kind, "success");
+  assert.match(reply.text, /已确认/);
+  assert.equal(followups.length, 1);
+  assert.match(JSON.stringify(followups[0]), /用户确认 partner.test/, "followup 告知 agent 重试");
+  /* 资产落库：confirmed + user-confirmed + source 带命令 id */
+  const state = await h.run("src_state", {}, parent);
+  const asset = (state.assets ?? []).find((a) => a.value === "partner.test");
+  assert.ok(asset !== void 0, "整域资产已登记");
+  assert.equal(asset.status, "confirmed");
+  assert.equal(asset.method, "user-confirmed");
+  assert.match(asset.source, new RegExp(p1.pendingApprovalId));
+  /* 待审行置 approved；合成事件已追加 */
+  const resolved = (state.pendingApprovals ?? []).find((r) => r.id === p1.pendingApprovalId);
+  assert.equal(resolved.status, "approved");
+  /* 合成事件已追加（fold 与时间线可见） */
+  const sessEvents = h.sessions.get("g44c").events;
+  assert.ok(sessEvents.some((e) => e.type === "tool/call" && e.data.name === "src_resolve_approval" && String(e.data.arguments ?? "").includes(p1.pendingApprovalId)), "src_resolve_approval 合成事件已落");
+  /* 闸放行：整域子域过授权闸（后续报网络错误而非越界） */
+  const notGate = (e) => { assert.ok(!/outside the authorized goal host/.test(e.message), `应过授权闸，实际: ${e.message}`); return true; };
+  await assert.rejects(() => h.run("src_http", { url: "http://api.partner.test/x", method: "GET", justification: "用户确认归属" }, parent), notGate);
+  /* 幂等：同 id 重复处理 → error */
+  const again = await cmd.handler({ rawInput: `${p1.pendingApprovalId} reject 不`, agent: { session: parent.agent.session, followup: async () => {} } });
+  assert.equal(again.kind, "error");
+  assert.match(again.text, /已处理过/);
+  /* reject 路径：file 新确认 → 否决 → excluded 资产 → 闸仍拒 + followup 告知放弃 */
+  const p2 = await h.run("src_request_asset_confirm", { domain: "other.test", evidence: "疑似" }, parent);
+  const followups2 = [];
+  const reply2 = await cmd.handler({ rawInput: `${p2.pendingApprovalId} reject 不是我们的`, agent: { session: parent.agent.session, followup: async (m) => { followups2.push(m); } } });
+  assert.equal(reply2.kind, "success");
+  assert.match(JSON.stringify(followups2[0]), /否决 other.test/);
+  const synth2 = h.sessions.get("g44c").events.some((e) => e.type === "tool/call" && String(e.data.arguments ?? "").includes(p2.pendingApprovalId));
+  assert.ok(synth2, "reject 合成事件已落");
+  const state2 = await h.run("src_state", {}, parent);
+  const excludedAsset = (state2.assets ?? []).find((a) => a.value === "other.test");
+  assert.equal(excludedAsset?.status, "excluded");
+  await assert.rejects(() => h.run("src_http", { url: "http://www.other.test/x", method: "GET", justification: "应仍拒绝" }, parent), /outside the authorized goal host/);
+});
+
+test("[local.44] assetScope.byStatus 状态分布 + finalize 未决归属确认软警告", async () => {
+  const h = harness();
+  const parent = h.exec("g44d");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "byStatus 验证" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "a.test", source: "x", status: "candidate" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "b.test", source: "x", status: "confirmed" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "c.test", source: "x", status: "excluded" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  assert.deepEqual(state.assetScope.byStatus, { candidate: 1, confirmed: 1, excluded: 1 }, "byStatus 状态分布");
+  assert.deepEqual(collectUndefinedKeys(state.assetScope), [], "assetScope 仍零 undefined 键");
+  /* finalize：未决 ASSET 待审 → 软警告提示报告写覆盖限制 */
+  await h.run("src_request_asset_confirm", { domain: "maybe.test", evidence: "e" }, parent);
+  const BLIND = [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }];
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
+  assert.match(fin.warnings.join(" "), /资产归属确认仍待用户处理/, "未决归属确认应警告");
+  assert.match(fin.warnings.join(" "), /maybe.test/);
+  /* 用户处理后警告消失 */
+  const pendingRow = (await h.run("src_state", {}, parent)).pendingApprovals.find((r) => r.method === "ASSET" && r.status === "pending");
+  const cmd = h.commands.get("src-approve");
+  await cmd.handler({ rawInput: `${pendingRow.id} allow 确认`, agent: { session: parent.agent.session, followup: async () => {} } });
+  const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
+  assert.doesNotMatch(fin2.warnings.join(" "), /资产归属确认仍待用户处理/, "处理后不再警告");
+});
+
 /* [local.31] 异步挂起队列：去重 + 投影 fold + resolve 幂等。 */
 test("[local.31] src_http 同请求去重复用既有 pending（不堆队列）", async () => {
   const h = harness();
