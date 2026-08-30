@@ -1,126 +1,25 @@
-> **开发/迭代历史文档**（原仓库根 README）。面向使用者的项目介绍见根目录 [README](../README.md)。
+> **开发/迭代历史文档**。安装与使用见根目录 [README](../README.md)。
+> 本文件 = UI 源码工程说明 + 测试硬性红线 + 版本迭代日志（设计决策脉络）。
 
-> ⚠️ 历史章节说明：本文前半部分（目录结构、安装方式）反映的是早期仓库布局；当前真实结构以仓库根目录为准，安装方式以根 [README](../README.md) 为准。后半部分版本日志按时间顺序保留，供了解设计决策脉络。
+# dsh-src 开发与迭代历史
 
-# dsh-src — DSH SRC 漏洞挖掘模式
+## UI 源码工程（src/dsh-client-ui-src/）
 
-面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）的SRC 漏洞挖掘模式：
-在授权范围内记录目标、探索线索、验证结果、资产与漏洞，并在 Web 中以探索链路、漏洞和资产视图展示。
-
-本目录是自包含 bundle 包（`@lihua_dis/dsh-src`）：宿主插件、Web 界面和 sqlite 后端通过包内 `exports`
-一同分发。Release 资产可直接由 `dsh plugin add` 安装。
-
-## 安装
-
-### 从 Release URL 安装
+- `lib/ui-src.client.js`（浏览器半构建产物）的 **TSX 源码就在本仓库** `src/dsh-client-ui-src/`，
+  以上游 [howmp/dsh-pentest](https://github.com/howmp/dsh-pentest) 开源的
+  `src/dsh-client-ui-pentest/`（MIT）为基底改造恢复，经 puppeteer 新旧产物双跑对照验收
+  （七个 tab 文本逐字符一致、截图像素 ≥99.99% 一致、零 pageerror）。恢复过程存 git 历史
+  （原 docs/UI-SOURCE.md，已并入本节）。
+- 改 UI 后重建（根目录执行，脚本见根 package.json）：
 
 ```bash
-dsh plugin --profile web add https://github.com/803S/dsh-src/releases/latest/download/lihua_dis-dsh-src-<版本>.tgz
+npm run ui-src:typecheck     # tsc 类型检查
+npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui-src.client.js
 ```
 
-### 或下载后从本地文件安装
-
-```bash
-dsh plugin --profile web add file:/path/to/lihua_dis-dsh-src-<版本>.tgz
-```
-
-重启 dsh 后，在新会话中选择自动注册的「SRC 专业模式」。
-
-## 接入你自己的 Burp MCP（可选）
-
-接线已随包内置（包内 `cordis.patch.yml` 默认启用 `mcp-burp` 块）：装好扩展、面板填端口即完事，
-无需手改任何配置文件。不接 Burp 时插件照常工作：agent 会走 HAR/raw 文件导入兑底
-（`src_import_traffic mode=har/raw`），并在需要时创建「启用 Burp」用户待办提醒你。
-
-### 接入步骤（一次性）
-
-1. 跑一次 caps-sync 装自愈桥（或手动拷贝，见 README「接入 Burp MCP」节）：
-
-```bash
-node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
-```
-
-2. Burp Suite Pro 安装 "MCP Server" BApp 扩展并点 Start（默认监听 `127.0.0.1:9876`）。
-3. 重启 dsh，面板「基础设施」页核对端口 + 点「测试 Burp MCP 连接」验证；agent 工具面多出
-   `mcp__burp__get_proxy_history` / `mcp__burp__send_to_repeater` 等，配合 `src_import_traffic(mode=mcp)` 把真实浏览流量落库。
-
-### 自愈桥 vs 官方 mcp-proxy.jar
-
-包内置的是自研桥 `tools/burp-mcp-bridge.mjs`：官方 jar 内 Kotlin SDK 长连 SSE 断掉后进程存活但传输已死，
-后续调用全报 -32603 "SseClientTransport is not initialized!" 且无法自愈；桥在任何请求失败后丢弃会话、
-下次调用自动开全新 SSE 会话重试一次，对上层透明。扩展 SSE 端点在根路径 `/` 且仅支持 HTTP
-（桥默认连 `http://localhost:9876/`，可用环境变量 `BURP_SSE_URL` 覆盖）。
-
-### 不同端口 / 主机
-
-- **换端口**：面板「基础设施」页改 `burpMcpPort` 即可（桥与测试按钮都读它）；扩展侧同步修改监听端口。
-- **远端主机**：设环境变量 `BURP_SSE_URL=http://192.0.2.50:9876/`（在 profile patch 的 mcp-burp 块加 `env:` 字段）。
-
-## 界面预览
-
-### 模式选择
-
-![SRC 专业模式选择](images/mode.png)
-
-### 对话与执行
-
-![对话与执行](images/chat.png)
-
-### 探索链路
-
-![探索链路](images/flow.png)
-
-### 漏洞视图
-
-![漏洞视图](images/vuln.png)
-
-### 资产视图
-
-![资产视图](images/asset.png)
-
-### 测试报告
-
-![测试报告](images/report.png)
-
-## 架构速览
-
-- **领域模型**（`lib/src.js`）：storage domain `src`（version 6）——`goals` / `intents` / `facts` / `findings` / `assets` / `coverage` / `research` /
-  `checkpoints` / `submissions` / `edges` 八张表。Intent 有 `planned` / `running` / `completed` / `blocked` / `failed` 生命周期；子 agent 每次 `src_submit` 都写入 durable checkpoint。边即链路词汇：`spawns`(goal→intent)、`yields`(intent→fact)、
-  `derived_from`(fact→intent)、`proves`(intent→finding)，资产关系用 `parent`(asset→asset)。finding 必填
-  `reproducibleSteps`（至少一条）。
-- **确定性 id**（`store.ts`）：节点/边 id 为 `<kind>-<n>`（按会话计数，goal 重置后归零）——工具返回 id 供模型
-  跨调用引用，会话投影从日志纯重放同一张图。
-- **工具**（`lib/src.js`）：`src_submit`（子 agent 直写指定父 intent，并创建 checkpoint）/ `src_add_goal`（重置整图）/ `src_add_intent`（恰好一个锚点）/
-  `src_update_intent` / `src_add_fact` / `src_add_finding`（步骤、危害、范围、修复和 POC 必填）/ `src_add_asset`（可选 parentId，
-  空字符串视为根资产）/ `src_record_recon` / `src_record_asset_observation` / `src_collect_passive` / `src_scan_surface` / `src_test_bypass` /
-  `src_record_research` / `src_record_coverage` / `src_recover_child` / `src_finalize_engagement` /
-  `src_record_submission` / `src_state` / `src_graph` / `src_report`。
-- **会话投影**：折叠已日志化的 `src_*` 调用为 `{ goal, nodes, assets, coverage, research, checkpoints, submissions, edges, counts }`，
-  镜像 store 的引用拒绝和语义去重；checkpoint 上限 200。`src_state` 还会额外汇总 `apiDiscovery` 摘要（API endpoint 总数、schema / GraphQL / hint 数量、尚未推进数量和示例），让指挥官快速看到被动发现后还有哪些接口工作未推进。
-- **Web 标签页**：按会话注册（当前会话或列表祖先链含 `src` 预设即显示，非 SRC 会话隐藏）；六个子标签——探索链路、漏洞、资产、子 Agent 进度、提交记录和报告。进度页展示 durable checkpoint 摘要、阶段、子会话 id 与新增计数；会话头部现在直接展示 API discovery 摘要，报告页也会把 `api:*` 资产元数据渲染成更可读的 `API/openapi-schema` / `API/graphql-endpoint` / `API/schema-path` / `API/html-js-hint` 形式。
-- **资产采集层**：所有资产观察记录来源、采集方法、置信度和 candidate/confirmed/excluded 状态；`src_record_asset_observation` 是统一入口，`src_record_recon` 和 `src_submit` 也携带 provenance。新增 `src_collect_passive`：对授权目标执行有界被动采集（homepage / robots.txt / sitemap.xml / 同 host HTML/JS hint + 限量 DNS A/CNAME + 常见 OpenAPI/Swagger/GraphQL 路径），自动把结果折叠为 candidate 资产与 fact，并写入 passive-collection 覆盖率；命中的 API schema / GraphQL / JS 接口 hint 会提升为 endpoint 资产。对于带查询串的 JS 接口 hint，还会额外归一化出 family 级 endpoint（如 `/api/profile?id=1` → `/api/profile`），便于后续 coverage / research 聚合。
-- **漏洞研究矩阵层**：`src_record_research` 记录 category、hypothesis、preconditions、验证状态、证据和停止原因。
-- **覆盖率层**：`src_record_coverage` 按资产、阶段和漏洞类别记录 planned/running/completed/blocked/not-applicable，报告列出已测和限制项。`src_collect_passive` 对命中的 endpoint 资产会自动生成 coverage skeleton（如 authentication / authorization / idor-bola / graphql / schema-review）；JS hint 与 family 级 endpoint 也会进入这套 skeleton 流程，把发现结果直接推进到后续研究队列。
-- **bypass 研究**：broken-access-control/bypass 是 SRC 高分漏洞类别——authentication/authorization bypass、idor-bola、tenant-isolation、workflow/method bypass、path-normalization、parser-discrepancy、rate-limit bypass、cache-auth-boundary、waf-rule-gap、oauth-flow bypass。`src_test_bypass` 做有界 baseline→variant 差分验证：只允许在目标 host/subdomain 内，仅 GET/HEAD/OPTIONS 和显式 allowBody 的 POST，低 RPS，遇到 403/429/WAF/challenge 即停并返回 requiresDecision；绝不自动绕过，不自动建 finding。仅凭 403→200 不算漏洞，必须附授权/影响证明并独立复核后才算 verified。禁止代理池轮换、captcha 破解、无限重试和隐蔽大规模扫描。
-- **协议**（`instructions.ts`）：系统提示词段 `src:protocol`（order 50），沿链路推进、子 agent 通过
-  `src_submit` 直写父 intent、资产先父后子、与用户交互一律中文。
-
-## 流程边界与决策
-
-- SRC 借鉴 pentest 的 commander 流程：先检查状态和去重 intent，再按事实拆分阶段、并发委派独立任务、等待完成事件、由新事实推导下一轮 intent，最后通过 `src_finalize_engagement` 做报告前验收并调用 `src_report`。若 passive discovery 命中了 API/schema/GraphQL endpoint，但后续没有进入 research 或 coverage 推进，`src_finalize_engagement` 会明确发出缺口警告；若这些接口仍然只停留在自动生成的 coverage/research skeleton，也会单独发出“仍停留在自动生成骨架”的提示，防止“发现了接口但没真正测”。
-- 公司名/品牌名不能直接变成授权目标。先使用现有 web/browsing 能力做被动候选收集，在候选域名/子域收敛后用 `src_add_goal` 直接记录用户确认的正式域名与授权说明；确认前不得主动请求候选主机。
-- 漏洞研究沿 pentest 的事实→假设→验证循环推进，finding 必须包含可复现步骤、影响、受影响范围、修复建议和 POC 证据；未复现内容只能作为 fact/hypothesis。
-
-## 已知边界
-
-- **数据库**：渗透记录写入 `$DSH_HOME/storages/src-sessions.db`（sqlite，经 bundle 补丁路由）。
-  宿主其它域的存储不受影响（仍为宿主默认 json 后端）。
-- **侦察策略**：优先被动、后低影响主动。`src_collect_passive` 先做授权范围内的被动采集：homepage / robots.txt / sitemap.xml / HTML/JS 接口 hint / 限量 DNS 解析 / 常见 OpenAPI/Swagger/GraphQL 元数据路径，并把结果归一化为 candidate 资产与事实；命中的 schema、GraphQL 和 JS hint 会提升为 endpoint 资产，并自动生成后续 coverage skeleton。`src_scan_surface` 再做低影响 HTTP surface discovery：先执行预检识别 WAF/CDN/挑战页、认证边界和限速；默认不会自动绕过。即使指挥官明确继续，也限制为最多 32 并发、10 RPS、500 路径，并在保护信号出现时停止。bypass 类验证交给独立的 `src_test_bypass`（recon 不可用，audit/verify 可用），它沿用同一套保护检测和停止规则，但允许在已有 research 假设下进行显式、低并发、逐变体的授权差分测试。
-- **授权**：只测试有授权的目标。`src_add_goal` 的 `authorization` 参数可填写授权说明（授权对象 /
-  书面许可引用），会写入状态与最终报告留痕；它只是审计事实，不是门禁——扫描/利用动作仍受部署沙箱与
-  审批约束。
-- **记录按单会话作用域**，无跨会话/项目续跑；重新开始一次 engagement 需新的 `src_add_goal`。子 agent 不读取原始父 transcript，主 agent 通过 `src_state`/Web 进度页观察 durable checkpoint。
-- **图布局为静态分层**（可平移缩放，节点不可拖拽）。
+- 首次构建前在 `src/dsh-client-ui-src/` 内 `npm install`。
+- 投影类型：`src/dsh-client-ui-src/types/projection.ts` 镜像 `lib/src.js` 的 zod schema——
+  **投影加字段必须同步这里**（zod 静默 strip 不报错，local.33 教训）。
 
 ## 测试约束（硬性红线）
 
@@ -146,36 +45,15 @@ node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
 8. **域笔记沉淀软闸**（local.35）：finalize 时本会话遇到防护/限流信号（protectionSignal 或
    429/403/503 observation）或已否/受阻假设（false-positive/blocked research）却零域笔记新增 → 警告提醒
    补记（软闸不阻断；401 是认证边界发现信号不算信号，与 local.32 语义一致）。提示词改进与闸同步。
+9. **测试用唯一会话 id**（local.41 教训）：测试 harness 的 domain 开启是**跨测试共享**的
+   （`sharedDomainOpens` 缓存），复用 "parent" 等惯用 id 会带着此前测试的 goal/intent——
+   每个测试必须用唯一会话 id（如 g41c/g42d）。
+10. **lossless 边界零 undefined 键**（local.42 教训，local.15 同类复发）：工具 execute 的 return
+    对象**禁裸返可选字段**——可能为 undefined 的字段一律条件展开 `...(x !== void 0 ? { x } : {})`；
+    测试 harness 不走 lossless-JSON 序列化（JSON.stringify 会静默丢键），故新增工具输出字段必须配
+    `collectUndefinedKeys` 深扫回归（tests 内有现成 helper）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]` 系列（28 个，全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸）。
-
-## 目录结构
-
-```
-dsh-src/                   # 项目根 = bundle 包 @lihua_dis/dsh-src（零依赖，自包含）
-├── package.json               # bundle manifest：dsh.bundle.patch + dsh.client + exports 子路径
-├── cordis.patch.yml           # 补丁层：UI、sqlite 后端与 storage-domain 路由
-├── lib/                       # 构建产物（npm pack 的内容）
-│   ├── index.js               #   包入口：空 apply
-│   ├── src.js             #   宿主渗透插件：8 个 src_* 工具 + 协议注入 + 会话投影
-│   ├── preset-root.js          #   注册包内只读「SRC 专业模式」预设目录（兼容 DSH rc.6）
-│   ├── storage-sqlite.js      #   渗透记录专用的 sqlite 后端（node:sqlite）
-│   ├── ui-src.js          #   Web 插件宿主半：空 apply
-│   ├── ui-src.client.js   #   Web 插件浏览器半：渗透视图标签页（3 个子标签，@xyflow/react 内联）
-│   └── invariant.js           #   探索图不变量伴生（与官方各包同构，生产环境不加载）
-├── src/                       # 源码快照（继续开发/重新构建用）
-│   ├── index.ts / invariant.ts
-│   ├── dsh-src/               # host 包源码：src/ + tests/ + tsconfig + tsdown + README
-│   └── dsh-client-ui-src/     # client 包源码：src/client/（视图/图布局/注册）+ tests/
-├── tests/bundle.spec.ts       # bundle 补丁层测试
-├── packages/                  # 三个构建好的子包（仅作构建源保留；bundle 不再依赖它们）
-│   ├── dsh-src/               # host 插件源码构建产物
-│   ├── dsh-client-ui-src/     # Web 界面插件源码构建产物
-│   └── dsh-storage-sqlite/        # sqlite 后端构建产物（来自 dsh 仓库，无独立源码）
-├── preset/src/            # 「SRC 专业模式」agent 预设（由 bundle 自动注册）
-├── images/                    # README 界面预览截图
-└── README.md
-```
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]` 系列（108 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
 
 ## 参考项目
 

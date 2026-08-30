@@ -215,11 +215,6 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 
 本项目以 [howmp/dsh-pentest](https://github.com/howmp/dsh-pentest) 为参考二次开发而来，探索链路数据模型、工具分层与 Web 面板结构承自该项目。
 
-## 文档
-
-- [开发与迭代历史](docs/DEVELOPMENT.md) —— 架构细节、设计决策、版本迭代日志。
-- [UI 源码现状](docs/UI-SOURCE.md) —— Web 面板源码工程重建计划（当前仓库仅含构建产物）。
-
 ## License
 
 [MIT](LICENSE)
