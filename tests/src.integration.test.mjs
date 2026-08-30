@@ -2419,3 +2419,89 @@ test("[local.35] finalize 域笔记沉淀闸：有目标特有信号零笔记 �
   const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: BLIND, allowIncomplete: true, allowIncompleteReason: "测试停止" }, parent);
   assert.match(fin3.warnings.join(" "), /未沉淀任何域笔记/, "其他会话的笔记不能抵消本会话的沉淀义务");
 });
+
+/* [local.40] 孤儿 running intent 巡检：web 重启/子代理死亡后父代理对着 running 干等是已知卡死模式。
+   三个场景：①无 checkpoint 的 running intent ②最新 checkpoint 停在 progress 且距今≥30分钟 ③正常 completed/新 checkpoint 不误报。
+   checkpoint 的 createdAt 由 src_submit 用 Date.now() 硬编码（不可注入），测试用冻结时钟模拟"31 分钟前提交"。 */
+function freezeClock(at) {
+  const real = Date.now;
+  Date.now = () => at;
+  return () => { Date.now = real; };
+}
+
+test("src_state flags orphan running intents (no checkpoint / stale progress) with actionable hints", async () => {
+  const h = harness();
+  const parent = h.exec("parent");
+  const childA = h.exec("childA", "parent");
+  const childB = h.exec("childB", "parent");
+  const childC = h.exec("childC", "parent");
+
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "orphan detection check", authorization: "ticket-42" }, parent);
+  const intentA = await h.run("src_add_intent", { title: "Never reported", detail: "child died before first checkpoint", goalId: goal.id }, parent);
+  const intentB = await h.run("src_add_intent", { title: "Stale progress", detail: "child went silent mid-work", goalId: goal.id }, parent);
+  const intentC = await h.run("src_add_intent", { title: "Healthy", detail: "finished cleanly", goalId: goal.id }, parent);
+
+  /* 模拟委派后 running：A 直接 running（从未汇报）；B 走 submit 自动置 running */
+  await h.run("src_update_intent", { intentId: intentA.id, status: "running" }, parent);
+
+  const baseBatch = (intentId) => ({
+    intentId,
+    facts: [{ kind: "http", target: "https://example.test", detail: `probe ${intentId}`, confidence: "90%" }],
+    assets: [], findings: []
+  });
+
+  /* intentB：31 分钟前 progress，无收尾 → 孤儿 */
+  const stale = Date.now() - 31 * 60 * 1000;
+  const unfreeze = freezeClock(stale);
+  try {
+    await h.run("src_submit", { ...baseBatch(intentB.id), stage: "progress", summary: "mid-work evidence" }, childB);
+  } finally { unfreeze(); }
+  /* intentC：刚提交 completed → 不算孤儿 */
+  await h.run("src_submit", { ...baseBatch(intentC.id), stage: "completed", summary: "done", decision: "no issue" }, childC);
+
+  const state = await h.run("src_state", {}, parent);
+  const orphans = state.orphanIntents ?? [];
+  assert.equal(orphans.length, 2, `expected exactly intentA+intentB orphaned, got ${JSON.stringify(orphans.map((o) => o.intentId))}`);
+
+  const orphanA = orphans.find((o) => o.intentId === intentA.id);
+  assert.ok(orphanA, "intentA (no checkpoint) must be flagged");
+  assert.match(orphanA.hint, /无任何 checkpoint/);
+  assert.ok(orphanA.childSessionId === undefined);
+
+  const orphanB = orphans.find((o) => o.intentId === intentB.id);
+  assert.ok(orphanB, "intentB (stale progress) must be flagged");
+  assert.equal(orphanB.childSessionId !== undefined, true, "orphanB must expose childSessionId for src_recover_child");
+  assert.ok(orphanB.idleMinutes >= 30, `idleMinutes should be >=30, got ${orphanB.idleMinutes}`);
+  assert.match(orphanB.hint, /src_recover_child/);
+  assert.ok(!orphans.some((o) => o.intentId === intentC.id), "completed intent must never be flagged");
+});
+
+test("src_state does not flag fresh progress checkpoints as orphans", async () => {
+  const h = harness();
+  const parent = h.exec("parent");
+  const child = h.exec("child", "parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "fresh progress check", authorization: "ticket-42" }, parent);
+  const intent = await h.run("src_add_intent", { title: "Actively working", detail: "child alive and reporting", goalId: goal.id }, parent);
+  await h.run("src_submit", { intentId: intent.id, facts: [{ kind: "http", target: "https://example.test", detail: "probe now", confidence: "90%" }], assets: [], findings: [], stage: "progress", summary: "just now" }, child);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.intents[0].status, "running", "progress submit must put intent into running");
+  assert.equal((state.orphanIntents ?? []).length, 0, "fresh progress checkpoint must not be flagged as orphan");
+});
+
+test("src_state orphanIntents renders actionable guidance", async () => {
+  const h = harness();
+  const parent = h.exec("parent");
+  const child = h.exec("child", "parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "render check", authorization: "ticket-42" }, parent);
+  const intent = await h.run("src_add_intent", { title: "Stale", detail: "d", goalId: goal.id }, parent);
+  const stale = Date.now() - 45 * 60 * 1000;
+  const unfreeze = freezeClock(stale);
+  try {
+    await h.run("src_submit", { intentId: intent.id, facts: [{ kind: "http", target: "https://example.test", detail: "probe stale", confidence: "90%" }], assets: [], findings: [], stage: "progress", summary: "s" }, child);
+  } finally { unfreeze(); }
+  const tool = h.tools.get("src_state");
+  const rendered = tool.output.render({}, await h.run("src_state", {}, parent));
+  const text = rendered.map((r) => r.text).join("");
+  assert.match(text, /Orphan running intents/);
+  assert.match(text, /src_recover_child/);
+});

@@ -253,6 +253,13 @@ const replyError = (id, code, message) => {
 	writeDownstream({ jsonrpc: "2.0", id, error: { code, message } });
 };
 
+/** [local.40] 降级哨兵：Burp 上游不可用时 tools/list 只暴露这一个工具。 */
+const SENTINEL_TOOL = {
+	name: "burp_status",
+	description: "Burp MCP bridge status probe. This tool appears ONLY while the bridge is degraded (Burp closed, extension not started, or the SSE upstream is reconnecting). Traffic-history tools are temporarily unavailable — this is NOT evidence that Burp has no traffic. Call to confirm; retry later.",
+	inputSchema: { type: "object", properties: {}, required: [] }
+};
+
 async function handleRequest(id, method, params) {
 	switch (method) {
 		case "initialize": {
@@ -270,12 +277,23 @@ async function handleRequest(id, method, params) {
 				const result = await forwardWithHeal(method, params);
 				return result.result;
 			} catch (error) {
-					log("warn", `tools/list degraded to empty (upstream unavailable): ${error?.message ?? error}`);
+					log("warn", `tools/list degraded to sentinel (upstream unavailable): ${error?.message ?? error}`);
 				scheduleRecoveryProbe();
-				return { tools: [] };
+				/* [local.40] 降级时注入哨兵而非空列表：agent 看到空工具表常误判「Burp 里没有流量」；
+				 * burp_status 一调即明确告知桥在降级等待恢复，消除语义歧义。恢复后 watchdog 发
+				 * tools/list_changed，宿主重新同步为真实工具表，哨兵自然消失。 */
+				return { tools: [SENTINEL_TOOL] };
 			}
 		}
-		case "tools/call":
+		case "tools/call": {
+			if (params?.name === "burp_status") {
+				/* 哨兵只应出现在降级期；若上游已恢复但宿主尚未重同步，礼貌转发失败状态。 */
+				log("info", "sentinel burp_status called; upstream unavailable (degraded window)");
+				return { content: [{ type: "text", text: "Burp MCP bridge is DEGRADED: the upstream (Burp MCP extension SSE) is unreachable right now — Burp may be closed, the extension not started, or the SSE session is reconnecting. Traffic-history tools (mcp__burp__get_proxy_http_history*) are temporarily unavailable. IMPORTANT: this is a bridge/infrastructure state, NOT evidence that Burp contains no traffic. The bridge probes recovery every 5s and restores the full tool list automatically; retry on a later turn." }], isError: true };
+			}
+			const result = await forwardWithHeal("tools/call", params);
+			return result.result;
+		}
 		case "ping": {
 			const result = await forwardWithHeal(method, params);
 			return result.result;
