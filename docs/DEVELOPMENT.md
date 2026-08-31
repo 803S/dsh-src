@@ -95,6 +95,27 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 - **local.47**（29f07fa + 6ae1755）：待审表 schema `method` 枚举补 `'ASSET'`——修复打开校验炸新会话（old session 写入合法 ASSET 待审行时 schema 不认）；新增 [local.47] 全域往返回归测试（store 写读全表走 valueSchema，把 writer/schema 漂移从运行时故障变成构建期闸）。`scripts/deploy.mjs` 新增部署脚本固化双 profile 目标与 md5 终验——真实线上实弹发现「机器上 4 份 dsh-src 副本」漂移致命陷阱，写脚本防人忘了改哪一份。
 
 
+
+## 路线规划（local.48 / local.49，2026-08-31 架构评审后定）
+
+2026-08-31 对 local.24→local.47 全量架构评审（23 提交）记录的健康项与隐患中，按风险/收益切分为「本版即修」与「独立大重构版本」两档：
+
+### local.48（低风险文档/提示词级，本版做）
+1. **prompt 与工具 description 对齐**：SRC_INSTRUCTIONS「归属三档判定」等规则提炼进相关工具（src_request_asset_confirm/src_add_asset）description 首部——LLM 对 description 的服从权重高于 system prompt。
+2. **合成事件名单收敛为常量**：applySrcEvent 里 6 个 synthetic case（src_record_pending_approval / src_domain_notes_snapshot / src_auth_budget 等）抽成 `SYNTHETIC_EVENTS` 冻结常量并导出；appendSessionToolEvent 加白名单断言。
+3. **SESSION_SCOPED_TABLES 命名澄清**（goals/domain_notes 跨会话是刻意的，加注释说明）。
+4. **测试唯一会话 id 规范**：tests 顶部注释 + 可选 grep 闸（防 p/parent 等通用名回归——虽 harness 已隔离）。
+
+### local.49（结构性大重构，独立版本、零行为变更验收）
+1. **lib/src.js 拆分**：43 个工具注册迁至 `lib/src/tools/*.js`；先抽 `lib/src/context.js` 作共享依赖容器（store、resolveVisibleSessionIds、throttledHttp、assetGrantHosts、speed/stateMap 等共享闭包变量）。主文件从 5,735 行降到约 2,000 行。
+   - 风险点：工具注册顺序变化可能影响 preset toolFilter 顺序敏感逻辑；117 测试原样全绿为验收闸门；单独 commit 不与任何功能改动混合，出问题整包 revert。
+   - 工作估量：约 2,600 行搬迁，建议拆「抽 context 容器 → 按组迁工具（注册组 8 组）→ 主文件收尾」三步走。
+2. **store 直写 + 合成事件双写合并为单一 API**（与拆包同批做，避开第三种写法半途状态）。
+
+### 明确不做/延后（评审确认）
+- 第三波后两环（基线清单聚合 → 哑脚本 diff → 晨报）：等域笔记积累量足够（当前 u_src_domain_notes 已有 20 条真实数据，达到启动阈值附近）再启动。
+- lib/src.js 拆分在开源发布后若外部反馈强烈可提前；无功能压力下维持现状不致命。
+
 ## 0.1.0-local.12（真实测试第四轮 2 问题：scan_surface lossless JSON 报错 / 新会话无基础设施页）
 
 - **[修复·关键] `tool "src_scan_surface" returned invalid output: value is not lossless JSON`**：工具返回值会经过 dsh-session 的 lossless JSON 快照校验，**任何值为 `undefined` 的自有属性都会让整体判失败**。src_scan_surface 正常完成路径的返回里写了 `stopped: stopped ? "protection-signal" : void 0`——未触发停机时 stopped 为 undefined，整个输出被拒。之前没暴露是因为真实目标多��� WAF 提前 return；扫无防护目标必炸。同款炸弹还有 src_test_bypass 错误路径 `{ ...req, status: void 0, ... }`（spread 覆盖产生 undefined 自有属性），一并修复：改为条件展开/解构剔除，绝不产出 undefined 值属性。
