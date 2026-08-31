@@ -13,7 +13,7 @@
 - **子代理并发委派**：主 agent 按事实拆分研究方向，fork 子代理并发执行；每个子代理通过 `src_submit` 直写父 intent 并留下 durable checkpoint——父会话崩溃也能恢复现场（`src_recover_child`）。
 - **动态重规划**：每个研究方向（intent）带优先级（P1–P9）与废弃态（deprecated）——agent 随证据积累上调/下调优先级、主动废弃低产方向并留档依据，`src_state` 始终按优先级降序呈现搜索前沿，而非按创建顺序僵化推进（借鉴自动化渗透架构 Decide 语义）。
 - **AI 发现漏斗**：被动采集（crt.sh/HackerTarget/Google dorks/robots/sitemap/JS 接口 hint）→ API endpoint 资产化 → 自动生成 coverage/research skeleton → 逐项推进验证，防止「发现了接口但没真正测」。
-- **诚实与审计**：漏报无闸是最大不对称——盲区声明强制（finalize 必须逐项声明 covered/uncovered/not-applicable，covered 需可解析的 evidenceId，缺项被拒）；认证请求预算硬计数 30/会话 + 连发 401 自动判失效；`src_http` 软速率帽 250ms（≈4rps）；报告结构化十一节（研究矩阵含已否假设、负结果、覆盖声明、待用户项全摊开）；域笔记跨会话沉淀——同目标续测自动 briefing 不重复钻枯井；UI 报告与服务端 buildReport 内容由「节完整性闸」测试保证逐字一致。所有写入操作（季报、审批）留合成事件可追溯。
+- **诚实与审计**：漏报无闸是最大不对称——盲区声明强制（finalize 必须逐项声明 covered/uncovered/not-applicable，covered 需可解析的 evidenceId，缺项被拒）；认证请求预算硬计数 30/会话 + 连发 401 自动判失效；`src_http` 软速率帽 250ms（≈4rps）；报告结构化十一节（研究矩阵含已否假设、负结果、覆盖声明、待用户项全摊开）；域笔记跨会话沉淀——同目标续测自动 briefing 不重复钻枯井；UI 报告与服务端 buildReport 的节结构由「报告节完整性闸」测试保证一致（两侧 ## 节标题集合逐一对账）。所有写入操作（提交、审批）留合成事件可追溯。
 
 ### Web 面板（七个标签页）
 | 标签页 | 内容 |

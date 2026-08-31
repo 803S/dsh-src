@@ -53,7 +53,7 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
     测试 harness 不走 lossless-JSON 序列化（JSON.stringify 会静默丢键），故新增工具输出字段必须配
     `collectUndefinedKeys` 深扫回归（tests 内有现成 helper）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]` 系列（117 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]`/`[local.45]`/`[local.46]`/`[local.47]`/`[local.48]`/`[local.49]` 系列（123 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫 + src_add_capability e2e + 合成投影事件白名单三层闸 + 测试会话 id 元闸）。
 
 ## 参考项目
 
@@ -103,17 +103,25 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 
 2026-08-31 对 local.24→local.47 全量架构评审（23 提交）记录的健康项与隐患中，按风险/收益切分为「本版即修（local.49）」与「独立大重构版本（local.50）」两档：
 
-### local.49（低风险文档/提示词级，本版做）
-1. **prompt 与工具 description 对齐**：SRC_INSTRUCTIONS「归属三档判定」等规则提炼进相关工具（src_request_asset_confirm/src_add_asset）description 首部——LLM 对 description 的服从权重高于 system prompt。
-2. **合成事件名单收敛为常量**：applySrcEvent 里 6 个 synthetic case（src_record_pending_approval / src_domain_notes_snapshot / src_auth_budget 等）抽成 `SYNTHETIC_EVENTS` 冻结常量并导出；appendSessionToolEvent 加白名单断言。
-3. **SESSION_SCOPED_TABLES 命名澄清**（goals/domain_notes 跨会话是刻意的，加注释说明）。
-4. **测试唯一会话 id 规范**：tests 顶部注释 + 可选 grep 闸（防 p/parent 等通用名回归——虽 harness 已隔离）。
+### local.49（✅ 已落地，见迭代日志 local.49 条目；实际执行与计划的差异）
+1. prompt/description 对齐：**只改了 src_add_asset**——src_request_asset_confirm 检查发现 local.44 已自带完整三档规则，无需重复。
+2. 合成事件常量：**实际 13 名单非计划估的 6 个**（src_submit 重放 4 名单也并入白名单路径，消灭了 appendSubmissionProjection 的裸 append 第二实现）；常量名落地为 `SYNTHETIC_PROJECTION_EVENTS`。
+3. 命名澄清：**实际更名 `LEGACY_KEY_MIGRATION_TABLES`**——读码发现该名单真实用途是 legacy key 迁移参与表（仅 migrateLegacyKeys 用），比计划里「跨会话刻意设计」的注释角度更准确。
+4. 测试规范：顶部注释 + **2 个新闸测试**（白名单三层闸：throw/调用点⊆名单/名单⊆fold case；元测试拦新增单字符会话 id）。
 
-### local.50（结构性大重构，独立版本、零行为变更验收）
-1. **lib/src.js 拆分**：43 个工具注册迁至 `lib/src/tools/*.js`；先抽 `lib/src/context.js` 作共享依赖容器（store、resolveVisibleSessionIds、throttledHttp、assetGrantHosts、speed/stateMap 等共享闭包变量）。主文件从 5,735 行降到约 2,000 行。
-   - 风险点：工具注册顺序变化可能影响 preset toolFilter 顺序敏感逻辑；117 测试原样全绿为验收闸门；单独 commit 不与任何功能改动混合，出问题整包 revert。
-   - 工作估量：约 2,600 行搬迁，建议拆「抽 context 容器 → 按组迁工具（注册组 8 组）→ 主文件收尾」三步走。
-2. **store 直写 + 合成事件双写合并为单一 API**（与拆包同批做，避开第三种写法半途状态）。
+### local.50（结构性大重构；2026-08-31 二审后拆成 50a/50b 两个独立 commit）
+
+**50a：lib/src.js 拆包（纯搬迁，零行为变更）**——44 个工具注册（local.48 后为 44，勿再用旧数 43）迁至 `lib/src/tools/*.js`，主文件 5,735 行降到约 2,000 行。
+- **前置闸（先写测试再动刀）**：新增「工具清单冻结测试」——harness 注册后枚举 ctx.tools 名单+顺序快照，拆分前后必须完全一致（防漏迁、防重排——preset toolFilter 顺序敏感）。
+- **分层防循环 import**（单向依赖，禁止横向）：`lib/src/state.js`（可变模块状态：submissionProjectionEvent 计数、per-session 速率/预算 map）→ `lib/src/context.js`（只读依赖容器：store 工厂、resolveVisibleSessionIds、throttledHttp、assetGrantHosts、SYNTHETIC_PROJECTION_EVENTS）→ `lib/src/tools/*.js`（每组一个文件，只 import state/context，工具文件间禁止互相 import）→ `lib/src.js` 收口（schema+applySrcEvent+viewSrcState+注册拼装+**export 清单原样冻结**）。
+- **包装/部署同步（原计划漏项）**：package.json `files` 增 `lib/src/**`；**scripts/deploy.mjs 的 files 清单必须同步扩**（现清单仅 3 文件：lib/src.js/package.json/scripts/caps-sync.mjs）——否则出现「repo 测试绿、线上 md5 永远旧文件」的假部署；npm pack 后 tar 解包冒烟（入口可 require）。
+- **步骤**：①抽 state+context（src.js 内改完引用即测试）②按注册组分 8 批迁工具，**每批迁完 npm test 全绿再迁下批** ③主文件收尾+export 冻结断言。
+- **验收**：①测试零改动全绿（以 main 当日全绿数为基线，不锁死数字——计数会涨）②工具名单+注册顺序快照一致 ③preset lint 过 ④双 profile 部署 md5 一致 + web 双地址 200。
+- **回滚**：整 commit revert **+ 重跑 scripts/deploy.mjs 回滚部署**（只 revert 代码不重部署=线上继续跑新文件，两步缺一不可）。
+
+**50b：store 直写 + 合成事件双写合并为单一 API（行为变更，独立 commit）**
+- 所有绕过工具的直写路径（/src-approve、/src-infra 等）收敛到单一写 API（store 写入+合成事件原子化），删除命令层手工双写；配套新增「三账本一致」测试：每个直写命令断言 store 行、合成事件、投影折叠三处一致。
+- **与 50a 分开提交**（原计划把双写合并混进「零行为变更」版本自相矛盾——行为变更必须独立验收、独立 revert）。
 
 ### 明确不做/延后（评审确认）
 - 第三波后两环（基线清单聚合 → 哑脚本 diff → 晨报）：等域笔记积累量足够（当前 u_src_domain_notes 已有 20 条真实数据，达到启动阈值附近）再启动。
