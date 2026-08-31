@@ -26,7 +26,9 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-const files = ["lib/src.js", "package.json"];
+/* [local.48] scripts/caps-sync.mjs 一并部署：src_add_capability 动态 import 它的纯函数，
+ * 且接线时 spawn 的是【部署副本】里的这份脚本。 */
+const files = ["lib/src.js", "package.json", "scripts/caps-sync.mjs"];
 const targets = [
   join(homedir(), ".dsh/profiles/web/node_modules/@lihua_dis/dsh-src"),
   join(homedir(), ".dsh/profiles/headless/node_modules/@lihua_dis/dsh-src"),

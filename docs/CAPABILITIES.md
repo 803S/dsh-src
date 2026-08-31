@@ -74,9 +74,17 @@ capabilities:
 
 ## 三、使用流程
 
+**优先路径（local.48 起）**：dsh 会话内直接让 agent 调 **src_add_capability**，一条命令完成登记+安装+预热+接线+索引：
+
+```text
+调 src_add_capability，from=https://github.com/<o>/<r>（或 npm:<pkg>、owner/repo），kind=mcp，when=<场景>
+```
+
+GitHub 链接会自动探 npm registry（命中走 npm: 免 GitHub 网络）；proxy 参数可在清单无 settings.proxy 时写入持久化；mcp 型接线后重启 dsh web 生效。同 id 重调安全（清单不重写、仅重跑 sync）。下述手动流程仅在外部助手场景或工具报错时使用：
+
 ```bash
 node ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/scripts/caps-sync.mjs
-# （源码构建安装的把路径换成仓库目录；其它 profile 加 --profile-dir ~/.dsh/profiles/<名>)
+# （源码构建安装的把路径换成仓库目录；其它 profile 加 --profile-dir ~/.dsh/profiles/<名>）
 ```
 
 之后**重启 dsh web 生效**（MCP 接线是组合态的一部分，不支持热插拔——这是有意取舍）。

@@ -1,88 +1,88 @@
 {
-	"name": "@lihua_dis/dsh-src",
-	"description": "DSH SRC \u6f0f\u6d1e\u6316\u6398\u6a21\u5f0f\uff1a\u4ee5\u63a2\u7d22\u94fe\u8def\u8bb0\u5f55\u76ee\u6807\u3001\u7ebf\u7d22\u3001\u8d44\u4ea7\u4e0e\u6f0f\u6d1e\uff0c\u5e76\u5728 Web \u4e2d\u53ef\u89c6\u5316\u5c55\u793a\u3002",
-	"version": "0.1.0-local.47",
-	"publishConfig": {
-		"access": "public"
-	},
-	"type": "module",
-	"main": "./lib/index.js",
-	"exports": {
-		".": "./lib/index.js",
-		"./src": "./lib/src.js",
-		"./storage-sqlite": "./lib/storage-sqlite.js",
-		"./preset-root": "./lib/preset-root.js",
-		"./ui-src": "./lib/ui-src.js",
-		"./ui-src/package.json": "./package.json",
-		"./client": "./lib/ui-src.client.js",
-		"./invariant": "./lib/invariant.js",
-		"./cordis.patch.yml": "./cordis.patch.yml",
-		"./package.json": "./package.json"
-	},
-	"files": [
-		"lib/**/*.js",
-		"preset/src-hunter/**",
-		"cordis.patch.yml",
-		"tools/**",
-		"images/**",
-		"README.md",
-		"LICENSE",
-		"scripts/**",
-		"capabilities.yaml.example",
-		"docs/**"
-	],
-	"license": "MIT",
-	"dsh": {
-		"client": {
-			"inject": [
-				"@deepseek-ai/dsh-client-runtime",
-				"@deepseek-ai/dsh-client-locale",
-				"@deepseek-ai/dsh-api-remotes",
-				"@deepseek-ai/dsh-client-ui-conversation"
-			],
-			"platform": "web"
-		},
-		"bundle": {
-			"patch": "./cordis.patch.yml"
-		}
-	},
-	"peerDependencies": {
-		"@deepseek-ai/cordis": ">=0.1.0-rc.6",
-		"@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6"
-	},
-	"peerDependenciesMeta": {
-		"@deepseek-ai/cordis": {
-			"optional": true
-		},
-		"@deepseek-ai/dsh-invariants": {
-			"optional": true
-		}
-	},
-	"scripts": {
-		"test": "node --test tests/src.integration.test.mjs",
-		"ui-src:typecheck": "cd src/dsh-client-ui-src && tsc -p tsconfig.json",
-		"ui-src:build": "cd src/dsh-client-ui-src && tsdown && cp dist/index.js ../../lib/ui-src.client.js"
-	},
-	"devDependencies": {
-		"js-yaml": "4.3.1"
-	},
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/803S/dsh-src.git"
-	},
-	"keywords": [
-		"dsh",
-		"deepseek-harness",
-		"src",
-		"bug-bounty",
-		"vulnerability",
-		"pentest",
-		"security",
-		"burp-suite",
-		"agent"
-	],
-	"author": "lihua_dis",
-	"engines": {
-		"node": ">=24"
-	}
+  "name": "@lihua_dis/dsh-src",
+  "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
+  "version": "0.1.0-local.48",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./src": "./lib/src.js",
+    "./storage-sqlite": "./lib/storage-sqlite.js",
+    "./preset-root": "./lib/preset-root.js",
+    "./ui-src": "./lib/ui-src.js",
+    "./ui-src/package.json": "./package.json",
+    "./client": "./lib/ui-src.client.js",
+    "./invariant": "./lib/invariant.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "preset/src-hunter/**",
+    "cordis.patch.yml",
+    "tools/**",
+    "images/**",
+    "README.md",
+    "LICENSE",
+    "scripts/**",
+    "capabilities.yaml.example",
+    "docs/**"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-invariants": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/src.integration.test.mjs",
+    "ui-src:typecheck": "cd src/dsh-client-ui-src && tsc -p tsconfig.json",
+    "ui-src:build": "cd src/dsh-client-ui-src && tsdown && cp dist/index.js ../../lib/ui-src.client.js"
+  },
+  "devDependencies": {
+    "js-yaml": "4.3.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/803S/dsh-src.git"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "src",
+    "bug-bounty",
+    "vulnerability",
+    "pentest",
+    "security",
+    "burp-suite",
+    "agent"
+  ],
+  "author": "lihua_dis",
+  "engines": {
+    "node": ">=24"
+  }
 }

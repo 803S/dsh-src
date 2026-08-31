@@ -3,15 +3,21 @@
 // 与能力索引 index.json（全部 kind，skill 型带 dir/docs/scripts 供插件 src_read/run_capability 用）。
 // 规范见 docs/CAPABILITIES.md。零依赖（node:24 内置模块 + 手写受限 yaml 子集解析）。
 //
-// 用法：node scripts/caps-sync.mjs [--yaml <路径>] [--profile-dir <路径>] [--dry-run]
+// 用法：node scripts/caps-sync.mjs [--yaml <路径>] [--profile-dir <路径>] [--dry-run] [--no-prewarm]
 //   --yaml          默认 $DSH_HOME/capabilities.yaml（DSH_HOME 缺省 ~/.dsh）
 //   --profile-dir   默认 $DSH_HOME/profiles/web
 //   --dry-run       只打印将要做的变更，不写盘、不安装
+//   --no-prewarm    跳过 npm 型 mcp 能力的本地预热（默认预热，加速首次 npx 启动）
+// [local.48] 网络操作全部带超时（clone 180s/build 300s/npm 600s），超时或网络失败时提示
+//   npm registry 备选路线；npm 统一走 $DSH_HOME/.npm-cache 缓存（绕开 ~/.npm 权限坑）。
+//   本文件同时被 lib/src.js 的 src_add_capability 动态导入复用（parseCapsYaml/resolveFrom/
+//   appendCapabilityEntry 等纯函数），故主流程包在 main() 里、仅直接执行时运行。
 import { readFile, writeFile, mkdir, access, readdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { homedir, EOL } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 //#region 受限 yaml 子集解析（只支持本规范用到的形态，报错即指出行号）
 function parseCapsYaml(text) {
@@ -96,19 +102,33 @@ const DSH_HOME = process.env.DSH_HOME ? path.resolve(process.env.DSH_HOME) : pat
 const yamlPath = argOf("--yaml", path.join(DSH_HOME, "capabilities.yaml"));
 const profileDir = argOf("--profile-dir", path.join(DSH_HOME, "profiles", "web"));
 const dryRun = argv.includes("--dry-run");
+const noPrewarm = argv.includes("--no-prewarm");
 const capsDir = path.join(DSH_HOME, "capabilities");
 //#endregion
 
 //#region 工具函数
+/* [local.48] timeoutMs>0 时超时先 SIGTERM、5s 后 SIGKILL；超时返回 code:-2 + timedOut:true。
+ * 61 分钟悬空 clone 的教训：绝不允许无超时的网络子进程。 */
 async function run(cmd, args, opts = {}) {
+	const { timeoutMs = 0, ...spawnOpts } = opts;
 	return new Promise((resolve) => {
-		const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...opts });
-		let out = "", err = "";
+		const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...spawnOpts });
+		let out = "", err = "", timedOut = false;
+		const timer = timeoutMs > 0 ? setTimeout(() => {
+			timedOut = true;
+			try { child.kill("SIGTERM"); } catch {}
+			setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
+		}, timeoutMs) : null;
 		child.stdout.on("data", (d) => (out += d));
 		child.stderr.on("data", (d) => (err += d));
-		child.on("close", (code) => resolve({ code, out: out.trim(), err: err.trim() }));
-		child.on("error", (e) => resolve({ code: -1, out: "", err: String(e) }));
+		child.on("close", (code) => { if (timer) clearTimeout(timer); resolve({ code: timedOut ? -2 : code, out: out.trim(), err: err.trim(), timedOut }); });
+		child.on("error", (e) => { if (timer) clearTimeout(timer); resolve({ code: -1, out: "", err: String(e), timedOut }); });
 	});
+}
+/* [local.48] npm 统一缓存环境：缓存指向 $DSH_HOME/.npm-cache（绕开 ~/.npm 权限坑——
+ * sudo chown 501:20 报错在真实接入会话出现两次），关 audit/fund/update-notifier 减少网络往返。 */
+function npmCacheEnv(dshHome) {
+	return { npm_config_cache: path.join(dshHome, ".npm-cache"), npm_config_audit: "false", npm_config_fund: "false", npm_config_update_notifier: "false" };
 }
 async function pathExists(p) { try { await access(p); return true; } catch { return false; } }
 /* [local.41] npm 引用 → 包名（支持 @scope/pkg@1.2.3 与 pkg@1.2.3）。 */
@@ -121,9 +141,101 @@ function npmPkgName(from) {
 function skillCapDir(c) { return c.from.startsWith("git:") ? path.join(capsDir, c.id) : path.join(capsDir, c.id, "node_modules", npmPkgName(c.from)); }
 function log(msg) { console.log(msg); }
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1); }
+
+//#region [local.48] 供 src_add_capability 复用的纯函数（登记/解析/序列化）
+const CAP_ID_RE = /^[a-z][a-z0-9-]{1,30}$/;
+function oneLine(v) { return String(v).replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim(); }
+/* 校验并序列化一个能力条目为「受限 yaml 子集」的条目行块。非法即抛错（不写盘）。 */
+function serializeCapabilityEntry(entry) {
+	if (!entry || typeof entry !== "object") throw new Error("条目必须是对象");
+	if (typeof entry.id !== "string" || !CAP_ID_RE.test(entry.id)) throw new Error(`id「${String(entry.id)}」不合法（小写字母开头，仅小写字母/数字/连字符，≤31 字符）`);
+	if (typeof entry.from !== "string" || !/^(npm|git):/.test(entry.from) || entry.from.length <= 4) throw new Error(`from「${String(entry.from)}」必须以 npm: 或 git: 开头`);
+	const kind = entry.kind ?? "mcp";
+	if (kind !== "mcp" && kind !== "skill") throw new Error("kind 必须是 mcp 或 skill");
+	const rel = (v, name) => {
+		if (typeof v !== "string" || v === "" || v.includes("..") || path.isAbsolute(v) || v.includes(",")) throw new Error(`${name} 必须是能力目录内相对路径（禁止空串/..、绝对路径、逗号）`);
+		return v;
+	};
+	if (Array.isArray(entry.scripts)) {
+		if (entry.scripts.length > 20) throw new Error("scripts 最多 20 项");
+		entry.scripts.forEach((s) => rel(s, "scripts 项"));
+	} else if (entry.scripts !== void 0) throw new Error("scripts 必须是字符串数组");
+	if (entry.docs !== void 0 && entry.docs !== null) rel(entry.docs, "docs");
+	if (entry.entry !== void 0 && entry.entry !== null) {
+		rel(entry.entry, "entry");
+		if (kind === "skill") throw new Error("skill 型不需要 entry（entry 仅 mcp 型使用）");
+	}
+	if (entry.when !== void 0 && entry.when !== null && (typeof entry.when !== "string" || oneLine(entry.when).length > 200)) throw new Error("when 需为 ≤200 字符的一句话");
+	if (entry.ref !== void 0 && entry.ref !== null && (typeof entry.ref !== "string" || !/^[\w./-]{1,60}$/.test(entry.ref))) throw new Error("ref 需为 ≤60 字符的分支/标签名");
+	const lines = [`  - id: ${entry.id}`, `    from: ${entry.from}`, `    kind: ${kind}`];
+	if (entry.ref) lines.push(`    ref: ${entry.ref}`);
+	if (entry.entry) lines.push(`    entry: ${entry.entry}`);
+	if (entry.docs) lines.push(`    docs: ${entry.docs}`);
+	if (Array.isArray(entry.scripts) && entry.scripts.length > 0) lines.push(`    scripts: [${entry.scripts.join(", ")}]`);
+	if (typeof entry.when === "string" && oneLine(entry.when) !== "") lines.push(`    when: ${oneLine(entry.when)}`);
+	if (entry.enabled === false) lines.push("    enabled: false");
+	return lines.join("\n") + "\n";
+}
+/* 把条目追加到清单文本末尾并【守卫式重解析】：旧条目必须全部保留、新条目必须可解析、无重复 id。
+ * 追加失败（如清单末尾不是 capabilities 列表）一律抛错，绝不写坏用户清单。 */
+function appendCapabilityEntry(yamlText, entry, oldIds) {
+	const base = yamlText === "" ? "capabilities:\n" : (/\n$/.test(yamlText) ? yamlText : yamlText + "\n");
+	const candidate = base + serializeCapabilityEntry(entry);
+	const parsed = parseCapsYaml(candidate);
+	const ids = parsed.caps.map((c) => c.id);
+	if (new Set(ids).size !== ids.length) throw new Error(`追加后出现重复 id（${ids.join(", ")}）`);
+	if (!ids.includes(entry.id)) throw new Error("追加后未检测到新条目——清单末尾可能不是 capabilities 列表，请手动编辑");
+	for (const old of oldIds) if (!ids.includes(old)) throw new Error(`追加后丢失既有条目 ${old}，放弃写入`);
+	return { text: candidate, parsed };
+}
+/* npm registry 探测：包是否存在、最新版本、repository 指向。离线/失败一律 hit:false。 */
+async function npmProbe(pkgName, opts = {}) {
+	const r = await run("npm", ["view", pkgName, "--json"], { env: opts.env ?? process.env, timeoutMs: opts.timeoutMs ?? 45000 });
+	if (r.code !== 0) return { hit: false };
+	try {
+		const meta = JSON.parse(r.out);
+		return { hit: true, version: typeof meta?.version === "string" ? meta.version : null, repoUrl: typeof meta?.repository === "object" ? String(meta.repository?.url ?? "") : String(meta?.repository ?? "") };
+	} catch { return { hit: false }; }
+}
+/* [local.48] 来源解析（npm registry 优先）：真实接入会话的 25 分钟网络试探教训——GitHub 链接
+ * 往往已发布为 npm 包，registry 命中就走 npm:（免 GitHub 网络）；未命中才回退 git: clone。 */
+async function resolveFrom(rawInput, opts = {}) {
+	const input = String(rawInput ?? "").trim();
+	if (input === "") throw new Error("from 不能为空");
+	if (/^(npm|git):/.test(input)) return { from: input, resolvedVia: "显式指定" };
+	let owner = null, repo = null;
+	const gh = input.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
+	if (gh) { owner = gh[1]; repo = gh[2].replace(/\.git$/, ""); }
+	else if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input)) { owner = input.split("/")[0]; repo = input.split("/")[1].replace(/\.git$/, ""); }
+	if (owner !== null) {
+		const probe = await npmProbe(repo, opts);
+		if (probe.hit && (!probe.repoUrl || probe.repoUrl.toLowerCase().includes(`${owner}/${repo}`.toLowerCase())))
+			return { from: `npm:${repo}${probe.version ? `@${probe.version}` : ""}`, resolvedVia: `npm registry 命中（${owner}/${repo} 已发布为 npm 包${probe.version ? `，最新 ${probe.version}` : ""}——registry 可达性通常好于 GitHub，且安装/更新更快）` };
+		const why = probe.hit ? `npm 存在同名包「${repo}」但 repository 不指向 ${owner}/${repo}，防误接改走源码` : "npm registry 未命中（离线或未发布），回退源码 clone";
+		return { from: `git:https://github.com/${owner}/${repo}`, resolvedVia: why };
+	}
+	if (/^@[\w.-]+\/[\w.-]+(@[\w.-]+)?$/.test(input) || /^[A-Za-z][\w.-]*$/.test(input)) return { from: `npm:${input}`, resolvedVia: "npm 包名" };
+	if (/^git@[\w.-]+:/i.test(input) || /\.git$/.test(input)) return { from: `git:${input}`, resolvedVia: "git url" };
+	throw new Error(`无法识别的 from「${input.slice(0, 120)}」——支持 npm:<pkg>[@ver]、git:<url>、https://github.com/o/r、owner/repo 或 npm 包名`);
+}
+/* 从来源推导能力 id（npm 取包名尾段去 scope/版本；git 取仓库名）。推导不出合法 id 返回 ""。 */
+function deriveCapId(from) {
+	const f = String(from ?? "");
+	let base = "";
+	if (f.startsWith("npm:")) {
+		const s = f.slice(4);
+		const at = s.lastIndexOf("@");
+		const name = at > 0 ? s.slice(0, at) : s;
+		base = name.includes("/") ? name.split("/").pop() ?? "" : name;
+	} else if (f.startsWith("git:")) base = f.slice(4).replace(/\/+$/, "").replace(/\.git$/, "").split("/").pop() ?? "";
+	base = base.toLowerCase();
+	return CAP_ID_RE.test(base) ? base : "";
+}
+//#endregion
 //#endregion
 
 //#region 主流程
+async function main() {
 
 // ── ⓪ 确保 Burp 自愈桥就位（包 patch 默认启用 mcp-burp，桥缺失时该块静默跳过）────
 try {
@@ -188,6 +300,9 @@ const proxyEnv = settingsProxy
 	: process.env;
 if (settingsProxy) log(`使用 settings.proxy=${settingsProxy} 进行 git clone/fetch`);
 log(`读取 ${yamlPath}：${caps.length} 个能力声明`);
+/* [local.48] npm 统一走 ~/.dsh/.npm-cache（先建目录），clone/npm 全带超时。 */
+const npmEnv = { ...proxyEnv, ...npmCacheEnv(DSH_HOME) };
+try { await mkdir(path.join(DSH_HOME, ".npm-cache"), { recursive: true }); } catch {}
 
 
 const seen = new Set();
@@ -224,14 +339,19 @@ for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("git
 		const cloneArgs = ["clone", "--depth", "1"];
 		if (c.ref) cloneArgs.push("--branch", String(c.ref));
 		cloneArgs.push(wantFrom.slice(4), dest);
-		const r = await run("git", cloneArgs, { env: proxyEnv });
-		if (r.code !== 0) { log(`✗ ${c.id}: git clone 失败（该能力本轮不接线）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
+		const r = await run("git", cloneArgs, { env: proxyEnv, timeoutMs: 180000 });
+		if (r.code !== 0) {
+			/* [local.48] 真实接入会话：GitHub 经代理仍不可达拖了 25 分钟。超时/网络类失败时给出 npm 备选路线。 */
+			const netHint = r.timedOut || /timed out|Could not resolve|Failed to connect|Connection|SSL|RPC failed|early EOF/i.test(`${r.err}${r.out}`)
+				? "（提示：GitHub 直连/代理不可达——确认 settings.proxy 生效；若该项目已发布 npm 包，把 from 改成 npm:<包名> 常可绕开 GitHub 网络）" : "";
+			log(`✗ ${c.id}: git clone 失败（该能力本轮不接线）${netHint}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+		}
 		await writeFile(marker, JSON.stringify({ from: wantFrom, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
 	}
 	if (c.build) {
 		if (dryRun) { log(`[dry] ${c.id}: 将在 ${dest} 执行构建`); continue; }
 		log(`→ ${c.id}: 构建…`);
-		const r = await run("bash", ["-lc", c.build], { cwd: dest, env: proxyEnv });
+		const r = await run("bash", ["-lc", c.build], { cwd: dest, env: proxyEnv, timeoutMs: 300000 });
 		if (r.code !== 0) { log(`✗ ${c.id}: 构建失败（该能力本轮不接线）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
 		log(`✓ ${c.id}: 构建完成`);
 	}
@@ -247,11 +367,29 @@ for (const c of caps.filter((x) => x.enabled !== false && (x.kind ?? "mcp") === 
 		log(`= ${c.id}: 已安装在 ${dest}（来源一致，跳过；更新请删目录重跑）`);
 	} else {
 		if (dryRun) { log(`[dry] ${c.id}: 将 npm install ${c.from.slice(4)} → ${dest}`); continue; }
-		log(`→ ${c.id}: npm install ${c.from.slice(4)} → ${dest}`);
+		log(`→ ${c.id}: npm install ${c.from.slice(4)} → ${dest}（最长 600s）`);
 		await mkdir(dest, { recursive: true });
-		const r = await run("npm", ["install", "--prefix", dest, c.from.slice(4)], { env: proxyEnv });
-		if (r.code !== 0) { log(`✗ ${c.id}: npm install 失败（该能力本轮不就绪）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
+		const r = await run("npm", ["install", "--prefix", dest, c.from.slice(4)], { env: npmEnv, timeoutMs: 600000 });
+		if (r.code !== 0) {
+			const hint2 = r.timedOut || /network|ECONN|timeout|ETIMEDOUT|EAI_AGAIN/i.test(`${r.err}${r.out}`) ? "（提示：确认 settings.proxy / 网络；registry 不可达时稍后重跑 sync）" : "";
+			log(`✗ ${c.id}: npm install 失败（该能力本轮不就绪）${hint2}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+		}
 		await writeFile(marker, JSON.stringify({ from: c.from, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
+	}
+}
+
+// ── ①¾ [local.48] npm 型 mcp 预热：先把包拉进 ~/.dsh/.npm-cache，避免接线后首次 npx 启动现场拉包
+//      卡慢（真实接入会话靠 agent 手工预热才解决；预热失败只警告，绝不阻塞接线——闸只放宽不收紧）。
+if (!noPrewarm && !dryRun) {
+	for (const c of caps.filter((x) => x.enabled !== false && (x.kind ?? "mcp") === "mcp" && x.from.startsWith("npm:"))) {
+		const pkg = npmPkgName(c.from);
+		const prewarmDest = path.join(capsDir, c.id);
+		if (existsSync(path.join(prewarmDest, "node_modules", pkg))) continue;
+		log(`→ ${c.id}: 预热 ${c.from.slice(4)}（加速首次 npx 启动，最长 600s）`);
+		await mkdir(prewarmDest, { recursive: true });
+		const r = await run("npm", ["install", "--prefix", prewarmDest, c.from.slice(4)], { env: npmEnv, timeoutMs: 600000 });
+		if (r.code === 0) log(`✓ ${c.id}: 预热完成`);
+		else log(`⚠ ${c.id}: 预热失败（不阻塞接线；首次 npx 启动会现场拉包，可能较慢）：${(r.err || r.out).slice(-200)}`);
 	}
 }
 
@@ -334,4 +472,11 @@ if (dryRun) {
 	if (notReady.size > 0) log(`⚠ 未就绪（未接线，修好来源/网络后重跑 sync）：${[...notReady].join(", ")}`);
 	log("  下一步：重启 dsh web 生效；验证方式见 docs/CAPABILITIES.md 第三节。");
 }
+}
 //#endregion
+
+/* 仅直接执行时运行主流程；被导入（测试 / src_add_capability）时只暴露纯函数。 */
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+	await main().catch((e) => { console.error(`✗ ${String(e?.message ?? e)}`); process.exit(1); });
+}
+export { parseCapsYaml, run, pathExists, npmPkgName, npmCacheEnv, serializeCapabilityEntry, appendCapabilityEntry, resolveFrom, deriveCapId, npmProbe };

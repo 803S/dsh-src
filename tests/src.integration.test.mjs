@@ -3109,3 +3109,122 @@ test("[local.42] lossless 边界：src_state 孤儿巡检（无 checkpoint 分�
   /* 未设优先级的 intent 也不带 priority 键 */
   assert.equal("priority" in out.intents.find((r) => r.id === it.id), false);
 });
+
+/* ═══════════════ [local.48] src_add_capability（一键接入）+ caps-sync 加固 ═══════════════
+   纯函数直接 import caps-sync.mjs（main-guard 保证导入不执行主流程）；完整链路经 harness +
+   temp DSH_HOME + file:// git 仓库全离线验证。绝不触碰真实 ~/.dsh。 */
+import { run as capsRun, serializeCapabilityEntry, appendCapabilityEntry, resolveFrom as capsResolveFrom, deriveCapId } from "../scripts/caps-sync.mjs";
+
+test("[local.48] caps-sync run(): 超时 SIGTERM 返回 code -2/timedOut，正常命令不受影响", async () => {
+  const t0 = Date.now();
+  const r = await capsRun("bash", ["-c", "sleep 5"], { timeoutMs: 300 });
+  assert.equal(r.timedOut, true);
+  assert.equal(r.code, -2);
+  assert.ok(Date.now() - t0 < 3000, `超时应快速返回而不是等满 5s（实际 ${Date.now() - t0}ms）`);
+  const okRun = await capsRun("bash", ["-c", "echo hi"], { timeoutMs: 5000 });
+  assert.equal(okRun.code, 0);
+  assert.equal(okRun.out, "hi");
+  assert.equal(okRun.timedOut, false);
+});
+
+test("[local.48] serializeCapabilityEntry/appendCapabilityEntry：序列化、守卫重解析、重复 id、垃圾清单", () => {
+  const block = serializeCapabilityEntry({ id: "demo", from: "npm:@s/p@1.2.3", kind: "mcp", when: "演示 场景" });
+  assert.match(block, /^  - id: demo\n    from: npm:@s\/p@1\.2\.3\n    kind: mcp\n    when: 演示 场景\n$/);
+  const block2 = serializeCapabilityEntry({ id: "sk", from: "git:https://x/y", kind: "skill", docs: "SKILL.md", scripts: ["scripts/a.sh"], enabled: false });
+  assert.match(block2, /scripts: \[scripts\/a\.sh\]/);
+  assert.match(block2, /enabled: false/);
+  /* 非法条目：id 大写、from 前缀错、scripts 越目录、skill 带 entry */
+  assert.throws(() => serializeCapabilityEntry({ id: "Bad", from: "npm:x" }));
+  assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "https://x" }));
+  assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "npm:x", scripts: ["../evil.sh"] }));
+  assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "npm:x", kind: "skill", entry: "dist/index.js" }));
+  /* 追加 + 守卫重解析：旧条目保留、新条目可解析 */
+  const { text, parsed } = appendCapabilityEntry("capabilities:\n  - id: old\n    from: npm:old@1.0.0\n", { id: "newone", from: "npm:new@2.0.0" }, ["old"]);
+  assert.equal(parsed.caps.length, 2);
+  assert.match(text, /- id: newone/);
+  /* 空文件 → 自动生成 capabilities: 头 */
+  assert.match(appendCapabilityEntry("", { id: "first", from: "npm:f" }, []).text, /^capabilities:\n  - id: first/);
+  /* 重复 id 拦截 */
+  assert.throws(() => appendCapabilityEntry(text, { id: "old", from: "npm:o2" }, ["old"]), /重复 id/);
+  /* 垃圾清单拦截（守卫式重解析失败不写盘） */
+  assert.throws(() => appendCapabilityEntry("garbage\n", { id: "xx", from: "npm:x" }, []), /必须以/);
+});
+
+test("[local.48] deriveCapId/resolveFrom：显式直通、离线回退 git、npm 包名、非法输入", async () => {
+  assert.equal(deriveCapId("npm:@jshookmcp/jshook@0.3.5"), "jshook");
+  assert.equal(deriveCapId("git:https://github.com/vmoranv/jshookmcp"), "jshookmcp");
+  assert.equal(deriveCapId("git:https://github.com/x/3repo"), "", "数字开头推导不出合法 id，须显式传");
+  const offEnv = { ...process.env, PATH: "/nonexistent" };
+  const r1 = await capsResolveFrom("npm:a/b@1.0", { env: offEnv, timeoutMs: 2000 });
+  assert.equal(r1.from, "npm:a/b@1.0");
+  const r2 = await capsResolveFrom("https://github.com/o/r", { env: offEnv, timeoutMs: 2000 });
+  assert.equal(r2.from, "git:https://github.com/o/r");
+  assert.match(r2.resolvedVia, /npm registry 未命中/);
+  const r3 = await capsResolveFrom("plainpkg", { env: offEnv, timeoutMs: 2000 });
+  assert.equal(r3.from, "npm:plainpkg");
+  await assert.rejects(() => capsResolveFrom("ftp://weird", { env: offEnv, timeoutMs: 2000 }));
+});
+
+test("[local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 重试安全、proxy 持久化、lossless、清单可见", async () => {
+  const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "caps48-"));
+  const restore = setDshHome(tmp);
+  try {
+    /* 本地 git 仓库 ×2：skill 型（文档+脚本）与 mcp 型（node 服务） */
+    const mkRepo = async (name, files) => {
+      const repo = nodePath.join(tmp, name);
+      for (const [rel, content] of Object.entries(files)) {
+        const abs = nodePath.join(repo, rel);
+        await fsPromises.mkdir(nodePath.dirname(abs), { recursive: true });
+        await fsPromises.writeFile(abs, content);
+      }
+      const git = (args) => spawnSync("git", ["-c", "user.email=t@t.test", "-c", "user.name=t", ...args], { cwd: repo, encoding: "utf8" });
+      git(["init", "-b", "main"]);
+      git(["add", "."]);
+      assert.equal(git(["commit", "-m", "init"]).status, 0, "git commit failed");
+      return repo;
+    };
+    const repoSkill = await mkRepo("repo-skill", { "SKILL.md": "# localcap\n本地测试能力\n", "scripts/hello.sh": "#!/usr/bin/env bash\necho hello-localcap\n" });
+    const repoMcp = await mkRepo("repo-mcp", { "package.json": JSON.stringify({ name: "local-mcp", version: "0.0.1", main: "index.js" }), "index.js": "process.stdin.resume();\n" });
+    await fsPromises.mkdir(nodePath.join(tmp, "profiles", "web"), { recursive: true });
+    await fsPromises.writeFile(nodePath.join(tmp, "profiles", "web", "cordis.patch.yml"), "# test patch\n");
+
+    const h = harness();
+    const parent = h.exec("g48a");
+    /* ① skill 型接入 */
+    const out = await h.run("src_add_capability", { from: `git:file://${repoSkill}`, id: "localcap", kind: "skill", docs: "SKILL.md", scripts: ["scripts/hello.sh"], when: "本地 E2E" }, parent);
+    assert.equal(out.registered, true);
+    assert.equal(out.from, `git:file://${repoSkill}`);
+    assert.equal(out.kind, "skill");
+    assert.equal(out.status, "installed");
+    assert.equal(out.sync.code, 0);
+    assert.equal("wired" in out, false, "skill 结果不得带 wired 键");
+    assert.deepEqual(collectUndefinedKeys(out), [], `undefined 泄漏: ${collectUndefinedKeys(out).join(", ")}`);
+    assert.equal(fileExists(nodePath.join(out.dir, "scripts", "hello.sh")), true);
+    const index = JSON.parse(await fsPromises.readFile(nodePath.join(tmp, "capabilities", "index.json"), "utf8"));
+    assert.equal(index.capabilities.find((c) => c.id === "localcap").status, "installed");
+    const yaml = await fsPromises.readFile(nodePath.join(tmp, "capabilities.yaml"), "utf8");
+    assert.match(yaml, /- id: localcap/);
+    assert.match(yaml, /scripts: \[scripts\/hello\.sh\]/);
+    /* ② 重复 id 重试：清单不重写、sync 照跑、状态照回（网络失败后重试安全） */
+    const out2 = await h.run("src_add_capability", { from: `git:file://${repoSkill}`, id: "localcap", kind: "skill" }, parent);
+    assert.equal(out2.registered, false);
+    assert.equal(out2.sync.code, 0);
+    assert.equal(await fsPromises.readFile(nodePath.join(tmp, "capabilities.yaml"), "utf8"), yaml, "重复 id 不得改写清单");
+    /* ③ mcp 型接入 + proxy 参数持久化 settings.proxy */
+    const out3 = await h.run("src_add_capability", { from: `git:file://${repoMcp}`, id: "localmcp", entry: "index.js", when: "本地 mcp", proxy: "http://127.0.0.1:7890" }, parent);
+    assert.equal(out3.registered, true);
+    assert.equal(out3.status, "installed");
+    assert.equal(out3.wired, true, "mcp 型应已接线");
+    assert.equal(out3.proxyWritten, "http://127.0.0.1:7890");
+    const patch = await fsPromises.readFile(nodePath.join(tmp, "profiles", "web", "cordis.patch.yml"), "utf8");
+    assert.match(patch, /id: mcp-localmcp\b/);
+    const yaml3 = await fsPromises.readFile(nodePath.join(tmp, "capabilities.yaml"), "utf8");
+    assert.match(yaml3, /^settings:\n  proxy: http:\/\/127\.0\.0\.1:7890\n/);
+    assert.match(yaml3, /- id: localmcp/);
+    assert.deepEqual(collectUndefinedKeys(out3), []);
+    /* ④ src_list_capabilities 可见 */
+    const list = await h.run("src_list_capabilities", {}, parent);
+    assert.equal(list.items.find((i) => i.id === "localcap").status, "installed");
+    assert.equal(list.items.find((i) => i.id === "localmcp").kind, "mcp");
+  } finally { restore(); await fsPromises.rm(tmp, { recursive: true, force: true }); }
+});
