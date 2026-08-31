@@ -53,13 +53,13 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
     测试 harness 不走 lossless-JSON 序列化（JSON.stringify 会静默丢键），故新增工具输出字段必须配
     `collectUndefinedKeys` 深扫回归（tests 内有现成 helper）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]` 系列（113 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]` 系列（117 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫）。
 
 ## 参考项目
 
 - [ARTEX](https://github.com/Autumn-27/ARTEX)
 
-## 迭代补记（local.13 → local.44，2026-08-22 ~ 2026-08-31）
+## 迭代补记（local.13 → local.47，2026-08-22 ~ 2026-08-31）
 
 > local.13~19 与 local.22~42 期间的版本日志未随提交同步入库，此处按 git 提交记录补记；
 > 完整改动细节见各 commit message。local.39 未发布（local.38 后直接进入 local.40）。
@@ -90,6 +90,10 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 - **local.42**（15fd2b7 + 6dec19f）：intent 重规划——deprecated 废弃态 + priority 优先级（Cairn_Y Decide 三动作借鉴）；lossless-JSON 边界两处 undefined 泄漏修复（headless 真实会话实弹首发现，新增深扫 undefined 键回归）；headless 实弹 7/7 全链路验证。
 - **local.43**：授权模型 v4「资产清单即许可」（小米会话实战诊断驱动：①父 LLM 简报自由发挥「授权含 *.mi.com」被闸拦 ②闸外子代理改用 bash curl 探测得手——片面闸会教代理绕闸，闸必须与真实授权一致）。探测类 6 工具（src_http/src_scan_surface/src_test_bypass/src_test_credential/src_collect_dorks/src_collect_passive）按「goal 主域内 **或** 资产清单内」放行：`assetGrantHosts` 从资产自由文本 value 派生 host（URL/裸 host/通配符，excluded 不作为授权依据；dorks 对主域做双向覆盖）；`src_add_asset` 升级（source 必填审计线索 + 沿父链写入 engagement 共享清单 + 输出补 duplicate/assetHost）；recon/audit 子代理放开 src_add_asset + persona 授权边界规则（被拒→判定归属→登记→重试一次→否则停手上报）；COMMANDER 简报禁自行转述/扩大授权范围；src_state 输出 `assetScope`（model/totalAssets/grantableHosts/distinctDomains/topDomains）+ render 授权边界说明。bash curl 绕过属上游沙箱边界（dsh-bash-sandbox 不管网络），提示词层禁止。
 - **local.44**：资产归属人工确认闭环（candidate 两头无观察结论驱动）。新工具 `src_request_asset_confirm`（仅指挥官）：疑似但无法公开验证归属的注册域，挂「待审队列」新类型 `method=ASSET`（category=asset-attribution，url=注册域，reason=判定依据），提交后不阻塞继续其他方向；goal 主域内/已被资产覆盖/已被否决（excluded）三种情况自动跳过不挂队，同域幂等去重（`*.` 前缀归一化）。用户在面板「待审」区或 `/src-approve <id> allow|reject` 决定：不走「转达 agent 重放」路径，命令直接确定性落库（allow→整域登记 confirmed 资产，reject→excluded）+ 合成 src_resolve_approval 事件 + 信息性 followup（确认→可重试，否决→放弃该域）；`src_resolve_approval` 工具对 ASSET 行报错封死 agent 自批路径。指挥官提示词「归属三档判定」（①归属明确→直接登记 confirmed 不打扰用户 ②疑似无法验证→本工具请用户确认整域 ③确定不属于→不探测不登记）；recon/audit persona 补「拿不准归属报 candidate + summary 写待归属确认」；三份 deny 清单同步。src_state `assetScope` 补 `byStatus` 状态分布；finalize 软警告未决归属确认（报告应写覆盖限制）。UI 待审卡片适配 ASSET 行（🏷️ 资产归属确认标题/确认归属·非本组织按钮/判定依据展示，隐藏请求报文块）。
+- **local.45**（647af9a）：domain 打开失败自愈（open 失败的 rejected promise 原先被永久持有）+ legacy 资产 method 归一化（`active`→`authorized-active`，加载时 zod preprocess 映射，写入路径校验不变）。
+- **local.46**（1b4b057）：`/src-approve` 直写 ASSET 同步投影——resolvePendingApproval 读回最终资产记录随返回带出，命令层补合成 `src_add_asset` 事件；三处命令（`/src-approve`/`/src-infra`/`/src-infra-copy`）的合成 tool/call 事件统一走 `appendSessionToolEvent`（自带唯一 `callId`）——无 callId 的同类事件全落同一 key 会炸历史加载（local.26 修复过的投影漂移在同层复现）。
+- **local.47**（29f07fa + 6ae1755）：待审表 schema `method` 枚举补 `'ASSET'`——修复打开校验炸新会话（old session 写入合法 ASSET 待审行时 schema 不认）；新增 [local.47] 全域往返回归测试（store 写读全表走 valueSchema，把 writer/schema 漂移从运行时故障变成构建期闸）。`scripts/deploy.mjs` 新增部署脚本固化双 profile 目标与 md5 终验——真实线上实弹发现「机器上 4 份 dsh-src 副本」漂移致命陷阱，写脚本防人忘了改哪一份。
+
 
 ## 0.1.0-local.12（真实测试第四轮 2 问题：scan_surface lossless JSON 报错 / 新会话无基础设施页）
 
