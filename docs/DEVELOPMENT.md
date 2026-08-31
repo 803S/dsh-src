@@ -96,17 +96,20 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 
 
 
-## 路线规划（local.48 / local.49，2026-08-31 架构评审后定）
+- **local.48**（c4df04b）：`src_add_capability` 一键接入外部能力（npm-registry 优先解析→守卫式追加 capabilities.yaml→caps-sync 子进程→回读 index.json）；caps-sync 加固（main-guard 可导入、超时 SIGTERM→SIGKILL 分级、npm 缓存隔离、mcp 型预热）；profileDir 从部署副本路径推导，缺 patch 预检拦截。
+- **local.49**：架构评审四小项+合成事件统一路径。①`SYNTHETIC_PROJECTION_EVENTS` 冻结白名单（13 名单）+ `appendSessionToolEvent` 白名单断言（未登记直写 throw——local.26 无 callId 撞 key、local.46 直写漏投影两次教训制度化）；②`appendSubmissionProjection`（src_submit 重放）删除裸 append 重复实现、统一路由 appendSessionToolEvent（同 counter/callId 行为不变）；③`SESSION_SCOPED_TABLES` 更名 `LEGACY_KEY_MIGRATION_TABLES`（真实用途=legacy key 迁移参与表，防「会话内表」误读，goals/domain_notes 缺席系 scoped key 先于两表存在）；④src_add_asset 描述补「归属三档判定」 condensed 规则（与主提示词对齐——LLM 对 description 服从权重高于 system prompt）；⑤tests 顶部会话 id 规范注释 + 新增 2 闸测试（白名单三层闸：throw/调用点⊆名单/名单⊆fold case；元测试拦新增单字符会话 id）。121→123 测试。
 
-2026-08-31 对 local.24→local.47 全量架构评审（23 提交）记录的健康项与隐患中，按风险/收益切分为「本版即修」与「独立大重构版本」两档：
+## 路线规划（local.49 / local.50，2026-08-31 架构评审后定；local.48 已被 src_add_capability 版本占用 c4df04b）
 
-### local.48（低风险文档/提示词级，本版做）
+2026-08-31 对 local.24→local.47 全量架构评审（23 提交）记录的健康项与隐患中，按风险/收益切分为「本版即修（local.49）」与「独立大重构版本（local.50）」两档：
+
+### local.49（低风险文档/提示词级，本版做）
 1. **prompt 与工具 description 对齐**：SRC_INSTRUCTIONS「归属三档判定」等规则提炼进相关工具（src_request_asset_confirm/src_add_asset）description 首部——LLM 对 description 的服从权重高于 system prompt。
 2. **合成事件名单收敛为常量**：applySrcEvent 里 6 个 synthetic case（src_record_pending_approval / src_domain_notes_snapshot / src_auth_budget 等）抽成 `SYNTHETIC_EVENTS` 冻结常量并导出；appendSessionToolEvent 加白名单断言。
 3. **SESSION_SCOPED_TABLES 命名澄清**（goals/domain_notes 跨会话是刻意的，加注释说明）。
 4. **测试唯一会话 id 规范**：tests 顶部注释 + 可选 grep 闸（防 p/parent 等通用名回归——虽 harness 已隔离）。
 
-### local.49（结构性大重构，独立版本、零行为变更验收）
+### local.50（结构性大重构，独立版本、零行为变更验收）
 1. **lib/src.js 拆分**：43 个工具注册迁至 `lib/src/tools/*.js`；先抽 `lib/src/context.js` 作共享依赖容器（store、resolveVisibleSessionIds、throttledHttp、assetGrantHosts、speed/stateMap 等共享闭包变量）。主文件从 5,735 行降到约 2,000 行。
    - 风险点：工具注册顺序变化可能影响 preset toolFilter 顺序敏感逻辑；117 测试原样全绿为验收闸门；单独 commit 不与任何功能改动混合，出问题整包 revert。
    - 工作估量：约 2,600 行搬迁，建议拆「抽 context 容器 → 按组迁工具（注册组 8 组）→ 主文件收尾」三步走。

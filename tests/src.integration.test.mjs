@@ -6,8 +6,12 @@ import * as nodePath from "node:path";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest } from "../lib/src.js";
+import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
+/* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
+   原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
+   仍要求：①同一测试内不同会话用不同 id；②新增 id 一律描述性命名（≥3 字符，禁止 p/x 单字符——
+   排查日志/投影事件时需要可读性）。历史遗留的 "p"/"parent" 白名单豁免，文件尾元测试闸拦截新增违规。 */
 
 class MemoryTable {
   rows = new Map();
@@ -3227,4 +3231,42 @@ test("[local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 
     assert.equal(list.items.find((i) => i.id === "localcap").status, "installed");
     assert.equal(list.items.find((i) => i.id === "localmcp").kind, "mcp");
   } finally { restore(); await fsPromises.rm(tmp, { recursive: true, force: true }); }
+});
+
+/* [local.49] 合成投影事件白名单闸：三层断言——①未登记名单的直写必须 throw；
+   ②lib 源码里所有 appendSessionToolEvent 字面量调用点 ⊆ 名单；③名单 ⊆ applySrcEvent fold case 集合。
+   防「新合成事件忘加 fold / 忘登记名单」两类漂移在运行时才炸（local.26/local.46 教训）。 */
+test("合成投影事件白名单闸 [local.49]", async () => {
+	/* ① 直写未登记名 throw（parent 传 undefined——白名单校验先于 no-op 早退） */
+	assert.throws(() => appendSessionToolEvent(void 0, "src_not_a_real_event", {}),
+		/未登记 SYNTHETIC_PROJECTION_EVENTS/);
+	/* 白名单内 + parent 无 append → 静默 no-op（校验通过后早退） */
+	assert.doesNotThrow(() => appendSessionToolEvent(void 0, "src_checkpoint", {}));
+	/* ② 源码扫描：所有字面量调用点 ⊆ 名单 */
+	const libSource = await fsPromises.readFile(new URL("../lib/src.js", import.meta.url), "utf8");
+	const callSites = [...libSource.matchAll(/appendSessionToolEvent\([^,]+,\s*"([a-z_0-9]+)"/g)].map((m) => m[1]);
+	assert.ok(callSites.length >= 10, `应扫到 ≥10 个字面量调用点，实际 ${callSites.length}`);
+	for (const name of callSites) {
+		assert.ok(SYNTHETIC_PROJECTION_EVENTS.has(name), `调用点 "${name}" 未登记 SYNTHETIC_PROJECTION_EVENTS`);
+	}
+	/* ③ 名单 ⊆ applySrcEvent fold case 集合（无 fold 的合成事件会让投影与 store 永久漂移） */
+	const foldCases = new Set([...libSource.matchAll(/case "(src_[a-z_0-9]+)"/g)].map((m) => m[1]));
+	for (const name of SYNTHETIC_PROJECTION_EVENTS) {
+		assert.ok(foldCases.has(name), `白名单事件 "${name}" 在 applySrcEvent 无 fold case`);
+	}
+	/* applySrcEvent 烟测：白名单事件经 fold 不炸（拿 src_auth_budget 空投影试） */
+	const state = structuredClone(srcInitialState);
+	assert.doesNotThrow(() => applySrcEvent(state, { type: "tool/call", data: { name: "src_auth_budget", arguments: JSON.stringify({ used: 1, limit: 30 }) } }));
+});
+
+/* [local.49] 元测试闸：新增 sessions.set 一律描述性 id（≥3 字符），历史 "p"/"parent" 豁免。 */
+test("测试会话 id 规范 [local.49]", async () => {
+	const source = await fsPromises.readFile(new URL("./src.integration.test.mjs", import.meta.url), "utf8");
+	const ids = [...source.matchAll(/sessions\.set\("([^"]+)"/g)].map((m) => m[1]);
+	const legacy = new Set(["p", "parent"]);
+	for (const id of ids) {
+		if (legacy.has(id)) continue;
+		assert.ok(id.length >= 3, `sessions.set("${id}") id 过短——新增会话 id 必须描述性命名（≥3 字符），见文件顶部规范注释`);
+	}
+	assert.ok(ids.length >= 4, `应扫到 ≥4 个 sessions.set 调用点，实际 ${ids.length}`);
 });
