@@ -3279,6 +3279,34 @@ test("合成投影事件白名单闸 [local.49]", async () => {
 	assert.doesNotThrow(() => applySrcEvent(state, { type: "tool/call", data: { name: "src_auth_budget", arguments: JSON.stringify({ used: 1, limit: 30 }) } }));
 });
 
+test("子代理状态观察：运行时目录优先、checkpoint 兼容回退", async () => {
+  const h = harness();
+  const parent = h.exec("delegation-state-parent");
+  const child = h.exec("delegation-state-child", "delegation-state-parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "delegation state", authorization: "ticket-delegation" }, parent);
+  const intent = await h.run("src_add_intent", { title: "被动侦察", detail: "验证子代理状态", goalId: goal.id }, parent);
+  await h.run("src_update_intent", { intentId: intent.id, status: "running" }, parent);
+  h.ctx.subagents.listChildren = async () => [{ kind: "child", id: "delegation-state-child", mode: "continuable", activity: "running", label: "recon" }];
+  let state = await h.run("src_state", {}, parent);
+  assert.equal(state.delegationState.find((row) => row.intentId === intent.id).status, "not-started");
+  assert.deepEqual(state.delegationState.find((row) => row.intentId === intent.id).unassignedRuntimeChildren, ["delegation-state-child"]);
+  assert.equal(state.delegationState.find((row) => row.intentId === intent.id).runtimeObserved, true);
+  await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "首个进度检查点", facts: [{ kind: "info", target: "example.test", detail: "仅测试状态观察", confidence: 1 }] }, child);
+  h.ctx.subagents.listChildren = async () => [{ kind: "child", id: "delegation-state-child", mode: "continuable", activity: "inactive", label: "recon" }];
+  state = await h.run("src_state", {}, parent);
+  assert.equal(state.delegationState.find((row) => row.intentId === intent.id).status, "progress-unfinished");
+  assert.deepEqual(state.delegationState.find((row) => row.intentId === intent.id).childSessionIds, ["delegation-state-child"]);
+
+  const fallback = harness();
+  const fallbackParent = fallback.exec("delegation-fallback-parent");
+  const fallbackGoal = await fallback.run("src_add_goal", { target: "https://example.test", objective: "fallback", authorization: "ticket-fallback" }, fallbackParent);
+  const fallbackIntent = await fallback.run("src_add_intent", { title: "侦察", detail: "没有宿主目录接口", goalId: fallbackGoal.id }, fallbackParent);
+  await fallback.run("src_update_intent", { intentId: fallbackIntent.id, status: "running" }, fallbackParent);
+  const fallbackState = await fallback.run("src_state", {}, fallbackParent);
+  assert.equal(fallbackState.delegationState.find((row) => row.intentId === fallbackIntent.id).status, "not-started");
+  assert.deepEqual(fallbackState.runtimeChildren, []);
+});
+
 test("clown-src 专题自动路由：intent/store/projection/state 四处一致", async () => {
   const h = harness();
   const parent = h.exec("playbook-parent");
