@@ -7,6 +7,7 @@ import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
+import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
@@ -3195,12 +3196,13 @@ test("[local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 
     const h = harness();
     const parent = h.exec("g48a");
     /* ① skill 型接入 */
-    const out = await h.run("src_add_capability", { from: `git:file://${repoSkill}`, id: "localcap", kind: "skill", docs: "SKILL.md", scripts: ["scripts/hello.sh"], when: "本地 E2E" }, parent);
+    const out = await h.run("src_add_capability", { from: `git:file://${repoSkill}`, id: "localcap", kind: "skill", docs: "SKILL.md", scripts: ["scripts/hello.sh"], when: "本地 E2E", proxy: "http://127.0.0.1:7890" }, parent);
     assert.equal(out.registered, true);
     assert.equal(out.from, `git:file://${repoSkill}`);
     assert.equal(out.kind, "skill");
     assert.equal(out.status, "installed");
     assert.equal(out.sync.code, 0);
+    assert.equal(out.proxyWritten, "http://127.0.0.1:7890", "空清单+proxy 应能先补 settings 再登记能力");
     assert.equal("wired" in out, false, "skill 结果不得带 wired 键");
     assert.deepEqual(collectUndefinedKeys(out), [], `undefined 泄漏: ${collectUndefinedKeys(out).join(", ")}`);
     assert.equal(fileExists(nodePath.join(out.dir, "scripts", "hello.sh")), true);
@@ -3214,6 +3216,11 @@ test("[local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 
     assert.equal(out2.registered, false);
     assert.equal(out2.sync.code, 0);
     assert.equal(await fsPromises.readFile(nodePath.join(tmp, "capabilities.yaml"), "utf8"), yaml, "重复 id 不得改写清单");
+    /* 相同 id 换来源：仍不覆盖清单，但结果必须明确报告清单中的实际来源。 */
+    const differentSource = await h.run("src_add_capability", { from: `git:file://${repoMcp}`, id: "localcap", kind: "skill" }, parent);
+    assert.equal(differentSource.registered, false);
+    assert.equal(differentSource.existingFrom, `git:file://${repoSkill}`);
+    assert.equal(await fsPromises.readFile(nodePath.join(tmp, "capabilities.yaml"), "utf8"), yaml, "不同来源重试也不得改写清单");
     /* ③ mcp 型接入 + proxy 参数持久化 settings.proxy */
     const out3 = await h.run("src_add_capability", { from: `git:file://${repoMcp}`, id: "localmcp", entry: "index.js", when: "本地 mcp", proxy: "http://127.0.0.1:7890" }, parent);
     assert.equal(out3.registered, true);
@@ -3242,8 +3249,20 @@ test("合成投影事件白名单闸 [local.49]", async () => {
 		/未登记 SYNTHETIC_PROJECTION_EVENTS/);
 	/* 白名单内 + parent 无 append → 静默 no-op（校验通过后早退） */
 	assert.doesNotThrow(() => appendSessionToolEvent(void 0, "src_checkpoint", {}));
+	/* 合成 callId 必须跨 web 重启/并发会话不可碰撞，不能依赖模块级计数器。 */
+	const emitted = [];
+	const parent = { append(_type, data) { emitted.push(data); } };
+	appendSessionToolEvent(parent, "src_checkpoint", {});
+	appendSessionToolEvent(parent, "src_checkpoint", {});
+	assert.equal(emitted.length, 2);
+	assert.match(emitted[0].callId, /^src-submit-[0-9a-f-]{36}$/);
+	assert.notEqual(emitted[0].callId, emitted[1].callId, "连续合成事件 callId 不得重复");
 	/* ② 源码扫描：所有字面量调用点 ⊆ 名单 */
-	const libSource = await fsPromises.readFile(new URL("../lib/src.js", import.meta.url), "utf8");
+	const toolSources = await Promise.all([
+		fsPromises.readFile(new URL("../lib/src.js", import.meta.url), "utf8"),
+		fsPromises.readFile(new URL("../lib/src/tools/index.js", import.meta.url), "utf8")
+	]);
+	const libSource = toolSources.join("\n");
 	const callSites = [...libSource.matchAll(/appendSessionToolEvent\([^,]+,\s*"([a-z_0-9]+)"/g)].map((m) => m[1]);
 	assert.ok(callSites.length >= 10, `应扫到 ≥10 个字面量调用点，实际 ${callSites.length}`);
 	for (const name of callSites) {
@@ -3257,6 +3276,43 @@ test("合成投影事件白名单闸 [local.49]", async () => {
 	/* applySrcEvent 烟测：白名单事件经 fold 不炸（拿 src_auth_budget 空投影试） */
 	const state = structuredClone(srcInitialState);
 	assert.doesNotThrow(() => applySrcEvent(state, { type: "tool/call", data: { name: "src_auth_budget", arguments: JSON.stringify({ used: 1, limit: 30 }) } }));
+});
+
+/* [local.50b] 单一 mutation API 三账本闸：一次调用必须同时完成 durable write、合成事件和 projection fold。 */
+test("单一 mutation API 保持 store/event/projection 三账本一致 [local.50b]", async () => {
+	let durable = "old";
+	const emitted = [];
+	const parent = { append(type, data) { emitted.push({ type, data }); } };
+	const value = await commitSyntheticMutation(parent, async () => {
+		durable = "13800138000";
+		return { value: durable, events: [syntheticEvent("src_set_infra", { key: "testPhone", value: durable })] };
+	}, appendSessionToolEvent);
+	assert.equal(value, durable, "mutation 返回 durable write 结果");
+	assert.equal(emitted.length, 1, "同一 mutation 只发声明的一条合成事件");
+	let projection = structuredClone(srcInitialState);
+	projection = applySrcEvent(projection, emitted[0]);
+	assert.equal(projection.infra.testPhone, durable, "projection fold 与 durable write 一致");
+	await assert.rejects(
+		commitSyntheticMutation(parent, async () => ({ value: null, events: [{ args: {} }] }), appendSessionToolEvent),
+		/synthetic mutation events require/,
+		"无 name 的事件必须在 mutation 边界失败"
+	);
+});
+
+/* [local.50a] 工具清单冻结闸：拆包前锁定名称与注册顺序；preset toolFilter 依赖顺序，漏迁/重排必须立即失败。 */
+test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
+	const h = harness();
+	assert.deepEqual([...h.tools.keys()], [
+		"src_scan_surface", "src_test_bypass", "src_test_credential", "src_record_observation",
+		"src_user_todo", "src_import_traffic", "src_collect_dorks", "src_collect_passive", "src_submit",
+		"src_recover_child", "src_record_research", "src_get_infra", "src_list_capabilities", "src_add_capability",
+		"src_test_capability", "src_read_capability", "src_run_capability", "src_fetch_policy", "src_set_infra",
+		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
+		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
+		"src_add_finding", "src_add_asset", "src_state", "src_graph", "src_finalize_engagement", "src_report",
+		"src_update_finding", "src_reject_finding", "src_resolve_approval", "src_request_asset_confirm",
+		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve"
+	], "拆包前必须冻结当前工具名称和注册顺序");
 });
 
 /* [local.49] 元测试闸：新增 sessions.set 一律描述性 id（≥3 字符），历史 "p"/"parent" 豁免。 */

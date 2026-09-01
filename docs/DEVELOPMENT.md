@@ -53,7 +53,10 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
     测试 harness 不走 lossless-JSON 序列化（JSON.stringify 会静默丢键），故新增工具输出字段必须配
     `collectUndefinedKeys` 深扫回归（tests 内有现成 helper）。
 
-遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]`/`[local.45]`/`[local.46]`/`[local.47]`/`[local.48]`/`[local.49]` 系列（123 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫 + src_add_capability e2e + 合成投影事件白名单三层闸 + 测试会话 id 元闸）。
+遵循以上红线的测试见 `tests/src.integration.test.mjs` 中 `[local.26]`/`[local.26/31]`/`[local.31]`/`[local.32]`/`[local.33]`/`[local.34]`/`[local.35]`/`[local.41]`/`[local.42]`/`[local.43]`/`[local.44]`/`[local.45]`/`[local.46]`/`[local.47]`/`[local.48]`/`[local.49]`/`[local.50]` 系列（125 个测试全过；`classifyHttpRequest` 纯函数 + 异步挂起 + resolve + 去重 + fold + 幂等 + 报告节完整性闸 + 软速率帽 + 401 语义 + 基础设施默认沿用 + 认证预算/域笔记投影通道 + 工具输出 schema 一致性闸 + 域笔记沉淀软闸 + 能力双形态 + lossless 深扫 + src_add_capability e2e + 合成投影事件白名单三层闸 + 工具清单冻结闸 + 测试会话 id 元闸）。
+
+- `docs/plan-src-next.md`：local.50 之后的资产收集、攻击面建模、多账号出洞、业务流程、性能安全和 UI 工作台总路线与施工纪律。
+- `docs/plan-capabilities-next.md`：基于当前源码的外部能力专项规范，覆盖 Burp 自愈桥、mcp/skill 两种 capability、lessons、POC proof server、宿主原生能力、安装回滚、健康检查、运行证据、权限和 local.57a–58 实施细节。
 
 ## 参考项目
 
@@ -97,7 +100,7 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 
 
 - **local.48**（c4df04b）：`src_add_capability` 一键接入外部能力（npm-registry 优先解析→守卫式追加 capabilities.yaml→caps-sync 子进程→回读 index.json）；caps-sync 加固（main-guard 可导入、超时 SIGTERM→SIGKILL 分级、npm 缓存隔离、mcp 型预热）；profileDir 从部署副本路径推导，缺 patch 预检拦截。
-- **local.49**：架构评审四小项+合成事件统一路径。①`SYNTHETIC_PROJECTION_EVENTS` 冻结白名单（13 名单）+ `appendSessionToolEvent` 白名单断言（未登记直写 throw——local.26 无 callId 撞 key、local.46 直写漏投影两次教训制度化）；②`appendSubmissionProjection`（src_submit 重放）删除裸 append 重复实现、统一路由 appendSessionToolEvent（同 counter/callId 行为不变）；③`SESSION_SCOPED_TABLES` 更名 `LEGACY_KEY_MIGRATION_TABLES`（真实用途=legacy key 迁移参与表，防「会话内表」误读，goals/domain_notes 缺席系 scoped key 先于两表存在）；④src_add_asset 描述补「归属三档判定」 condensed 规则（与主提示词对齐——LLM 对 description 服从权重高于 system prompt）；⑤tests 顶部会话 id 规范注释 + 新增 2 闸测试（白名单三层闸：throw/调用点⊆名单/名单⊆fold case；元测试拦新增单字符会话 id）。121→123 测试。
+- **local.49**：架构评审四小项+合成事件统一路径。①`SYNTHETIC_PROJECTION_EVENTS` 冻结白名单（13 名单）+ `appendSessionToolEvent` 白名单断言（未登记直写 throw——local.26 无 callId 撞 key、local.46 直写漏投影两次教训制度化）；②`appendSubmissionProjection`（src_submit 重放）删除裸 append 重复实现、统一路由 appendSessionToolEvent（step 计数保持顺序，callId 改为跨 web 重启和并发会话不可碰撞的 UUID）；③`SESSION_SCOPED_TABLES` 更名 `LEGACY_KEY_MIGRATION_TABLES`（真实用途=legacy key 迁移参与表，防「会话内表」误读，goals/domain_notes 缺席系 scoped key 先于两表存在）；④src_add_asset 描述补「归属三档判定」 condensed 规则（与主提示词对齐——LLM 对 description 服从权重高于 system prompt）；⑤tests 顶部会话 id 规范注释 + 新增 UUID/白名单/元测试闸（白名单三层闸、UUID callId 跨重启/并发不碰撞、元测试拦新增单字符会话 id）。121→123 测试。
 
 ## 路线规划（local.49 / local.50，2026-08-31 架构评审后定；local.48 已被 src_add_capability 版本占用 c4df04b）
 
@@ -109,7 +112,15 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 3. 命名澄清：**实际更名 `LEGACY_KEY_MIGRATION_TABLES`**——读码发现该名单真实用途是 legacy key 迁移参与表（仅 migrateLegacyKeys 用），比计划里「跨会话刻意设计」的注释角度更准确。
 4. 测试规范：顶部注释 + **2 个新闸测试**（白名单三层闸：throw/调用点⊆名单/名单⊆fold case；元测试拦新增单字符会话 id）。
 
+### local.50a 完成（纯拆包，零行为变更）
+
+- 新增 `lib/src/state.js`、`lib/src/context.js`、`lib/src/protocol.js`、`lib/src/reporting.js`、`lib/src/security.js`、`lib/src/lessons.js`、`lib/src/store.js`、`lib/src/tools/index.js`：分别承载运行时可变状态、会话/engagement 解析、纯参数协议/闭集常量、图与报告纯投影、出站请求审批分类、经验库文件访问、持久化 store、44 工具注册；`lib/src.js` 保留 schema/projection/网络基础设施/组合根与冻结导出，5,856→约 2,002 行。
+- 工具清单冻结测试锁定 44 个工具名称与顺序；合成事件源码闸同步扫描拆分后的工具文件。
+- `scripts/deploy.mjs` 清单同步扩为 12 文件，并在复制前创建子目录；`package.json files=lib/**/*.js` 已天然覆盖全部子模块。
+- 验收：125/125 测试、preset consistency、`git diff --check`、npm pack 解包入口加载、双 profile md5、web 双地址 200 均通过。
+
 ### local.50（结构性大重构；2026-08-31 二审后拆成 50a/50b 两个独立 commit）
+
 
 **50a：lib/src.js 拆包（纯搬迁，零行为变更）**——44 个工具注册（local.48 后为 44，勿再用旧数 43）迁至 `lib/src/tools/*.js`，主文件 5,735 行降到约 2,000 行。
 - **前置闸（先写测试再动刀）**：新增「工具清单冻结测试」——harness 注册后枚举 ctx.tools 名单+顺序快照，拆分前后必须完全一致（防漏迁、防重排——preset toolFilter 顺序敏感）。
@@ -119,9 +130,8 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 - **验收**：①测试零改动全绿（以 main 当日全绿数为基线，不锁死数字——计数会涨）②工具名单+注册顺序快照一致 ③preset lint 过 ④双 profile 部署 md5 一致 + web 双地址 200。
 - **回滚**：整 commit revert **+ 重跑 scripts/deploy.mjs 回滚部署**（只 revert 代码不重部署=线上继续跑新文件，两步缺一不可）。
 
-**50b：store 直写 + 合成事件双写合并为单一 API（行为变更，独立 commit）**
-- 所有绕过工具的直写路径（/src-approve、/src-infra 等）收敛到单一写 API（store 写入+合成事件原子化），删除命令层手工双写；配套新增「三账本一致」测试：每个直写命令断言 store 行、合成事件、投影折叠三处一致。
-- **与 50a 分开提交**（原计划把双写合并混进「零行为变更」版本自相矛盾——行为变更必须独立验收、独立 revert）。
+**50b：完成。** 新增 `lib/src/mutations.js`，以 `commitSyntheticMutation()` 统一 durable write + 合成事件发送；`/src-approve` 的 ASSET 分支、`/src-infra`、`/src-infra-copy` 与新 goal 自动继承基础设施均不再手工双写。新增三账本一致性测试，断言 store 结果、synthetic event、projection fold 同值；125/125 测试全绿。
+
 
 ### 明确不做/延后（评审确认）
 - 第三波后两环（基线清单聚合 → 哑脚本 diff → 晨报）：等域笔记积累量足够（当前 u_src_domain_notes 已有 20 条真实数据，达到启动阈值附近）再启动。

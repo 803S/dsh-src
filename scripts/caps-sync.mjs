@@ -12,7 +12,7 @@
 //   npm registry 备选路线；npm 统一走 $DSH_HOME/.npm-cache 缓存（绕开 ~/.npm 权限坑）。
 //   本文件同时被 lib/src.js 的 src_add_capability 动态导入复用（parseCapsYaml/resolveFrom/
 //   appendCapabilityEntry 等纯函数），故主流程包在 main() 里、仅直接执行时运行。
-import { readFile, writeFile, mkdir, access, readdir, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, readdir, rm, rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { homedir, EOL } from "node:os";
@@ -114,13 +114,15 @@ async function run(cmd, args, opts = {}) {
 	return new Promise((resolve) => {
 		const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], ...spawnOpts });
 		let out = "", err = "", timedOut = false;
+		const MAX_OUTPUT = 60000;
+		const appendOutput = (current, chunk) => current.length >= MAX_OUTPUT ? current : current + String(chunk).slice(0, MAX_OUTPUT - current.length);
 		const timer = timeoutMs > 0 ? setTimeout(() => {
 			timedOut = true;
 			try { child.kill("SIGTERM"); } catch {}
 			setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 5000);
 		}, timeoutMs) : null;
-		child.stdout.on("data", (d) => (out += d));
-		child.stderr.on("data", (d) => (err += d));
+		child.stdout.on("data", (d) => { out = appendOutput(out, d); });
+		child.stderr.on("data", (d) => { err = appendOutput(err, d); });
 		child.on("close", (code) => { if (timer) clearTimeout(timer); resolve({ code: timedOut ? -2 : code, out: out.trim(), err: err.trim(), timedOut }); });
 		child.on("error", (e) => { if (timer) clearTimeout(timer); resolve({ code: -1, out: "", err: String(e), timedOut }); });
 	});
@@ -179,7 +181,11 @@ function serializeCapabilityEntry(entry) {
 /* 把条目追加到清单文本末尾并【守卫式重解析】：旧条目必须全部保留、新条目必须可解析、无重复 id。
  * 追加失败（如清单末尾不是 capabilities 列表）一律抛错，绝不写坏用户清单。 */
 function appendCapabilityEntry(yamlText, entry, oldIds) {
-	const base = yamlText === "" ? "capabilities:\n" : (/\n$/.test(yamlText) ? yamlText : yamlText + "\n");
+	let base = yamlText === "" ? "capabilities:\n" : (/\n$/.test(yamlText) ? yamlText : yamlText + "\n");
+	/* [local.48 补充] settings-only（或空文件先被 prepend 了 settings）的合法清单没有
+	 * capabilities: 头——直接尾部追加会让条目落进 settings 块被守卫拦下。补头后再追加
+	 * （settings 保持在前，与真实清单形态一致）。 */
+	if (!/^capabilities:/m.test(base)) base = base + "capabilities:\n";
 	const candidate = base + serializeCapabilityEntry(entry);
 	const parsed = parseCapsYaml(candidate);
 	const ids = parsed.caps.map((c) => c.id);
@@ -335,25 +341,39 @@ for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("git
 		if (dryRun) { log(`[dry] ${c.id}: 将 clone ${wantFrom} → ${dest}`); continue; }
 		log(`→ ${c.id}: clone ${wantFrom} → ${dest}`);
 		await mkdir(capsDir, { recursive: true });
-		await rm(dest, { recursive: true, force: true });
-		const cloneArgs = ["clone", "--depth", "1"];
-		if (c.ref) cloneArgs.push("--branch", String(c.ref));
-		cloneArgs.push(wantFrom.slice(4), dest);
-		const r = await run("git", cloneArgs, { env: proxyEnv, timeoutMs: 180000 });
-		if (r.code !== 0) {
-			/* [local.48] 真实接入会话：GitHub 经代理仍不可达拖了 25 分钟。超时/网络类失败时给出 npm 备选路线。 */
-			const netHint = r.timedOut || /timed out|Could not resolve|Failed to connect|Connection|SSL|RPC failed|early EOF/i.test(`${r.err}${r.out}`)
-				? "（提示：GitHub 直连/代理不可达——确认 settings.proxy 生效；若该项目已发布 npm 包，把 from 改成 npm:<包名> 常可绕开 GitHub 网络）" : "";
-			log(`✗ ${c.id}: git clone 失败（该能力本轮不接线）${netHint}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+		const staging = path.join(capsDir, `.${c.id}.staging-${process.pid}-${Date.now()}`);
+		try {
+			const cloneArgs = ["clone", "--depth", "1"];
+			if (c.ref) cloneArgs.push("--branch", String(c.ref));
+			cloneArgs.push(wantFrom.slice(4), staging);
+			const r = await run("git", cloneArgs, { env: proxyEnv, timeoutMs: 180000 });
+			if (r.code !== 0) {
+				/* [local.48] 真实接入会话：GitHub 经代理仍不可达拖了 25 分钟。超时/网络类失败时给出 npm 备选路线。 */
+				const netHint = r.timedOut || /timed out|Could not resolve|Failed to connect|Connection|SSL|RPC failed|early EOF/i.test(`${r.err}${r.out}`)
+					? "（提示：GitHub 直连/代理不可达——确认 settings.proxy 生效；若该项目已发布 npm 包，把 from 改成 npm:<包名> 常可绕开 GitHub 网络）" : "";
+				log(`✗ ${c.id}: git clone 失败（保留既有安装）${netHint}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+			}
+			await writeFile(path.join(staging, ".caps-src"), JSON.stringify({ from: wantFrom, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
+			if (c.build) {
+				if (dryRun) { log(`[dry] ${c.id}: 将在 ${staging} 执行构建`); continue; }
+				log(`→ ${c.id}: 构建…`);
+				const buildResult = await run("bash", ["-lc", c.build], { cwd: staging, env: proxyEnv, timeoutMs: 300000 });
+				if (buildResult.code !== 0) { log(`✗ ${c.id}: 构建失败（保留既有安装）：${(buildResult.err || buildResult.out).slice(-300)}`); notReady.add(c.id); continue; }
+				log(`✓ ${c.id}: 构建完成`);
+			}
+			const backup = `${dest}.backup-${process.pid}-${Date.now()}`;
+			let movedOld = false;
+			try {
+				if (existsSync(dest)) { await rename(dest, backup); movedOld = true; }
+				await rename(staging, dest);
+				if (movedOld) await rm(backup, { recursive: true, force: true });
+			} catch (e) {
+				if (movedOld && !existsSync(dest) && existsSync(backup)) await rename(backup, dest);
+				throw e;
+			}
+		} finally {
+			if (existsSync(staging)) await rm(staging, { recursive: true, force: true });
 		}
-		await writeFile(marker, JSON.stringify({ from: wantFrom, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
-	}
-	if (c.build) {
-		if (dryRun) { log(`[dry] ${c.id}: 将在 ${dest} 执行构建`); continue; }
-		log(`→ ${c.id}: 构建…`);
-		const r = await run("bash", ["-lc", c.build], { cwd: dest, env: proxyEnv, timeoutMs: 300000 });
-		if (r.code !== 0) { log(`✗ ${c.id}: 构建失败（该能力本轮不接线）：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue; }
-		log(`✓ ${c.id}: 构建完成`);
 	}
 }
 
@@ -368,13 +388,28 @@ for (const c of caps.filter((x) => x.enabled !== false && (x.kind ?? "mcp") === 
 	} else {
 		if (dryRun) { log(`[dry] ${c.id}: 将 npm install ${c.from.slice(4)} → ${dest}`); continue; }
 		log(`→ ${c.id}: npm install ${c.from.slice(4)} → ${dest}（最长 600s）`);
-		await mkdir(dest, { recursive: true });
-		const r = await run("npm", ["install", "--prefix", dest, c.from.slice(4)], { env: npmEnv, timeoutMs: 600000 });
-		if (r.code !== 0) {
-			const hint2 = r.timedOut || /network|ECONN|timeout|ETIMEDOUT|EAI_AGAIN/i.test(`${r.err}${r.out}`) ? "（提示：确认 settings.proxy / 网络；registry 不可达时稍后重跑 sync）" : "";
-			log(`✗ ${c.id}: npm install 失败（该能力本轮不就绪）${hint2}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+		const staging = path.join(capsDir, `.${c.id}.staging-${process.pid}-${Date.now()}`);
+		try {
+			await mkdir(staging, { recursive: true });
+			const r = await run("npm", ["install", "--prefix", staging, c.from.slice(4)], { env: npmEnv, timeoutMs: 600000 });
+			if (r.code !== 0) {
+				const hint2 = r.timedOut || /network|ECONN|timeout|ETIMEDOUT|EAI_AGAIN/i.test(`${r.err}${r.out}`) ? "（提示：确认 settings.proxy / 网络；registry 不可达时稍后重跑 sync）" : "";
+				log(`✗ ${c.id}: npm install 失败（保留既有安装）${hint2}：${(r.err || r.out).slice(-300)}`); notReady.add(c.id); continue;
+			}
+			const backup = `${dest}.backup-${process.pid}-${Date.now()}`;
+			let movedOld = false;
+			try {
+				if (existsSync(dest)) { await rename(dest, backup); movedOld = true; }
+				await rename(staging, dest);
+				if (movedOld) await rm(backup, { recursive: true, force: true });
+			} catch (e) {
+				if (movedOld && !existsSync(dest) && existsSync(backup)) await rename(backup, dest);
+				throw e;
+			}
+			await writeFile(path.join(dest, ".caps-src"), JSON.stringify({ from: c.from, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
+		} finally {
+			if (existsSync(staging)) await rm(staging, { recursive: true, force: true });
 		}
-		await writeFile(marker, JSON.stringify({ from: c.from, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
 	}
 }
 

@@ -19,7 +19,7 @@
  * 用法：node scripts/deploy.mjs [额外目标目录 ...]
  * 部署后需重启对应 dsh 进程（web / headless）才生效。
  */
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -28,7 +28,7 @@ import { homedir } from "node:os";
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 /* [local.48] scripts/caps-sync.mjs 一并部署：src_add_capability 动态 import 它的纯函数，
  * 且接线时 spawn 的是【部署副本】里的这份脚本。 */
-const files = ["lib/src.js", "package.json", "scripts/caps-sync.mjs"];
+const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/tools/index.js", "package.json", "scripts/caps-sync.mjs"];
 const targets = [
   join(homedir(), ".dsh/profiles/web/node_modules/@lihua_dis/dsh-src"),
   join(homedir(), ".dsh/profiles/headless/node_modules/@lihua_dis/dsh-src"),
@@ -44,7 +44,11 @@ for (const t of targets) {
     failed = true;
     continue;
   }
-  for (const f of files) copyFileSync(join(repo, f), join(t, f));
+  for (const f of files) {
+    const destination = join(t, f);
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(join(repo, f), destination);
+  }
   console.log(`✓ 已同步 → ${t}`);
 }
 
