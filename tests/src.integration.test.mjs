@@ -3289,7 +3289,7 @@ test("子代理状态观察：运行时目录优先、checkpoint 兼容回退", 
   h.ctx.subagents.listChildren = async () => [{ kind: "child", id: "delegation-state-child", mode: "continuable", activity: "running", label: "recon" }];
   let state = await h.run("src_state", {}, parent);
   assert.equal(state.delegationState.find((row) => row.intentId === intent.id).status, "not-started");
-  assert.deepEqual(state.delegationState.find((row) => row.intentId === intent.id).unassignedRuntimeChildren, ["delegation-state-child"]);
+  assert.deepEqual(state.unassignedRuntimeChildren, ["delegation-state-child"]);
   assert.equal(state.delegationState.find((row) => row.intentId === intent.id).runtimeObserved, true);
   await h.run("src_submit", { intentId: intent.id, stage: "progress", summary: "首个进度检查点", facts: [{ kind: "info", target: "example.test", detail: "仅测试状态观察", confidence: 1 }] }, child);
   h.ctx.subagents.listChildren = async () => [{ kind: "child", id: "delegation-state-child", mode: "continuable", activity: "inactive", label: "recon" }];
