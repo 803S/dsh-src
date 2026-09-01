@@ -116,7 +116,7 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 
 - 新增 `lib/src/state.js`、`lib/src/context.js`、`lib/src/protocol.js`、`lib/src/reporting.js`、`lib/src/security.js`、`lib/src/lessons.js`、`lib/src/store.js`、`lib/src/tools/index.js`：分别承载运行时可变状态、会话/engagement 解析、纯参数协议/闭集常量、图与报告纯投影、出站请求审批分类、经验库文件访问、持久化 store、44 工具注册；`lib/src.js` 保留 schema/projection/网络基础设施/组合根与冻结导出，5,856→约 2,002 行。
 - 工具清单冻结测试锁定 44 个工具名称与顺序；合成事件源码闸同步扫描拆分后的工具文件。
-- `scripts/deploy.mjs` 清单同步扩为 12 文件，并在复制前创建子目录；`package.json files=lib/**/*.js` 已天然覆盖全部子模块。
+- `scripts/deploy.mjs` 清单同步扩为 13 文件，并在复制前创建子目录；`package.json files=lib/**/*.js` 已天然覆盖全部子模块。
 - 验收：125/125 测试、preset consistency、`git diff --check`、npm pack 解包入口加载、双 profile md5、web 双地址 200 均通过。
 
 ### local.50（结构性大重构；2026-08-31 二审后拆成 50a/50b 两个独立 commit）

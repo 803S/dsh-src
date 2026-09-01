@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
+import { routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
@@ -3276,6 +3277,27 @@ test("合成投影事件白名单闸 [local.49]", async () => {
 	/* applySrcEvent 烟测：白名单事件经 fold 不炸（拿 src_auth_budget 空投影试） */
 	const state = structuredClone(srcInitialState);
 	assert.doesNotThrow(() => applySrcEvent(state, { type: "tool/call", data: { name: "src_auth_budget", arguments: JSON.stringify({ used: 1, limit: 30 }) } }));
+});
+
+test("clown-src 专题自动路由：intent/store/projection/state 四处一致", async () => {
+  const h = harness();
+  const parent = h.exec("playbook-parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "playbook routing", authorization: "ticket-playbook" }, parent);
+  const intent = await h.run("src_add_intent", { title: "越权与注入验证", detail: "检查租户对象换 id、搜索筛选参数和跨主体差分", goalId: goal.id }, parent);
+  assert.deepEqual(intent.playbook.keys, ["authorization", "injection"]);
+  assert.ok(intent.playbook.docs.includes("skills/skill/知识库/idor-test.md"));
+  assert.ok(intent.playbook.docs.includes("skills/skill/知识库/injection-test.md"));
+  assert.ok(intent.playbook.checks.some((check) => check.includes("基线")));
+  assert.deepEqual(routePlaybook("越权与注入验证", "检查租户对象换 id、搜索筛选参数和跨主体差分"), intent.playbook);
+  const storedView = await h.run("src_state", {}, parent);
+  assert.deepEqual(storedView.intents.find((row) => row.id === intent.id).playbook, intent.playbook);
+  let folded = applySrcEvent(srcInitialState, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "https://example.test", objective: "playbook routing", authorization: "ticket-playbook" }) } });
+  folded = applySrcEvent(folded, { type: "tool/call", data: { name: "src_add_intent", arguments: JSON.stringify({ title: "越权与注入验证", detail: "检查租户对象换 id、搜索筛选参数和跨主体差分", goalId: "goal-1" }) } });
+  assert.deepEqual(folded.nodes.find((node) => node.id === intent.id).playbook, intent.playbook);
+  const state = await h.run("src_state", {}, parent);
+  assert.match(state.intents.find((row) => row.id === intent.id).playbook.docs.join(" "), /idor-test\.md/);
+  assert.match(h.tools.get("src_state").output.render("", state)[0].text, /专题=authorization\+injection/);
+  assert.deepEqual(PLAYBOOK_ROUTE_KEYS.includes("authorization"), true);
 });
 
 /* [local.50b] 单一 mutation API 三账本闸：一次调用必须同时完成 durable write、合成事件和 projection fold。 */
