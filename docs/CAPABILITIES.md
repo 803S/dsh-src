@@ -112,7 +112,31 @@ skill 型**不产生工具面工具**。agent 侧流程（提示词【外部能�
 caps-sync 对 skill 型额外产出：`~/.dsh/capabilities/index.json`（全部 kind 的安装状态、
 dir/docs/scripts——插件工具的数据源，勿手改）。
 
-## 三点五、自定义代理占位（settings.proxy）
+## 三点五、统一本地配置与 FOFA
+
+`~/.dsh/capabilities.yaml` 是能力和本地运行配置的唯一用户入口。除了 `capabilities:` 外，`settings:` 可统一配置代理和本地 FOFA：
+
+```yaml
+settings:
+  proxy: http://127.0.0.1:7890
+  fofaUv: /Users/your-name/.local/bin/uv
+  fofaEmail: your-email
+  fofaKey: your-key
+  fofaEmailBackup: backup-email
+  fofaKeyBackup: backup-key
+  fofaEmailBackup2: backup2-email
+  fofaKeyBackup2: backup2-key
+
+capabilities:
+  - id: fofa
+    from: git:file:///Users/your-name/.dsh/local-tools/fofa_MCP
+    entry: fofa-launcher.mjs
+    when: 当前授权 SRC 目标的 FOFA 资产搜索
+```
+
+Key 只在本机配置文件中保存，文件应为 `600`，不要提交或上传。FOFA launcher 在运行时从同一份 `capabilities.yaml` 读取 Key，不读取散落的 `.env` 或 PowerShell 文件。删除/停用 FOFA 时只需将该条目的 `enabled` 改为 `false` 后重跑 sync。
+
+### 三点六、自定义代理占位（settings.proxy）
 
 清单顶部可加：
 
@@ -131,4 +155,4 @@ settings:
 - **skill 型 = 更直接的命令执行面**，因此三重闸：①只执行白名单内脚本 ②每次执行前挂起待审
   （人工批准才运行）③解释器按扩展名白名单化、argv 直传不经 shell、目录内相对路径（禁 `..`）。
   审批记录（method=RUN）与 HTTP 待审同队列同审计，`runOutput` 落库可回查。
-- `env` 里不要放明文密钥；需要凭据的场景走 infra（src_set_infra / 面板基础设施页）。
+- `env` 里不要放明文密钥；需要目标测试凭据的场景走 infra（src_set_infra / 面板基础设施页）。本地 FOFA Key 例外地放在仅本机可读的 `capabilities.yaml` `settings` 字段，由 launcher 运行时读取，不进入 profile patch 或能力索引。

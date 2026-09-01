@@ -1,8 +1,16 @@
 # dsh-src 外部能力清单（唯一真源）。格式见 docs/CAPABILITIES.md
 #
-# 可选：git 型 clone 走代理（仅影响 sync 内部 git 操作）
+# 统一本地配置：能力声明、代理、FOFA 运行配置只维护这一份文件。
+# 文件含凭据时请 chmod 600 ~/.dsh/capabilities.yaml，禁止提交或上传。
 # settings:
 #   proxy: http://127.0.0.1:7890
+#   fofaUv: /Users/your-name/.local/bin/uv
+#   fofaEmail: your-email
+#   fofaKey: your-key
+#   fofaEmailBackup: backup-email
+#   fofaKeyBackup: backup-key
+#   fofaEmailBackup2: backup2-email
+#   fofaKeyBackup2: backup2-key
 # 用法：node scripts/caps-sync.mjs   （读本文件 → 安装 git 型到 ~/.dsh/capabilities/<id>/
 #       → 生成 profile cordis.patch.yml 的能力区段 → 重启 dsh web 生效）
 #

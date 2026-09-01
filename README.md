@@ -170,6 +170,8 @@ mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/
 
 **懒人方式（推荐）**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
 
+本机能力和运行配置统一写入 `~/.dsh/capabilities.yaml`；含 FOFA 凭据时请设为 `chmod 600 ~/.dsh/capabilities.yaml`，不要提交或上传。
+
 <details>
 <summary><b>手动三步（点开折叠）</b></summary>
 

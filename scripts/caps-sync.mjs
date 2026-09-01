@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // dsh-src 外部能力 sync：capabilities.yaml → 安装(git/npm 型) → 生成 profile patch 能力区段（mcp 型）
 // 与能力索引 index.json（全部 kind，skill 型带 dir/docs/scripts 供插件 src_read/run_capability 用）。
-// 规范见 docs/CAPABILITIES.md。零依赖（node:24 内置模块 + 手写受限 yaml 子集解析）。
+// 规范见 docs/CAPABILITIES.md。settings.fofa* 由本地 FOFA launcher 消费，凭据不写入 profile patch。
+// 零依赖（node:24 内置模块 + 手写受限 yaml 子集解析）。
 //
 // 用法：node scripts/caps-sync.mjs [--yaml <路径>] [--profile-dir <路径>] [--dry-run] [--no-prewarm]
 //   --yaml          默认 $DSH_HOME/capabilities.yaml（DSH_HOME 缺省 ~/.dsh）
@@ -93,6 +94,8 @@ function parseInlineMap(v, no) {
 //#region 常量与参数
 const MARK_BEGIN = "# ── dsh-src capabilities:8< 自动生成区段开始（勿手改，改 capabilities.yaml 后重跑 sync）──";
 const MARK_END = "# ── dsh-src capabilities:>8 自动生成区段结束 ──";
+const LEGACY_FOFA_BEGIN = "# ── dsh-src local fofa:8< 自动生成区段开始（勿手改，改 capabilities.yaml 后重跑 sync）──";
+const LEGACY_FOFA_END = "# ── dsh-src local fofa:>8 自动生成区段结束 ──";
 const argv = process.argv.slice(2);
 function argOf(flag, fallback) {
 	const i = argv.indexOf(flag);
@@ -487,8 +490,14 @@ if (!dryRun && caps.length > 0) {
 
 const patchPath = path.join(profileDir, "cordis.patch.yml");
 if (!existsSync(patchPath)) die(`未找到 ${patchPath}（可加 --profile-dir 指定其它 profile）`);
-const oldPatch = await readFile(patchPath, "utf8");
+let oldPatch = await readFile(patchPath, "utf8");
+const legacyFofaStart = oldPatch.indexOf(LEGACY_FOFA_BEGIN);
+if (legacyFofaStart >= 0) {
+	const legacyFofaEnd = oldPatch.indexOf(LEGACY_FOFA_END, legacyFofaStart);
+	if (legacyFofaEnd >= 0) oldPatch = oldPatch.slice(0, legacyFofaStart) + oldPatch.slice(legacyFofaEnd + LEGACY_FOFA_END.length).replace(/^\r?\n/, "");
+}
 const re = new RegExp(`${MARK_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[\\s\\S]*?${MARK_END.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${EOL}?`);
+
 let newPatch;
 if (re.test(oldPatch)) {
 	newPatch = oldPatch.replace(re, blockText + EOL);
