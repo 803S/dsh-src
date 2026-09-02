@@ -801,6 +801,42 @@ test("projection 回放 observation/user_todo 并在 view 输出（UI 数据面�
   assert.equal(proj.counts.observations, 1);
 });
 
+/* [local.56] 历史加载炸图根因：sessionProjections 的 schema 把「存量事件里根本不存在的键」
+ * 写成 z.union([z.string(), z.undefined()])——本机 zod 对【缺失键】报 expected:"nonoptional"，
+ * 严格校验直接拒接 fold 结果 → 整个会话历史打不开。改为 z.string().optional() 后三种形态
+ * （缺失/显式 undefined/字符串）全过。本测试用真实 fold 产出「无凭据挂起审批」（credentialRef
+ * 键被条件省略，与旧存量事件一致）验证 schema 不再拒绝。 */
+test("[local.56] 存量缺键事件不再炸历史加载：无凭据挂起审批过 srcProjectionSchema", async () => {
+  const mod = await import("../lib/src.js");
+  let st = JSON.parse(JSON.stringify(mod.srcInitialState));
+  const call = (name, args) => { st = mod.applySrcEvent(st, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } }); };
+  call("src_add_goal", { target: "https://legacy.test", objective: "存量回放", authorization: "SRC" });
+  /* 挂起审批不带凭据：fold 条件省略 credentialRef（键缺失）；intentId 为显式 undefined */
+  call("src_record_pending_approval", { id: "approval-1", method: "GET", url: "https://legacy.test/admin", path: "/admin", headers: "", body: "", category: "unauth", reason: "高危端点", justification: "授权范围内" });
+  call("src_user_todo", { title: "旧待办", detail: "登录态获取", kind: "auth-session" });
+  call("src_record_observation", { intentId: "intent-1", method: "GET", path: "/admin", httpStatus: 403, protectionSignal: true, source: "scan", decision: "WAF 拦截" });
+  /* 与 host sessionProjections 同一 schema：校验的是 view 输出（counts/apiDiscovery 是派生字段） */
+  const view = mod.viewSrcState(st);
+  const parsed = mod.srcProjectionSchema.safeParse(view);
+  assert.ok(parsed.success, `投影 schema 应接受缺失键状态：${parsed.success ? "" : JSON.stringify(parsed.error.issues[0])}`);
+  assert.equal(st.pendingApprovals.length, 1);
+  assert.equal("credentialRef" in st.pendingApprovals[0], false, "无凭据时 credentialRef 键应缺失而非空串");
+  /* 最坏情况：手工构造所有可选键全缺失的状态也必须能过（覆盖 coverage/research 分支） */
+  const worst = { ...st, coverage: [{ id: "cov-1", phase: "recon", category: "recon", status: "completed", evidence: [], limitation: "", updatedAt: Date.now() }], research: [{ id: "res-1", intentId: "intent-1", category: "auth", hypothesis: "h", preconditions: [], status: "hypothesis", stopReason: "", evidence: [], updatedAt: Date.now() }] };
+  const worstParsed = mod.srcProjectionSchema.safeParse(mod.viewSrcState(worst));
+  assert.ok(worstParsed.success, `全可选键缺失状态应能过 schema：${worstParsed.success ? "" : JSON.stringify(worstParsed.error.issues[0])}`);
+  /* 同根问题第二类：src_test_bypass fold 曾硬编码 status:"testing"（不在 schema 枚举），
+   * 凡跑过未被拦的 bypass 的存量会话历史加载必炸——改为 "running" 后全库 275/275 可回放 */
+  let bt = JSON.parse(JSON.stringify(mod.srcInitialState));
+  bt = mod.applySrcEvent(bt, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "https://x.test", objective: "o", authorization: "SRC" }) } });
+  bt = mod.applySrcEvent(bt, { type: "tool/call", data: { name: "src_add_intent", arguments: JSON.stringify({ title: "t", goalId: "goal-1" }) } });
+  bt = mod.applySrcEvent(bt, { type: "tool/call", data: { name: "src_test_bypass", arguments: JSON.stringify({ intentId: "intent-1", category: "path-normalization", baseUrl: "https://x.test", baseline: { method: "GET", path: "/" } }) } });
+  const cov = bt.coverage.find((c) => c.category === "bypass-verification");
+  assert.equal(cov?.status, "running", "bypass fold 应写 running 而非枚举外的 testing");
+  const btParsed = mod.srcProjectionSchema.safeParse(mod.viewSrcState(bt));
+  assert.ok(btParsed.success, `bypass coverage 状态应过 schema：${btParsed.success ? "" : JSON.stringify(btParsed.error.issues[0])}`);
+});
+
 /* [local.33] fold：src_auth_budget 权威计数落 state；非法参数忽略；src_add_goal 保留会话级预算。 */
 test("[local.33] fold src_auth_budget：计数落 state，非法参数忽略，跨 goal 保留", async () => {
   const mod = await import("../lib/src.js");
