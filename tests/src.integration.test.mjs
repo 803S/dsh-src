@@ -3216,6 +3216,10 @@ test("[local.48] serializeCapabilityEntry/appendCapabilityEntry：序列化、�
   const block2 = serializeCapabilityEntry({ id: "sk", from: "git:https://x/y", kind: "skill", docs: "SKILL.md", scripts: ["scripts/a.sh"], enabled: false });
   assert.match(block2, /scripts: \[scripts\/a\.sh\]/);
   assert.match(block2, /enabled: false/);
+  /* [local.55] path: 型：合法直通 + 相对路径拒绝 + 短值拒绝 */
+  assert.match(serializeCapabilityEntry({ id: "demo", from: "path:/Users/you/dsh-src/skills/clown-src-playbook", kind: "skill", docs: "DSH-ADAPTER.md" }), /from: path:\/Users\/you\/dsh-src\/skills\/clown-src-playbook/);
+  assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "path:relative/dir" }), /绝对路径/);
+  assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "path:" }), /必须以/);
   /* 非法条目：id 大写、from 前缀错、scripts 越目录、skill 带 entry */
   assert.throws(() => serializeCapabilityEntry({ id: "Bad", from: "npm:x" }));
   assert.throws(() => serializeCapabilityEntry({ id: "ok", from: "https://x" }));
@@ -3238,6 +3242,12 @@ test("[local.48] deriveCapId/resolveFrom：显式直通、离线回退 git、npm
   assert.equal(deriveCapId("git:https://github.com/vmoranv/jshookmcp"), "jshookmcp");
   assert.equal(deriveCapId("git:https://github.com/x/3repo"), "", "数字开头推导不出合法 id，须显式传");
   const offEnv = { ...process.env, PATH: "/nonexistent" };
+  /* [local.55] path: 型推导与解析（目录直装，不走网络） */
+  assert.equal(deriveCapId("path:/Users/you/dsh-src/skills/clown-src-playbook"), "clown-src-playbook");
+  assert.equal(deriveCapId("path:/Users/you/dsh-src/mcp-servers/fofa_MCP"), "", "下划线推导不出合法 id，须显式传");
+  assert.equal((await capsResolveFrom("path:/Users", { env: offEnv, timeoutMs: 2000 })).from, "path:/Users");
+  await assert.rejects(() => capsResolveFrom("path:relative/dir", { env: offEnv, timeoutMs: 2000 }), /绝对路径/);
+  await assert.rejects(() => capsResolveFrom("path:/nonexistent-xyz-123", { env: offEnv, timeoutMs: 2000 }), /不存在/);
   const r1 = await capsResolveFrom("npm:a/b@1.0", { env: offEnv, timeoutMs: 2000 });
   assert.equal(r1.from, "npm:a/b@1.0");
   const r2 = await capsResolveFrom("https://github.com/o/r", { env: offEnv, timeoutMs: 2000 });

@@ -45,10 +45,10 @@ $DSH_HOME/                          # 通常是 ~/.dsh/
 ```yaml
 capabilities:
   - id: jshook                       # 必填，唯一；决定目录名与工具前缀 mcp__jshook__*
-    from: npm:@jshookmcp/jshook@latest   # 二选一：npm:<pkg> | git:<url>
+    from: npm:@jshookmcp/jshook@latest   # 三选一：npm:<pkg> | git:<url> | path:</绝对路径>
     # ref: main                      # 仅 git 型：分支/tag，默认远端 HEAD
-    # build: pnpm install --frozen-lockfile && pnpm build   # 仅 git 型
-    # entry: dist/index.js           # 仅 git 型：构建后的启动文件（相对目录）
+    # build: pnpm install --frozen-lockfile && pnpm build   # 仅 git/path 型
+    # entry: dist/index.js           # 仅 git/path 型：构建后的启动文件（相对目录）
     enabled: true                    # false=跳过接线（保留声明）
     env: {}                          # 传给子进程的环境变量
     when: >                          # 给 agent 看的路由提示：什么场景该用它
@@ -63,10 +63,22 @@ capabilities:
     scripts: [scripts/extract-endpoints.sh, scripts/apkx.mjs]   # 白名单（必须内联数组）
     when: >
       拿到 APK/小程序包需要反编译、提取端点/密钥时
+
+  # path: 型（local.55）：本机目录直装，无嵌套 git、无网络。仓库转私有后，
+  # 能力源头收编进本仓库的首选形态——from 直接指向仓库内能力目录。
+  - id: clown-src-playbook
+    from: path:/Users/you/Software/dsh-src/skills/clown-src-playbook
+    kind: skill
+    docs: DSH-ADAPTER.md
+    when: >
+      SRC 目标规划、接口建模、越权/认证链、注入/SSRF/XSS/上传/业务逻辑测试
 ```
 
 字段说明（skill 型新增）：
 - `kind: skill`——形态标记。skill 型不接 MCP 工具面，不写 `entry`。
+- `from` 三种前缀：`npm:`（registry 安装）、`git:`（clone，可用 `ref:` 指定分支；local 路径 `git:file://` 也可）
+  、`path:`（本机目录直装：caps-sync 直接拷贝目录到 `~/.dsh/capabilities/<id>/`，排除 `.git/.venv/node_modules`；
+  支持与 git 型相同的 `build:`；来源更新后删安装目录重跑 sync）。
 - `docs`——agent 用 `src_read_capability` 读的入口文档；省略则按 SKILL.md > README.md > README_CN.md 探测。
 - `scripts`——**白名单**，只有列出的相对路径能被 `src_run_capability` 执行；改白名单 = 改 yaml + 重跑 sync。
   支持的解释器按扩展名自动选：`.sh/.bash`→bash、`.js/.mjs/.cjs`→node、`.py`→python3、无扩展名→直接执行
@@ -129,12 +141,12 @@ settings:
 
 capabilities:
   - id: fofa
-    from: git:file:///Users/your-name/.dsh/local-tools/fofa_MCP
+    from: path:/Users/your-name/Software/dsh-src/mcp-servers/fofa_MCP
     entry: fofa-launcher.mjs
     when: 当前授权 SRC 目标的 FOFA 资产搜索
 ```
 
-Key 只在本机配置文件中保存，文件应为 `600`，不要提交或上传。FOFA launcher 在运行时从同一份 `capabilities.yaml` 读取 Key，不读取散落的 `.env` 或 PowerShell 文件。删除/停用 FOFA 时只需将该条目的 `enabled` 改为 `false` 后重跑 sync。
+Key 保存在本机 capabilities.yaml，仓库保持私有（capabilities.yaml 随私库跟踪，切勿改回公开）；本机文件仍建议 `chmod 600`。FOFA launcher 在运行时从同一份 `capabilities.yaml` 读取 Key，不读取散落的 `.env` 或 PowerShell 文件。删除/停用 FOFA 时只需将该条目的 `enabled` 改为 `false` 后重跑 sync。
 
 ### 三点六、自定义代理占位（settings.proxy）
 

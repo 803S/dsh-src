@@ -33,3 +33,13 @@
 #     scripts: [scripts/extract-endpoints.sh, scripts/apkx.mjs]   # 白名单（内联数组）
 #     when: >
 #       拿到 APK/小程序包需要反编译、提取端点/密钥时
+#
+# path: 型示例：本机目录直装（仓库转私有后，能力源头收编进仓库的首选形态——
+# 无嵌套 git、无网络，caps-sync 直接拷贝目录到 ~/.dsh/capabilities/<id>）。
+# capabilities:
+#   - id: clown-src-playbook
+#     from: path:/Users/you/Software/dsh-src/skills/clown-src-playbook
+#     kind: skill
+#     docs: DSH-ADAPTER.md
+#     when: >
+#       SRC 目标规划、接口建模、越权/认证链、注入/SSRF/XSS/上传/业务逻辑测试

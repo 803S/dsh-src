@@ -1,0 +1,7 @@
+{
+  "name": "@lihua_dis/dsh-headless-src",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "index.js",
+  "private": true
+}

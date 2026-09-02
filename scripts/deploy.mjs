@@ -19,10 +19,10 @@
  * 用法：node scripts/deploy.mjs [额外目标目录 ...]
  * 部署后需重启对应 dsh 进程（web / headless）才生效。
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +37,41 @@ const targets = [
 
 const md5 = (p) => createHash("md5").update(readFileSync(p)).digest("hex");
 let failed = false;
+
+/* [local.55] dsh-home 资产：仓库转私有后收编的插件源头，单向 repo → ~/.dsh。
+ * 注意 capabilities.yaml 不在此列：它是运行时入口（src_add_capability 会追加写入），
+ * 只收编备份进 git，不做部署覆盖（避免回滚运行时新增的能力条目）。 */
+const dshHomeAssets = [
+  { src: "plugins/dsh-session-history", dest: join(homedir(), ".dsh/plugins/dsh-session-history") },
+  { src: "plugins/dsh-headless-src", dest: join(homedir(), ".dsh/profiles/headless/plugins/dsh-headless-src") },
+];
+const ASSET_EXCLUDE = new Set([".git", ".venv", "node_modules", "__pycache__", ".DS_Store"]);
+function collectFiles(dir, base = dir) {
+  const out = [];
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    if (ASSET_EXCLUDE.has(ent.name)) continue;
+    const p = join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...collectFiles(p, base));
+    else if (ent.isFile()) out.push({ abs: p, rel: relative(base, p) });
+  }
+  return out;
+}
+console.log("─── dsh-home 资产（repo → ~/.dsh）───");
+for (const a of dshHomeAssets) {
+  if (!existsSync(a.src)) { console.error(`✗ 源不存在: ${a.src}`); failed = true; continue; }
+  if (!existsSync(a.dest)) { console.error(`✗ 目标不存在（先手动创建或首次 rsync）: ${a.dest}`); failed = true; continue; }
+  const list = collectFiles(a.src);
+  let mismatch = false;
+  for (const f of list) {
+    const destination = join(a.dest, f.rel);
+    mkdirSync(dirname(destination), { recursive: true });
+    copyFileSync(f.abs, destination);
+    if (md5(f.abs) !== md5(destination)) mismatch = true;
+  }
+  const ok = list.length > 0 && !mismatch;
+  console.log(`${ok ? "✓" : "✗"} ${a.src} → ${a.dest}（${list.length} 文件${mismatch ? "，md5 不一致" : ""}）`);
+  if (!ok) failed = true;
+}
 
 for (const t of targets) {
   if (!existsSync(join(t, "lib"))) {

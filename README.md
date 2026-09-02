@@ -171,7 +171,9 @@ mkdir -p ~/.dsh/tools && cp ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/
 
 **懒人方式（推荐）**：把 [docs/INSTALL-PROMPT.md](docs/INSTALL-PROMPT.md) 整段复制给任意 AI 编码助手并附上项目链接，它会自动判断能否接入 → 写清单 → 跑 sync → 验证。
 
-本机能力和运行配置统一写入 `~/.dsh/capabilities.yaml`；含 FOFA 凭据时请设为 `chmod 600 ~/.dsh/capabilities.yaml`，不要提交或上传。
+本机能力和运行配置统一写入 `~/.dsh/capabilities.yaml`；含 FOFA 凭据时请设为 `chmod 600 ~/.dsh/capabilities.yaml`。**仓库已转私有**：capabilities.yaml 随私库跟踪（作为备份快照），私库严禁改回公开；本机文件仍是运行时唯一入口（面板/工具追加能力也写它），仓库快照需手动同步。
+
+自用能力源头已收编进仓库（repo 即唯一源头，无嵌套 git）：`skills/`（skill 型，如 clown-src-playbook）、`mcp-servers/`（MCP 型，如 fofa_MCP）、`plugins/`（dsh-home 插件：session-history、headless-src）。capabilities.yaml 里用 `from: path:<仓库绝对路径>` 声明；插件目录由 `scripts/deploy.mjs` 同步回 `~/.dsh`。
 
 <details>
 <summary><b>手动三步（点开折叠）</b></summary>

@@ -1,0 +1,45 @@
+# dsh-src 本机唯一配置入口。含 FOFA 凭据：仓库已转私有，本文件随仓库跟踪（capabilities.yaml），
+# 仓库必须保持私有、勿公开；本机运行时入口仍是此文件（src_add_capability 追加也写这里）。
+settings:
+  proxy: http://192.168.10.88:7893
+  fofaUv: /Users/lihua-dis/.local/bin/uv
+  fofaEmail: fbai1106@163.com
+  fofaKey: c37e23b2879049497c00c3dd02d5a849
+  fofaKeyBackup: 17c634211826cab2a5c28806fa42e451
+  fofaEmailBackup2: 599927799@qq.com
+  fofaKeyBackup2: e907eb76a438e7f3ab40557e63d41bff
+
+capabilities:
+  - id: jshook
+    from: npm:@jshookmcp/jshook@0.3.5
+    enabled: true
+    env: { MCP_TOOL_PROFILE: search, npm_config_omit: optional, npm_config_cache: /Users/lihua-dis/.dsh/.npm-cache }
+    when: >
+      遇到 JS 混淆/加密签名/Webpack 打包/小程序或浏览器流量需要运行时 Hook、CDP 调试、AST 反混淆、网络拦截与 Source Map 重建时
+  - id: demo-skill
+    from: git:file:///Users/lihua-dis/.dsh/demo-caps/demo-skill
+    kind: skill
+    scripts: [scripts/hello.sh, scripts/envinfo.sh]
+    when: 学习 caps-sync skill 型接入流程与演示审批闭环
+  - id: awesome-ai-reverse
+    from: git:https://github.com/darbra/awesome-ai-reverse
+    ref: main
+    kind: skill
+    docs: README.md
+    when: JS 逆向/二进制/Android 逆向任务需要查 AI 逆向生态工具索引与选型参考时（纯文档知识库，无脚本）
+  - id: local50-demo-skill
+    from: npm:left-pad@1.3.0
+    kind: skill
+    docs: README.md
+    when: local.50 UI 验收用的无害 npm skill
+  - id: clown-src-playbook
+    from: path:/Users/lihua-dis/Software/dsh-src/skills/clown-src-playbook
+    kind: skill
+    docs: DSH-ADAPTER.md
+    scripts: []
+    when: SRC 目标规划、接口建模、越权/认证链、注入/SSRF/XSS/上传/业务逻辑测试、攻击链升阶与报告证据审查
+  - id: fofa
+    from: path:/Users/lihua-dis/Software/dsh-src/mcp-servers/fofa_MCP
+    entry: fofa-launcher.mjs
+    enabled: true
+    when: 当前授权 SRC 目标的 FOFA 资产搜索；遵守 dsh-src 的资产边界、单种子闭环、限流和证据记录规则

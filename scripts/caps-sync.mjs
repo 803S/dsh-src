@@ -13,7 +13,7 @@
 //   npm registry 备选路线；npm 统一走 $DSH_HOME/.npm-cache 缓存（绕开 ~/.npm 权限坑）。
 //   本文件同时被 lib/src.js 的 src_add_capability 动态导入复用（parseCapsYaml/resolveFrom/
 //   appendCapabilityEntry 等纯函数），故主流程包在 main() 里、仅直接执行时运行。
-import { readFile, writeFile, mkdir, access, readdir, rm, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, readdir, rm, rename, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { homedir, EOL } from "node:os";
@@ -142,8 +142,8 @@ function npmPkgName(from) {
 	const at = s.lastIndexOf("@");
 	return at > 0 ? s.slice(0, at) : s;
 }
-/* [local.41] skill 型能力的实际目录：git 型=clone 目录；npm 型=dest/node_modules/<pkg>。 */
-function skillCapDir(c) { return c.from.startsWith("git:") ? path.join(capsDir, c.id) : path.join(capsDir, c.id, "node_modules", npmPkgName(c.from)); }
+/* [local.41] skill 型能力的实际目录：npm 型=dest/node_modules/<pkg>；[local.55] git:/path: 型=clone/拷贝目录。 */
+function skillCapDir(c) { return c.from.startsWith("npm:") ? path.join(capsDir, c.id, "node_modules", npmPkgName(c.from)) : path.join(capsDir, c.id); }
 function log(msg) { console.log(msg); }
 function die(msg) { console.error(`✗ ${msg}`); process.exit(1); }
 
@@ -154,7 +154,8 @@ function oneLine(v) { return String(v).replace(/[\r\n\t]+/g, " ").replace(/\s{2,
 function serializeCapabilityEntry(entry) {
 	if (!entry || typeof entry !== "object") throw new Error("条目必须是对象");
 	if (typeof entry.id !== "string" || !CAP_ID_RE.test(entry.id)) throw new Error(`id「${String(entry.id)}」不合法（小写字母开头，仅小写字母/数字/连字符，≤31 字符）`);
-	if (typeof entry.from !== "string" || !/^(npm|git):/.test(entry.from) || entry.from.length <= 4) throw new Error(`from「${String(entry.from)}」必须以 npm: 或 git: 开头`);
+	if (typeof entry.from !== "string" || !/^(npm|git|path):/.test(entry.from) || entry.from.length <= (entry.from.startsWith("path:") ? 5 : 4)) throw new Error(`from「${String(entry.from)}」必须以 npm: / git: / path: 开头（path: 为本机目录直装，指向仓库内能力目录）`);
+	if (entry.from.startsWith("path:") && !entry.from.slice(5).startsWith("/")) throw new Error(`from「${entry.from}」的 path: 来源必须是绝对路径（如 path:/Users/…/dsh-src/skills/xxx）`);
 	const kind = entry.kind ?? "mcp";
 	if (kind !== "mcp" && kind !== "skill") throw new Error("kind 必须是 mcp 或 skill");
 	const rel = (v, name) => {
@@ -212,6 +213,13 @@ async function resolveFrom(rawInput, opts = {}) {
 	const input = String(rawInput ?? "").trim();
 	if (input === "") throw new Error("from 不能为空");
 	if (/^(npm|git):/.test(input)) return { from: input, resolvedVia: "显式指定" };
+	/* [local.55] path: 本机目录直装（仓库内能力目录）：仅校验存在性，不做网络探测。 */
+	if (input.startsWith("path:")) {
+		const dir = input.slice(5);
+		if (!dir.startsWith("/")) throw new Error("path: 来源必须是绝对路径（如 path:/Users/…/dsh-src/skills/xxx）");
+		if (!existsSync(dir)) throw new Error(`path: 来源目录不存在：${dir}`);
+		return { from: input, resolvedVia: "本机目录直装（path:）" };
+	}
 	let owner = null, repo = null;
 	const gh = input.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)/);
 	if (gh) { owner = gh[1]; repo = gh[2].replace(/\.git$/, ""); }
@@ -237,6 +245,7 @@ function deriveCapId(from) {
 		const name = at > 0 ? s.slice(0, at) : s;
 		base = name.includes("/") ? name.split("/").pop() ?? "" : name;
 	} else if (f.startsWith("git:")) base = f.slice(4).replace(/\/+$/, "").replace(/\.git$/, "").split("/").pop() ?? "";
+	else if (f.startsWith("path:")) base = f.slice(5).replace(/\/+$/, "").split("/").pop() ?? "";
 	base = base.toLowerCase();
 	return CAP_ID_RE.test(base) ? base : "";
 }
@@ -320,7 +329,8 @@ for (const c of caps) {
 	if (seen.has(c.id)) die(`id 重复：${c.id}`);
 	seen.add(c.id);
 	if (!/^[a-z][a-z0-9-]{1,30}$/.test(c.id)) die(`id「${c.id}」不合法（小写字母开头，仅小写字母/数字/连字符，≤31 字符）`);
-	if (!/^(npm|git):/.test(c.from)) die(`${c.id}: from 必须以 npm: 或 git: 开头`);
+	if (!/^(npm|git|path):/.test(c.from)) die(`${c.id}: from 必须以 npm: / git: / path: 开头`);
+	if (c.from.startsWith("path:") && !c.from.slice(5).startsWith("/")) die(`${c.id}: path: 来源必须是绝对路径`);
 	/* [local.41] kind: mcp（默认）= 接 MCP 工具面；skill = 文档+白名单脚本（审批后本地执行）。 */
 	if (!["mcp", "skill"].includes(c.kind ?? "mcp")) die(`${c.id}: kind 必须是 mcp 或 skill（省略默认 mcp）`);
 	if ((c.kind ?? "mcp") === "skill") {
@@ -361,6 +371,62 @@ for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("git
 				if (dryRun) { log(`[dry] ${c.id}: 将在 ${staging} 执行构建`); continue; }
 				log(`→ ${c.id}: 构建…`);
 				const buildResult = await run("bash", ["-lc", c.build], { cwd: staging, env: proxyEnv, timeoutMs: 300000 });
+				if (buildResult.code !== 0) { log(`✗ ${c.id}: 构建失败（保留既有安装）：${(buildResult.err || buildResult.out).slice(-300)}`); notReady.add(c.id); continue; }
+				log(`✓ ${c.id}: 构建完成`);
+			}
+			const backup = `${dest}.backup-${process.pid}-${Date.now()}`;
+			let movedOld = false;
+			try {
+				if (existsSync(dest)) { await rename(dest, backup); movedOld = true; }
+				await rename(staging, dest);
+				if (movedOld) await rm(backup, { recursive: true, force: true });
+			} catch (e) {
+				if (movedOld && !existsSync(dest) && existsSync(backup)) await rename(backup, dest);
+				throw e;
+			}
+		} finally {
+			if (existsSync(staging)) await rm(staging, { recursive: true, force: true });
+		}
+	}
+}
+
+// ── ①¼ 安装 path 型（本机目录直装，无嵌套 git：仓库即唯一源头）──────────────────
+/* [local.55] dsh-src 仓库转私有后，skill/mcp 源头收编回仓库；capabilities.yaml 的 from:
+ * 指向仓库内目录（如 path:/Users/…/dsh-src/skills/clown-src-playbook），本循环把目录
+ * 拷贝到 capsDir/<id>（排除 .git/.venv/node_modules 等运行时产物），staging+rename 原子替换。 */
+const PATH_INSTALL_EXCLUDE = new Set([".git", ".venv", "node_modules", "__pycache__", ".DS_Store"]);
+async function copyTreeInto(srcDir, destDir) {
+	await mkdir(destDir, { recursive: true });
+	for (const ent of await readdir(srcDir, { withFileTypes: true })) {
+		if (PATH_INSTALL_EXCLUDE.has(ent.name)) continue;
+		const s = path.join(srcDir, ent.name);
+		const d = path.join(destDir, ent.name);
+		if (ent.isDirectory()) await copyTreeInto(s, d);
+		else if (ent.isFile()) await copyFile(s, d);
+		/* 符号链接等其它类型跳过（能力目录内不应有） */
+	}
+}
+for (const c of caps.filter((x) => x.enabled !== false && x.from.startsWith("path:"))) {
+	const srcDir = c.from.slice(5);
+	if (!srcDir.startsWith("/")) die(`${c.id}: path: 来源必须是绝对路径（如 path:/Users/…/dsh-src/skills/xxx）`);
+	if (!existsSync(srcDir)) die(`${c.id}: path: 来源目录不存在：${srcDir}`);
+	const dest = path.join(capsDir, c.id);
+	const marker = path.join(dest, ".caps-src");
+	const wantFrom = c.from;
+	const already = existsSync(marker) ? JSON.parse(await readFile(marker, "utf8")) : null;
+	if (already?.from === wantFrom) {
+		log(`= ${c.id}: 已安装在 ${dest}（来源一致跳过；源头更新后删目录重跑 sync）`);
+	} else {
+		if (dryRun) { log(`[dry] ${c.id}: 将拷贝 ${srcDir} → ${dest}`); continue; }
+		log(`→ ${c.id}: 拷贝 ${srcDir} → ${dest}`);
+		await mkdir(capsDir, { recursive: true });
+		const staging = path.join(capsDir, `.${c.id}.staging-${process.pid}-${Date.now()}`);
+		try {
+			await copyTreeInto(srcDir, staging);
+			await writeFile(path.join(staging, ".caps-src"), JSON.stringify({ from: wantFrom, ref: c.ref ?? null, installedAt: new Date().toISOString() }, null, 2) + EOL);
+			if (c.build) {
+				log(`→ ${c.id}: 构建…`);
+				const buildResult = await run("bash", ["-lc", c.build], { cwd: staging, timeoutMs: 300000 });
 				if (buildResult.code !== 0) { log(`✗ ${c.id}: 构建失败（保留既有安装）：${(buildResult.err || buildResult.out).slice(-300)}`); notReady.add(c.id); continue; }
 				log(`✓ ${c.id}: 构建完成`);
 			}
