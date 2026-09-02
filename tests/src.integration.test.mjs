@@ -5,11 +5,17 @@ import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
 import { routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
+/* [local.54] 凭证库隔离：全测试默认指向临时 DSH_HOME，防止 src_add_test_account / src_http 自动入库
+   把测试凭据写进真实 ~/.dsh/storages/src-credentials/。需要真实路径的测试自行覆盖后恢复。 */
+const __dshHomePrev = process.env.DSH_HOME;
+const __dshHomeTmp = nodePath.join(nodeOs.tmpdir(), `dsh-src-test-home-${process.pid}-${Date.now()}`);
+process.env.DSH_HOME = __dshHomeTmp;
+process.on("exit", () => { try { rmSync(__dshHomeTmp, { recursive: true, force: true }); } catch {} });
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
    仍要求：①同一测试内不同会话用不同 id；②新增 id 一律描述性命名（≥3 字符，禁止 p/x 单字符——
@@ -30,6 +36,12 @@ class MemoryDomain {
     return this.tables.get(name);
   }
   async close() {}
+}
+
+/* [local.54] 测试辅助：按 credentialRef 从测试隔离 DSH_HOME 的凭证库读回明文（验证 vault 往返）。 */
+async function readCredentialForTest(ref) {
+	const { readCredential } = await import("../lib/src/credentials.js");
+	return readCredential({ dshHome: process.env.DSH_HOME, ref });
 }
 
 function harness() {
@@ -672,7 +684,13 @@ test("src_import_traffic parses HAR, records full auth profiles and skips out-of
   assert.equal(state.assets.some((a) => a.type === "endpoint" && a.value === "app.example.test/resume"), true);
   const authFact = state.facts.find((f) => f.kind === "auth-profile" && /cookie/i.test(f.detail));
   assert.ok(authFact, "auth fact recorded");
-  assert.match(authFact.detail, /SESSION=abcdef123456/);
+  /* [local.54] 认证头入凭证库：fact 只存 header 名 + credentialRef，不落明文。 */
+  assert.match(authFact.detail, /credential:\/\//);
+  assert.doesNotMatch(authFact.detail, /SESSION=abcdef123456/);
+  assert.ok(result.credentialRefs.length >= 1, "credentialRefs returned");
+  assert.match(result.credentialRefs[0].credentialRef, /^credential:\/\//);
+  /* 登记的 testAccount 行也可引用 */
+  assert.equal(state.testAccounts.some((r) => r.label.startsWith("imported-cookie-")), true);
 });
 
 test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
@@ -688,7 +706,9 @@ test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
   assert.ok(mcpObs, "burp-mcp observation recorded");
   const authFact = state.facts.find((f) => f.kind === "auth-profile" && /authorization/i.test(f.detail));
   assert.ok(authFact, "auth fact recorded");
-  assert.match(authFact.detail, /Bearer eyJhbGciOiJIUzI1NiJ9xyz/);
+  /* [local.54] 认证头入凭证库：不落明文，只存引用。 */
+  assert.match(authFact.detail, /credential:\/\//);
+  assert.doesNotMatch(authFact.detail, /Bearer eyJhbGciOiJIUzI1NiJ9xyz/);
 });
 
 test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + finalize rawRequest 门禁", async () => {
@@ -1817,26 +1837,38 @@ test("[local.22] blindSpots schema 校验：非法 status 被框架拒绝", asyn
   ] }, parent), /maybe|status|enum|invalid/i);
 });
 
-test("[local.23] testAccounts 列表：登记/去重/投影/向后兼容单值", async () => {
+test("[local.23/54] testAccounts 列表：登记/去重/投影/凭证库引用/向后兼容单值", async () => {
   const h = harness();
   const parent = h.exec("g23ac");
   await h.run("src_add_goal", { target: "https://example.test", objective: "矩阵", authorization: "t" }, parent);
-  // 登记 A 账号
+  // 登记 A 账号（凭据入凭证库，只返回引用）
   const a = await h.run("src_add_test_account", { label: "商家账号A", credential: "Cookie: sid=aaa; role=merchant", note: "商家端" }, parent);
   assert.equal(a.updated, false);
   assert.match(a.id, /^testAccount-/);
+  assert.match(a.credentialRef, /^credential:\/\/[a-f0-9]{64}$/);
+  // 凭证库文件真实存在且可读回原值
+  const { readCredential, credentialVaultDir } = await import("../lib/src/credentials.js");
+  const secret = await readCredential({ dshHome: process.env.DSH_HOME, ref: a.credentialRef });
+  assert.equal(secret, "Cookie: sid=aaa; role=merchant");
   // 同 label 去重覆盖
   const a2 = await h.run("src_add_test_account", { label: "商家账号A", credential: "Cookie: sid=aaa2" }, parent);
   assert.equal(a2.updated, true);
   assert.equal(a2.id, a.id);
-  // 登记 B 账号
-  await h.run("src_add_test_account", { label: "管理员号B", credential: "Authorization: Bearer admintoken", note: "管理端" }, parent);
+  assert.notEqual(a2.credentialRef, a.credentialRef);
+  // 已有引用可免重复粘贴：credentialRef 直接登记新 label
+  const b = await h.run("src_add_test_account", { label: "管理员号B", credentialRef: a2.credentialRef }, parent);
+  assert.equal(b.updated, false);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.testAccounts.length, 2);
   assert.equal(state.counts.testAccounts, 2);
   assert.equal(state.testAccounts.some((r) => r.label === "管理员号B"), true);
-  // credential 不暴露进投影（只暴露 label/note/observationId）
+  // credential 不暴露进投影（只暴露 label/note/observationId/credentialRef）
   assert.equal(state.testAccounts.every((r) => !("credential" in r)), true);
+  // 凭证库文件按指纹落盘（vault 目录为全测试进程共享，只验证本测试的两条引用各自成文件）
+  const { readdirSync } = await import("node:fs");
+  const vaultFiles = new Set(readdirSync(credentialVaultDir(process.env.DSH_HOME)).filter((f) => f.endsWith(".json")));
+  assert.equal(vaultFiles.has(a.credentialRef.replace("credential://", "") + ".json"), true);
+  assert.equal(vaultFiles.has(a2.credentialRef.replace("credential://", "") + ".json"), true);
   // 向后兼容：infra.testAccount 单值也进列表（label=legacy-infra）
   await h.run("src_set_infra", { key: "testAccount", value: "user:pass" }, parent);
   const state2 = await h.run("src_state", {}, parent);
@@ -2050,6 +2082,51 @@ test("[local.26/31] src_http 无审批服务仍能挂起为 pending（异步队�
     const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "1", authorization: "Bearer t" }, justification: "删改" }, parent);
     assert.equal(result.approval, "pending", "无审批服务也挂起为 pending（不抛错）");
     assert.ok(/^approval-\d+$/.test(result.pendingApprovalId));
+  } finally { server.close(); }
+});
+test("[local.54] src_http credentialRef：放行请求注入认证头 + 挂起待审脱敏存储 + 批准重放凭据重注入", async () => {
+  const seen = [];
+  const server = http.createServer((req, res) => { seen.push({ url: req.url, cookie: req.headers.cookie ?? "", authorization: req.headers.authorization ?? "", userId: req.headers["x-user-id"] ?? "" }); res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harness();
+  const parent = h.exec("http54");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证 credentialRef 全链路" }, parent);
+  try {
+    /* ① 登记测试账号 → 凭据入库，只拿 credentialRef。 */
+    const acct = await h.run("src_add_test_account", { label: "用户A", credential: "Cookie: sid=hunter-token-abc; role=user", note: "对照号" }, parent);
+    assert.match(acct.credentialRef, /^credential:\/\/[a-f0-9]{64}$/);
+    /* ② 放行分支：credentialRef 注入 Cookie 头（headers 只传非敏感头）。 */
+    const ok = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/orders/list`, method: "GET", headers: { "x-user-id": "7" }, credentialRef: acct.credentialRef, justification: "读订单无破坏性" }, parent);
+    assert.equal(ok.approval, "allowed-auto");
+    assert.equal(ok.status, 200);
+    assert.equal(seen[0].cookie, "sid=hunter-token-abc; role=user", "凭据库 Cookie 已注入");
+    assert.equal(seen[0]["x-user-id"] || seen[0].userId, "7", "非敏感头透传");
+    /* ③ 挂起分支：credentialRef 请求挂起，待审行 headers 脱敏（无明文 Cookie），credentialRef 落库。 */
+    const pending = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { "x-user-id": "15" }, credentialRef: acct.credentialRef, justification: "删改待审：验证脱敏与重放" }, parent);
+    assert.equal(pending.approval, "pending");
+    const state = await h.run("src_state", {}, parent);
+    const row = state.pendingApprovals.find((r) => r.id === pending.pendingApprovalId);
+    assert.ok(row, "待审行进投影");
+    assert.doesNotMatch(row.headers, /hunter-token-abc/, "待审行 headers 不含明文凭据");
+    assert.doesNotMatch(JSON.stringify(row), /hunter-token-abc/, "待审行整体不含明文凭据");
+    assert.match(row.credentialRef, /^credential:\/\//, "待审行存 credentialRef");
+    /* ④ 批准重放：凭据从凭证库重注入，mock 收到完整 Cookie。 */
+    const approved = await h.run("src_resolve_approval", { id: pending.pendingApprovalId, action: "allow", note: "可信测试号" }, parent);
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.responseStatus, 200);
+    assert.equal(seen[1].cookie, "sid=hunter-token-abc; role=user", "重放时凭据重注入");
+    assert.equal(seen.length, 2, "只发了两次请求");
+    /* ⑤ 旧习惯直粘认证头：挂起时自动入库脱敏，重放仍能恢复。 */
+    const legacy = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "3", authorization: "Bearer legacy-raw-token" }, justification: "旧式内联认证头自动入库" }, parent);
+    assert.equal(legacy.approval, "pending");
+    const state2 = await h.run("src_state", {}, parent);
+    const row2 = state2.pendingApprovals.find((r) => r.id === legacy.pendingApprovalId);
+    assert.doesNotMatch(JSON.stringify(row2), /legacy-raw-token/, "内联认证头自动入库后待审行无明文");
+    assert.match(row2.credentialRef, /^credential:\/\//, "内联认证头自动转 credentialRef");
+    const approved2 = await h.run("src_resolve_approval", { id: legacy.pendingApprovalId, action: "allow" }, parent);
+    assert.equal(approved2.responseStatus, 200);
+    assert.equal(seen[2].authorization, "Bearer legacy-raw-token", "内联凭据重放恢复");
   } finally { server.close(); }
 });
 test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
@@ -3347,6 +3424,86 @@ test("单一 mutation API 保持 store/event/projection 三账本一致 [local.5
 		/synthetic mutation events require/,
 		"无 name 的事件必须在 mutation 边界失败"
 	);
+});
+
+/* [local.54] 凭证库基础行为：写入/读回/校验/脱敏/头解析（独立临时 DSH_HOME，不碰真实 ~/.dsh）。 */
+test("[local.54] credentials 模块：指纹写入/读回校验/脱敏/头解析", async () => {
+	const { writeCredential, readCredential, redactCredential, redactText, credentialHeaders, stripCredentialHeaders, credentialVaultDir } = await import("../lib/src/credentials.js");
+	const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "creds54-"));
+	try {
+		const written = await writeCredential({ dshHome: tmp, sessionId: "sess54", label: "用户A", credential: "Cookie: sid=abc; role=user" });
+		assert.match(written.ref, /^credential:\/\/[a-f0-9]{64}$/);
+		/* 同凭据重复写 = 同一指纹文件（内容寻址幂等）。 */
+		const again = await writeCredential({ dshHome: tmp, sessionId: "sess54b", label: "用户A2", credential: "Cookie: sid=abc; role=user" });
+		assert.equal(again.ref, written.ref);
+		/* 读回 + 篡改检测。 */
+		assert.equal(await readCredential({ dshHome: tmp, ref: written.ref }), "Cookie: sid=abc; role=user");
+		await assert.rejects(() => readCredential({ dshHome: tmp, ref: "credential://" + "0".repeat(64) }), /凭证文件|校验失败|ENOENT/);
+		await assert.rejects(() => readCredential({ dshHome: tmp, ref: "not-a-ref" }), /格式非法/);
+		/* 脱敏：认证头整行替换，非认证头保留，Bearer token 掩码。 */
+		assert.equal(redactCredential("Cookie: sid=secret"), "Cookie: <stored>");
+		assert.equal(redactCredential("X-Custom: visible"), "X-Custom: visible");
+		assert.equal(redactCredential("Authorization: Bearer abc.def"), "Authorization: <stored>");
+		assert.equal(redactText("https://x.test/a?token=rawsecret&b=2"), "https://x.test/a?token=<stored>&b=2");
+		/* 头解析：多行凭据 → 认证头映射；非凭据文本报错。 */
+		assert.deepEqual(credentialHeaders("Cookie: sid=1\r\nAuthorization: Bearer t"), { Cookie: "sid=1", Authorization: "Bearer t" });
+		assert.deepEqual(credentialHeaders("Bearer rawjwt"), { Authorization: "Bearer rawjwt" });
+		/* [local.54] user:pass 对照账号 → Basic；纯用户名无法注入。 */
+		assert.deepEqual(credentialHeaders("alice:hunter-secret-pass"), { Authorization: `Basic ${Buffer.from("alice:hunter-secret-pass").toString("base64")}` });
+		assert.throws(() => credentialHeaders("alice"), /无法解析为认证头/);
+		assert.throws(() => credentialHeaders("User-Agent: x"), /无法解析为认证头/);
+		/* strip：只剥认证头。 */
+		assert.deepEqual(stripCredentialHeaders({ Cookie: "a", Authorization: "b", "X-User-Id": "7" }), { "X-User-Id": "7" });
+		/* 目录权限 0700 + 文件 0600（非 Windows）。 */
+		const { statSync, readdirSync } = await import("node:fs");
+		if (process.platform !== "win32") {
+			assert.equal(statSync(credentialVaultDir(tmp)).mode & 0o777, 0o700);
+			const f = readdirSync(credentialVaultDir(tmp)).find((x) => x.endsWith(".json"));
+			assert.equal(statSync(nodePath.join(credentialVaultDir(tmp), f)).mode & 0o777, 0o600);
+		}
+	} finally { await fsPromises.rm(tmp, { recursive: true, force: true }); }
+});
+
+/* [local.54] 深层 undefined 剥离：嵌套对象/数组里的显式 undefined 不再污染 lossless 输出。 */
+test("[local.54] snapshot 深层 undefined 剥离 + 域笔记渲染不出现 undefined", async () => {
+	const h = harness();
+	const parent = h.exec("g54deep");
+	await h.run("src_add_goal", { target: "https://example.test", objective: "深 undefined", authorization: "t" }, parent);
+	/* 域笔记 render：title 必须出现在输出（旧 bug：schema 漏声明导致渲染「undefined」）。 */
+	const note = await h.run("src_record_domain_note", { category: "pitfall", title: "某接口限流 5rps", content: "现象：…" }, parent);
+	const tool = h.tools.get("src_record_domain_note");
+	const rendered = tool.output.render({}, note).map((r) => r.text).join("");
+	assert.match(rendered, /某接口限流 5rps/);
+	assert.doesNotMatch(rendered, /undefined/);
+	/* finding 携带嵌套 affectedAssetId: undefined 时 state 输出仍 lossless。 */
+	await h.run("src_add_intent", { title: "i", goalId: "goal-1" }, parent);
+	const factEvidence = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET /x -> 200 他人手机号", confidence: 0.9 }, parent)).id;
+	await h.run("src_add_finding", { intentId: "intent-1", title: "f", severity: "low", impact: "x", victimImpact: "受害者视角：普通用户资料被读取且无从察觉", attackPrerequisites: "利用前提：仅需注册普通账号即可遍历", affectedScope: "s", remediation: "r", pocEvidence: ["p"], reproducibleSteps: ["s"], concreteLossEvidence: [factEvidence] }, parent);
+	const state = await h.run("src_state", {}, parent);
+	assert.equal(isJsonValue(state), true, "state 输出必须 lossless（嵌套 undefined 已剥离）");
+});
+
+/* [local.54] 面板/工具通道的 testAccount 凭据自动入凭证库：infra 表与返回值只存引用。 */
+test("[local.54] src_set_infra testAccount 明文自动入凭证库（infra 只存 credentialRef）", async () => {
+	const h = harness();
+	const parent = h.exec("g54infra");
+	await h.run("src_add_goal", { target: "https://example.test", objective: "infra 凭据入库存", authorization: "t" }, parent);
+	const saved = await h.run("src_set_infra", { key: "testAccount", value: "alice:hunter-secret-pass" }, parent);
+	assert.match(saved.value, /^credential:\/\/[a-f0-9]{64}$/, "infra 值变成 credentialRef");
+	/* 旧版兼容：view 仍列出 legacy-infra 行。 */
+	const state = await h.run("src_state", {}, parent);
+	assert.equal(state.testAccounts.some((r) => r.label === "legacy-infra"), true);
+	assert.equal(state.testAccounts.every((r) => !("credential" in r)), true);
+	/* get_infra 读到的也是引用（agent 拿引用去 src_http，不再见明文）。 */
+	const got = await h.run("src_get_infra", { key: "testAccount" }, parent);
+	assert.match(JSON.stringify(got), /credential:\/\//);
+	assert.doesNotMatch(JSON.stringify(got), /hunter-secret-pass/, "get_infra 不再返回明文凭据");
+	/* 引用可直接用在 src_http（vault 能读回）。 */
+	const vault = await readCredentialForTest(saved.value);
+	assert.equal(vault, "alice:hunter-secret-pass");
+	/* user:pass 经 credentialHeaders 还原成 Basic 认证头（面板文档格式闭环）。 */
+	const { credentialHeaders } = await import("../lib/src/credentials.js");
+	assert.match(credentialHeaders(vault).Authorization ?? "", /^Basic /);
 });
 
 /* [local.50a] 工具清单冻结闸：拆包前锁定名称与注册顺序；preset toolFilter 依赖顺序，漏迁/重排必须立即失败。 */

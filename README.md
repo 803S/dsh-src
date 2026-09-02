@@ -42,6 +42,7 @@
 - WAF 三层纪律：识别保护信号即停 → 有界绕过研究（逐变体低并发差分）→ 绝不无界暴力。
 - 允许有界爆破（登录弱口令等），禁止 DoS、代理池轮换、captcha 破解、隐蔽大规模扫描。
 - finding 必须包含可复现步骤、影响论证、受影响范围、修复建议和至少一条 POC；未复现内容只能作为 fact/hypothesis。
+- **凭据零明文**：粘贴的 Cookie/Authorization/密码自动存入本地凭证库（`$DSH_HOME/storages/src-credentials/`，内容寻址、目录 0700/文件 0600），会话记录、待审队列、事件流里只留 `credential://` 引用与指纹；`src_http` 用 `credentialRef` 注入认证头，待审行存储脱敏报文、批准重放时才从凭证库取回。
 
 ---
 
@@ -228,6 +229,7 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 ## 数据与隐私
 
 - 所有记录写入本机 `$DSH_HOME/storages/src-sessions.db`（sqlite），不出网。
+- 测试凭据（Cookie/Authorization/密码）另存本地凭证库 `$DSH_HOME/storages/src-credentials/`（内容寻址文件、0700/0600 权限），数据库与会话事件只存 `credential://` 引用，不落明文。
 - 包本身零运行时依赖、零遥测；Google dorks 等被动采集直接从你本机发出。
 
 ## 界面预览
