@@ -16,6 +16,14 @@ capabilities:
     docs: DSH-ADAPTER.md
     scripts: []
     when: SRC 目标规划、接口建模、越权/认证链、注入/SSRF/XSS/上传/业务逻辑测试、攻击链升阶与报告证据审查
+  - id: wechat-mp-reader
+    from: path:/Users/lihua-dis/Software/dsh-src/skills/wechat-mp-reader
+    kind: skill
+    when: 需要读取微信公众号文章全文（漏洞方法论/技术文章）时；curl+浏览器 UA 直抓服务端渲染正文，无需 headless
+  - id: src-rules-scraper
+    from: path:/Users/lihua-dis/Software/dsh-src/skills/src-rules-scraper
+    kind: skill
+    when: 抓取厂商 SRC 平台的测试范围/规则/奖励标准时；SPA+JSON API 通用方法论（美团/小米已验证），与 wechat-mp-reader 衔接
   - id: fofa
     from: path:/Users/lihua-dis/Software/dsh-src/mcp-servers/fofa_MCP
     entry: fofa-launcher.mjs
