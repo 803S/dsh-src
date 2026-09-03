@@ -2416,6 +2416,122 @@ test("[local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事�
   assert.ok(st.assets.some((a) => a.value === "other-brand.test" && a.status === "excluded"), "投影资产含否决域");
 });
 
+/* [local.57] 子代理 src_add_asset 跨会话写入的投影对齐：中通会话实测漂移——子代理把资产写入
+   engagement（父）单元（store 91 条），但父会话日志里没有任何 src_add_asset 事件（常规 tool/call
+   只落在子代理自己的日志），历史加载按父日志 fold 只余 43 条。修复：跨会话写入时实时合成
+   src_add_asset 投影事件进父日志（父自身调用不重复合成；src_submit 显式带同一资产时 store 判重、
+   也不会双投影）；折叠父日志全量事件必须与 store 资产集合一致。 */
+test("[local.57] 子代理 src_add_asset 实时合成父投影事件：fold 父日志与 store 资产对齐", async () => {
+  const h = harness();
+  const parent = h.exec("l57p");
+  const child = h.exec("l57c", "l57p");
+  /* harness 的 h.run 直连 execute 不落会话日志；真实宿主会把常规 tool/call append 进日志。
+     这里模仿宿主：父的常规调用也落父日志，保证 fold 对齐断言忠实于生产语义。 */
+  const parentEvents = h.sessions.get("l57p").events;
+  let manualSeq = 0;
+  const loggedRun = async (name, args, execution) => {
+    const out = await h.run(name, args, execution);
+    parentEvents.push({ type: "tool/call", data: { turn: 1, step: ++manualSeq, callId: `call-manual-${manualSeq}`, name, arguments: JSON.stringify(args) } });
+    return out;
+  };
+  await loggedRun("src_add_goal", { target: "zto.test", objective: "投影对齐验证" }, parent);
+  const intent = await loggedRun("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
+  const syntheticCount = () => h.sessions.get("l57p").events.filter((e) => e.type === "tool/call" && String(e.data?.callId ?? "").startsWith("src-submit-") && e.data?.name === "src_add_asset").length;
+  /* 父自己登记：常规 tool/call 已在父日志，不得重复合成 */
+  await loggedRun("src_add_asset", { type: "root-domain", value: "zto.test", source: "goal 主域" }, parent);
+  assert.equal(syntheticCount(), 0, "父自身调用不得合成");
+  /* 子代理直接登记 14 条（复刻中通 recon child） */
+  for (let i = 1; i <= 14; i++) await h.run("src_add_asset", { type: "subdomain", value: `n${i}.ztoglobal.test`, source: "crt.sh 证书日志" }, child);
+  assert.equal(syntheticCount(), 14, "每条跨会话登记都要合成进父日志");
+  const syntheticEvents = h.sessions.get("l57p").events.filter((e) => e.type === "tool/call" && String(e.data?.callId ?? "").startsWith("src-submit-") && e.data?.name === "src_add_asset");
+  for (const e of syntheticEvents) assert.ok(typeof e.data.callId === "string" && e.data.callId.length > "src-submit-".length, "合成事件必须带唯一 callId");
+  /* 子代理再显式 submit 同一批：store 判重后 accepted 为 0，不得双投影 */
+  const sub = await h.run("src_submit", { intentId: intent.id, stage: "completed", summary: "recon done", assets: Array.from({ length: 14 }, (_, i) => ({ type: "subdomain", value: `n${i + 1}.ztoglobal.test`, source: "crt.sh 证书日志" })) }, child);
+  assert.equal(sub.assets, 0, "重复资产不重复受理");
+  assert.equal(syntheticCount(), 14, "src_submit 对已合成资产不再追加投影");
+  /* 终极对齐：fold 父日志全部 tool/call 事件 → 投影资产数必须等于 store 资产数（历史加载视角） */
+  const storeCount = (await h.run("src_state", {}, parent)).counts.assets;
+  let st = srcInitialState;
+  for (const ev of parentEvents) if (ev.type === "tool/call") st = applySrcEvent(st, ev);
+  assert.equal(st.assets.length, storeCount, "fold 父日志的资产数必须与 store 一致（含子代理登记的 14 条）");
+  assert.ok(st.assets.some((a) => a.value === "n7.ztoglobal.test" && a.status === "confirmed"), "子代理登记的资产在投影可见");
+});
+
+/* [local.57] src_fetch_policy SPA/反爬检测：正文拿不到时必须主动引导去 src_list_capabilities
+   找抓取方法论 skill（中通会话实测：sec.zto.com SPA + 公众号反爬，已装 skill 没被想起，指挥官自行放弃）。 */
+test("[local.57] src_fetch_policy SPA 空壳/短响应给出能力清单引导，正常正文不给提示", async () => {
+  const h = harness();
+  const parent = h.exec("l57f");
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    if (req.url === "/spa") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><html><head><title>中通安全应急响应中心（ZSRC）</title></head><body><div id=\"app\"></div><script src=/app.js></script></body></html>");
+    } else if (req.url === "/ok") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><body><p>中通 SRC 收录标准：严重漏洞给予积分奖励，具体评级由安全团队复核确定，范围包括 Web 应用、移动客户端与 API 接口等多类资产。</p></body></html>");
+    } else { res.writeHead(404); res.end("nope"); }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const spa = await h.run("src_fetch_policy", { url: `http://127.0.0.1:${port}/spa` }, parent);
+    assert.match(spa.text, /ZSRC|ZSRC|中通/, "SPA 页标题文本仍在");
+    assert.ok(spa.scrapeHint, "SPA 空壳必须给引导提示");
+    assert.match(spa.scrapeHint, /src_list_capabilities/, "提示必须引导到能力清单");
+    assert.match(spa.scrapeHint, /src-rules-scraper/, "提示点名规则抓取方法论 skill");
+    const ok = await h.run("src_fetch_policy", { url: `http://127.0.0.1:${port}/ok` }, parent);
+    assert.equal(ok.scrapeHint, void 0, "正常正文不得给提示");
+    assert.equal(ok.text.includes("scrapeHint"), false);
+  } finally { server.close(); }
+});
+
+/* [local.57] src_add_intent 锚点自愈：中通会话实测模型建 intent 时两锚点全漏，报
+   exactly-one-anchor 错浪费一整轮重试。锚点缺失时自动锚到当前 goal；无 goal 报错指向 src_add_goal。 */
+test("[local.57] src_add_intent 锚点缺失自动锚到当前 goal，无 goal 指路 src_add_goal", async () => {
+  const h = harness();
+  const parent = h.exec("l57i");
+  /* 无 goal：报错文案直接指路 src_add_goal */
+  await assert.rejects(
+    () => h.run("src_add_intent", { title: "no goal yet" }, parent),
+    /先调 src_add_goal/
+  );
+  const goal = await h.run("src_add_goal", { target: "zto.test", objective: "anchor heal" }, parent);
+  /* 两锚点全漏：自动锚到当前 goal，照常走 spawns */
+  const intent = await h.run("src_add_intent", { title: "被动侦察", priority: 8 }, parent);
+  assert.equal(intent.edgeKind, "spawns");
+  assert.equal(intent.sourceId, goal.id);
+  /* 两锚点同时出现：依旧报错（语义冲突不猜） */
+  const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: "d" }, parent);
+  await assert.rejects(
+    () => h.run("src_add_intent", { title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }, parent),
+    /exactly one anchor/
+  );
+});
+
+/* [local.57] src_add_goal 开局能力盘点：返回已安装能力 id/形态/触发场景（skill 用率根修——先知牌面）。 */
+test("[local.57] src_add_goal 返回 capabilities 盘点（无清单时缺省）", async () => {
+  const h = harness();
+  const parent = h.exec("l57g");
+  const goal = await h.run("src_add_goal", { target: "example.test", objective: "cap digest" }, parent);
+  /* 测试隔离 DSH_HOME 无能力清单：capabilities 缺省不落键（lossless 边界） */
+  assert.equal(goal.capabilities, void 0);
+  /* 有清单：返回 id/kind/when，停用项过滤，12 上限 */
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync("/tmp/l57-caps/.caps-src/capa/.dsh/capabilities", { recursive: true });
+  writeFileSync(process.env.DSH_HOME + "/capabilities.yaml", "settings: {}\ncapabilities:\n  - id: src-rules-scraper\n    kind: skill\n    from: path:/tmp/l57-caps\n    when: SPA 站抓取与厂商规则查询\n  - id: wechat-mp-reader\n    kind: skill\n    from: path:/tmp/l57-caps\n    when: 公众号文章读取\n  - id: disabled-one\n    kind: mcp\n    from: npm:x\n    enabled: false\n");
+  const h2 = harness();
+  const parent2 = h2.exec("l57g2");
+  const goal2 = await h2.run("src_add_goal", { target: "example.test", objective: "cap digest 2" }, parent2);
+  assert.ok(Array.isArray(goal2.capabilities));
+  const ids = goal2.capabilities.map((c) => c.id);
+  assert.ok(ids.includes("src-rules-scraper") && ids.includes("wechat-mp-reader"));
+  assert.equal(ids.includes("disabled-one"), false, "停用能力不进牌面");
+  const scraper = goal2.capabilities.find((c) => c.id === "src-rules-scraper");
+  assert.equal(scraper.kind, "skill");
+  assert.match(scraper.when, /SPA/);
+});
+
 /* [local.47] 全域往返校验：流程写完后，所有域表所有记录必须全部通过各自 valueSchema。
    存储域「写入时不校验、开盘时全量 zod 校验」——schema 与 writer 漂移只有往返测试能抓
    （local.44 给 ASSET 待审行写 method:"ASSET" 但 schema 枚举漏加，重启后开盘即炸，本测试就是补这个盲区）。 */
