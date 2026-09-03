@@ -10,28 +10,6 @@ settings:
   fofaKeyBackup2: e907eb76a438e7f3ab40557e63d41bff
 
 capabilities:
-  - id: jshook
-    from: npm:@jshookmcp/jshook@0.3.5
-    enabled: true
-    env: { MCP_TOOL_PROFILE: search, npm_config_omit: optional, npm_config_cache: /Users/lihua-dis/.dsh/.npm-cache }
-    when: >
-      遇到 JS 混淆/加密签名/Webpack 打包/小程序或浏览器流量需要运行时 Hook、CDP 调试、AST 反混淆、网络拦截与 Source Map 重建时
-  - id: demo-skill
-    from: git:file:///Users/lihua-dis/.dsh/demo-caps/demo-skill
-    kind: skill
-    scripts: [scripts/hello.sh, scripts/envinfo.sh]
-    when: 学习 caps-sync skill 型接入流程与演示审批闭环
-  - id: awesome-ai-reverse
-    from: git:https://github.com/darbra/awesome-ai-reverse
-    ref: main
-    kind: skill
-    docs: README.md
-    when: JS 逆向/二进制/Android 逆向任务需要查 AI 逆向生态工具索引与选型参考时（纯文档知识库，无脚本）
-  - id: local50-demo-skill
-    from: npm:left-pad@1.3.0
-    kind: skill
-    docs: README.md
-    when: local.50 UI 验收用的无害 npm skill
   - id: clown-src-playbook
     from: path:/Users/lihua-dis/Software/dsh-src/skills/clown-src-playbook
     kind: skill
