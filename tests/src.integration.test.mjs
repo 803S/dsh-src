@@ -2457,6 +2457,47 @@ test("[local.57] 子代理 src_add_asset 实时合成父投影事件：fold 父�
   assert.ok(st.assets.some((a) => a.value === "n7.ztoglobal.test" && a.status === "confirmed"), "子代理登记的资产在投影可见");
 });
 
+test("[capability] 收编链路：wx-minapp-recon 清单可见 + SKILL.md 可读含登录待办引导", async () => {
+  const h = harness();
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const repoSkill = path.resolve("skills/wx-minapp-recon");
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "caps-minapp-"));
+  const capsDir = path.join(tmp, "capabilities", "wx-minapp-recon");
+  fs.mkdirSync(capsDir, { recursive: true });
+  fs.cpSync(repoSkill, capsDir, { recursive: true });
+  /* 模拟 caps-sync 产物：index.json（含 status）+ capabilities.yaml（声明+when） */
+  fs.writeFileSync(path.join(tmp, "capabilities", "index.json"), JSON.stringify({ capabilities: [
+    { id: "wx-minapp-recon", kind: "skill", from: `path:${repoSkill}`, enabled: true, ambiguous: false, wired: false, when: "目标含微信小程序资产需要逆向审计时", status: "installed", dir: capsDir, docs: "SKILL.md", scripts: [] }
+  ] }, null, 2));
+  fs.writeFileSync(path.join(tmp, "capabilities.yaml"), [
+    "capabilities:",
+    "  - id: wx-minapp-recon",
+    `    from: path:${repoSkill}`,
+    "    kind: skill",
+    "    when: 目标含微信小程序资产需要逆向审计时"
+  ].join("\n"));
+  fs.mkdirSync(path.join(tmp, "profiles", "web"), { recursive: true });
+  fs.writeFileSync(path.join(tmp, "profiles", "web", "cordis.patch.yml"), "");
+  const prevHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = tmp;
+  try {
+    const list = await h.run("src_list_capabilities", {}, h.exec("cmd-1"));
+    const item = list.items.find((x) => x.id === "wx-minapp-recon");
+    assert.ok(item, "清单必须包含 wx-minapp-recon");
+    assert.equal(item.kind, "skill");
+    assert.equal(item.status, "installed");
+    assert.match(item.when, /小程序/, "when 必须声明小程序逆向场景");
+    const doc = await h.run("src_read_capability", { id: "wx-minapp-recon" }, h.exec("cmd-1"));
+    assert.match(doc.text, /请在微信打开目标小程序并确认登录/, "SKILL.md 必须含登录待办引导（agent 读到后才会提 src_user_todo）");
+    assert.match(doc.text, /wedecode/, "SKILL.md 含反编译依赖说明");
+  } finally {
+    if (prevHome === void 0) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 /* [local.57] src_fetch_policy SPA/反爬检测：正文拿不到时必须主动引导去 src_list_capabilities
    找抓取方法论 skill（中通会话实测：sec.zto.com SPA + 公众号反爬，已装 skill 没被想起，指挥官自行放弃）。 */
 test("[local.57] src_fetch_policy SPA 空壳/短响应给出能力清单引导，正常正文不给提示", async () => {

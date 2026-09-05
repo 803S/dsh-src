@@ -1,0 +1,19 @@
+{
+  "wechat": {
+    "old_format_path": "%USERPROFILE%\\Documents\\WeChat Files\\Applet",
+    "xwechat_users_path": "%APPDATA%\\Tencent\\xwechat\\radium\\users",
+    "note_old_format": "旧版微信(3.x)的小程序 wxapkg 存放目录，不同电脑可能因微信设置不同而自定义存储路径",
+    "note_xwechat": "新版微信(xwechat)的小程序存放目录，user hash 在不同电脑上不同"
+  },
+  "tools": {
+    "wedecode_cmd": "wedecode",
+    "node_cmd": "node",
+    "note_wedecode": "通过 npm i wedecode -g 全局安装后，如不在 PATH 中需改为完整路径",
+    "note_node": "Node.js 可执行文件路径，使用 nvm 等工具时路径可能变化"
+  },
+  "output": {
+    "decompile_dir": "decompile_output",
+    "report_dir": "report_output",
+    "note": "反编译结果和审计报告的默认输出目录，可自定义"
+  }
+}
