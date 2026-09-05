@@ -2509,6 +2509,133 @@ test("[local.57] src_add_intent 锚点缺失自动锚到当前 goal，无 goal �
   );
 });
 
+/* [local.58] fold 层锚点自愈镜像：宿主日志落的是模型原始参数（无 goalId），local.57 只修 execute 层导致
+   中通 session-9864adca 实测 11 条 intent 全部被 fold 丢弃，级联蒸发 fact/finding/checkpoint/research/approval
+   （面板 intents/facts/findings 全灭而 assets/todos 幸存）。fold 必须与 execute 同样自愈：两锚点全漏且当前
+   goal 存在 → 锚到该 goal；两锚点同传仍丢弃；无 goal 仍丢弃。stateVersion 10→11 让宿主重算存量会话投影。 */
+test("[local.58] fold 层锚点自愈：无锚点 intent 收下并级联恢复 fact，两锚点同传/无 goal 仍丢弃", async () => {
+  const h = harness();
+  const parent = h.exec("l58fold");
+  const parentEvents = h.sessions.get("l58fold").events;
+  let manualSeq = 0;
+  const loggedRun = async (name, args, execution) => {
+    const out = await h.run(name, args, execution);
+    parentEvents.push({ type: "tool/call", data: { turn: 1, step: ++manualSeq, callId: `call-manual-${manualSeq}`, name, arguments: JSON.stringify(args) } });
+    return out;
+  };
+  const goal = await loggedRun("src_add_goal", { target: "zto.test", objective: "fold heal" }, parent);
+  /* 模型不传锚点（被工具描述引导后的真实行为）：execute 自愈成功，宿主日志记原始参数 */
+  const intent = await loggedRun("src_add_intent", { title: "被动侦察与资产测绘", priority: 8 }, parent);
+  assert.equal(intent.edgeKind, "spawns");
+  const fact = await loggedRun("src_add_fact", { intentId: intent.id, kind: "info", detail: "子域 n1.zto.test 存活" }, parent);
+  /* fold 父日志全量事件 → intent 与 fact 必须落投影（local.57 回归闸） */
+  let st = srcInitialState;
+  for (const ev of parentEvents) if (ev.type === "tool/call") st = applySrcEvent(st, ev);
+  let view = viewSrcState(st);
+  assert.equal(view.counts.intents, 1, "无锚点 intent 在 fold 必须被自愈收下（local.57 实测曾为 0）");
+  assert.equal(view.counts.facts, 1, "intent 恢复后 fact 级联恢复");
+  assert.equal(st.nodes.find((n) => n.kind === "intent")?.id, "intent-1");
+  /* 两锚点同传：fold 仍丢弃（语义冲突不猜，与 execute 报错语义一致） */
+  st = applySrcEvent(st, { type: "tool/call", data: { turn: 1, step: 99, callId: "call-both", name: "src_add_intent", arguments: JSON.stringify({ title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }) } });
+  assert.equal(viewSrcState(st).counts.intents, 1, "两锚点同传 fold 仍丢弃");
+  /* 无 goal：无锚点 intent 仍丢弃 */
+  let st2 = srcInitialState;
+  st2 = applySrcEvent(st2, { type: "tool/call", data: { turn: 1, step: 1, callId: "call-nogoal", name: "src_add_intent", arguments: JSON.stringify({ title: "no goal" }) } });
+  assert.equal(viewSrcState(st2).counts.intents, 0, "无 goal 时无锚点 intent 仍丢弃");
+  /* 显式传 goalId 的老会话语义不变：goalId 与当前 goal 不匹配仍丢弃 */
+  st2 = srcInitialState;
+  st2 = applySrcEvent(st2, { type: "tool/call", data: { turn: 1, step: 1, callId: "c1", name: "src_add_goal", arguments: JSON.stringify({ target: "zto.test", objective: "g" }) } });
+  st2 = applySrcEvent(st2, { type: "tool/call", data: { turn: 1, step: 2, callId: "c2", name: "src_add_intent", arguments: JSON.stringify({ title: "wrong goal", goalId: "goal-99" }) } });
+  assert.equal(viewSrcState(st2).counts.intents, 0, "goalId 不匹配仍丢弃（老语义不变）");
+});
+
+/* [local.58] src_add_finding / src_submit 的 attackPrerequisites 降为 schema 可选：execute 层本就容忍缺失，
+   store 准入闸（缺前提拒收）给出比宿主 "missing required property" 详细得多的指导性报错——
+   漏传时让错误落在有教学价值的层（中通会话实测宿主拒绝后模型只能瞎猜重试）。 */
+test("[local.58] attackPrerequisites schema 可选：漏传不再被宿主拦截，由 store 准入闸给出指导性报错", async () => {
+  const h = harness();
+  const addFindingParams = h.tools.get("src_add_finding").parameters;
+  assert.equal(addFindingParams.properties.attackPrerequisites.required, void 0, "src_add_finding.attackPrerequisites 必须 optional");
+  assert.equal(addFindingParams.required.includes("attackPrerequisites"), false, "required 数组不得包含 attackPrerequisites");
+  const submitFindingParams = h.tools.get("src_submit").parameters.properties.findings.items.properties;
+  assert.equal(submitFindingParams.attackPrerequisites.required, void 0, "src_submit.findings[].attackPrerequisites 必须 optional");
+  /* execute 层漏传 → store 准入闸拒收，报错必须指导模型补什么（而非宿主的干巴 schema 错误） */
+  const parent = h.exec("l58prereq");
+  await h.run("src_add_goal", { target: "example.test", objective: "prereq optional", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "audit", goalId: "goal-1" }, parent);
+  const factEvidence = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET / => 200", confidence: 0.9 }, parent)).id;
+  await assert.rejects(
+    () => h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", concreteLossEvidence: [factEvidence] }, parent),
+    /准入拒绝.*利用前提/
+  );
+  /* 补上前提后照常入库 */
+  const finding = await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", attackPrerequisites: "仅需网络可达目标首页，无需登录或任何用户交互", concreteLossEvidence: [factEvidence] }, parent);
+  assert.ok(finding.id, "补齐前提后入库成功");
+});
+
+/* [local.58] 跨会话审批投影对齐：子代理 src_http / src_resolve_approval 的审批 store 行落在 engagement（父）
+   单元，但合成事件此前只落在子代理自己的日志——父面板「待审」区永远空（中通会话 approval-1/3/4 实测漂移）。
+   跨会话时向父日志补同事件；fold 按 id 幂等去重。 */
+test("[local.58] 子代理挂起/解决审批实时合成父投影事件", async () => {
+  let hitCount = 0;
+  const server = http.createServer((req, res) => { hitCount++; res.writeHead(204); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const h = harness();
+  const parent = h.exec("l58ap");
+  const child = h.exec("l58apc", "l58ap");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "审批跨会话投影" }, parent);
+  try {
+    const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, child);
+    assert.equal(result.approval, "pending");
+    const parentEvents = () => h.sessions.get("l58ap").events.filter((e) => e.type === "tool/call");
+    const childApprovalCount = h.sessions.get("l58apc").events.filter((e) => e.type === "tool/call" && e.data.name === "src_record_pending_approval").length;
+    assert.equal(childApprovalCount, 1, "子代理自己的日志照旧落事件");
+    assert.equal(parentEvents().filter((e) => e.data.name === "src_record_pending_approval").length, 1, "父日志必须合成同一条审批事件");
+    let st = srcInitialState;
+    for (const ev of parentEvents()) st = applySrcEvent(st, ev);
+    assert.equal(viewSrcState(st).counts.pendingApprovals, 1, "fold 父日志后待审区可见");
+    /* 子代理 resolve → 父投影同步 resolution，不 stale */
+    const rejected = await h.run("src_resolve_approval", { id: result.pendingApprovalId, action: "reject", note: "误伤风险" }, child);
+    assert.equal(rejected.status, "rejected");
+    st = srcInitialState;
+    for (const ev of parentEvents()) st = applySrcEvent(st, ev);
+    assert.equal(viewSrcState(st).pendingApprovals[0].status, "rejected", "子代理 resolve 后父投影不 stale");
+    assert.equal(hitCount, 0, "拒绝后不应发出");
+  } finally { server.close(); }
+});
+
+/* [local.58] finalize blindSpots 的 category 别名：模型把维度名误写进 category（中通会话实测 3 条全踩，
+   宿主 additionalProperties:false 拒绝后重试浪费一轮）；schema 声明别名 + execute 自动映射。 */
+test("[local.58] finalize blindSpots 误用 category 键自动映射为 dimension", async () => {
+  const h = harness();
+  const parent = h.exec("l58blindspot");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "blindspot alias", authorization: "SRC" }, parent);
+  await h.run("src_add_intent", { title: "audit", goalId: "goal-1" }, parent);
+  await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
+  const factEvidence = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET / => VAppServer/6.0.0 banner", confidence: 0.9 }, parent)).id;
+  await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer/6.0.0"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", attackPrerequisites: "仅需网络可达目标首页，无需登录或任何用户交互", concreteLossEvidence: [factEvidence] }, parent);
+  await h.run("src_record_research", { intentId: "intent-1", category: "info-leak", hypothesis: "版本泄露", status: "verified", findingId: "finding-1" }, parent);
+  /* 五个维度全用 category 键声明：映射成功后不再报「缺项」/「未声明」类 blocker */
+  const result = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { category: "http-authz-surface", status: "notApplicable" },
+    { category: "cors-headers", status: "notApplicable" },
+    { category: "dom-xhr", status: "notApplicable" },
+    { category: "dict-budget", status: "notApplicable" },
+    { category: "multi-account-cross-authz", status: "notApplicable" }
+  ] }, parent);
+  assert.equal(result.blockers.some((b) => /缺项|未声明/.test(b)), false, "category 别名应被映射，不报缺项");
+  /* 混合写法也兼容：dimension 与 category 同传时 dimension 优先 */
+  const result2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [
+    { dimension: "http-authz-surface", status: "notApplicable" },
+    { category: "cors-headers", status: "notApplicable" },
+    { category: "dom-xhr", status: "notApplicable" },
+    { category: "dict-budget", status: "notApplicable" },
+    { category: "multi-account-cross-authz", status: "notApplicable" }
+  ] }, parent);
+  assert.equal(result2.blockers.some((b) => /缺项|未声明/.test(b)), false, "dimension/category 混用应兼容");
+});
+
 /* [local.57] src_add_goal 开局能力盘点：返回已安装能力 id/形态/触发场景（skill 用率根修——先知牌面）。 */
 test("[local.57] src_add_goal 返回 capabilities 盘点（无清单时缺省）", async () => {
   const h = harness();
