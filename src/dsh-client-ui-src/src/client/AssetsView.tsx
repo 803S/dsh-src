@@ -66,6 +66,70 @@ const TYPE_LABELS: Record<SrcAssetType, SrcKey> = {
 /** The two view modes of the assets tab. */
 type AssetMode = 'list' | 'graph'
 
+/** [local.60] Per-asset coverage badge keys: explicit per-asset coverage row > fact evidence > untouched. */
+type CoverageKey = 'tested' | 'blocked' | 'notApplicable' | 'testing' | 'assessed' | 'untouched'
+
+const COVERAGE_LABELS: Record<CoverageKey, string> = {
+  tested: '已测',
+  blocked: '受阻',
+  notApplicable: '不适用',
+  testing: '测试中',
+  assessed: '已评估',
+  untouched: '未触达',
+}
+
+const COVERAGE_CLASSES: Record<CoverageKey, string> = {
+  tested: css.covTested,
+  blocked: css.covBlocked,
+  notApplicable: css.covNa,
+  testing: css.covTesting,
+  assessed: css.covAssessed,
+  untouched: css.covUntouched,
+}
+
+const COVERAGE_ORDER: readonly CoverageKey[] = ['tested', 'blocked', 'notApplicable', 'testing', 'assessed', 'untouched']
+
+function coverageBadgeOfStatus(status: string): CoverageKey {
+  if (status === 'completed') return 'tested'
+  if (status === 'blocked') return 'blocked'
+  if (status === 'not-applicable') return 'notApplicable'
+  return 'testing' // planned / running
+}
+
+/** Hostname of an asset value ("https://a.b/c" | "a.b" | "1.2.3.4:80"); '' when not host-shaped. */
+function hostOfAssetValue(value: string): string {
+  const raw = value.trim()
+  if (raw === '') return ''
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/** [local.60] Per-asset coverage map: explicit per-asset coverage row（assetId）wins；否则 fact 节点提
+ *  及该 host 记「已评估」（侦察阶段评估过但无显式覆盖结论）；都没有即「未触达」。此前 coverage
+ *  全是 phase×category 级、assetId 全程为空，用户看 159 资产墙无法区分「测过」和「没碰过」。 */
+function coverageBadges(src: SrcProjection): Map<string, CoverageKey> {
+  const explicit = new Map<string, CoverageKey>()
+  for (const row of src.coverage) {
+    if (row.assetId === undefined || row.assetId === '') continue
+    explicit.set(row.assetId, coverageBadgeOfStatus(row.status))
+  }
+  const facts = src.nodes.filter(node => node.kind === 'fact')
+  const badges = new Map<string, CoverageKey>()
+  for (const asset of src.assets) {
+    const fromCoverage = explicit.get(asset.id)
+    if (fromCoverage !== undefined) {
+      badges.set(asset.id, fromCoverage)
+      continue
+    }
+    const host = hostOfAssetValue(asset.value)
+    badges.set(asset.id, host !== '' && facts.some(fact => fact.target.toLowerCase().includes(host)) ? 'assessed' : 'untouched')
+  }
+  return badges
+}
+
 /** One asset row in list mode (with the parent value and provenance resolved). */
 interface AssetRow {
   readonly id: string
@@ -109,9 +173,26 @@ function groupByType(rows: readonly AssetRow[]): Array<{ type: SrcAssetType; row
 
 /** List mode: sections per asset type with inline parent links. */
 function AssetList({ src, t }: AssetsViewProps) {
-  const groups = groupByType(rowsOf(src))
+  const rows = useMemo(() => rowsOf(src), [src])
+  const badges = useMemo(() => coverageBadges(src), [src])
+  const counts = useMemo(() => {
+    const acc: Record<CoverageKey, number> = { tested: 0, blocked: 0, notApplicable: 0, testing: 0, assessed: 0, untouched: 0 }
+    for (const row of rows) {
+      const key = badges.get(row.id) ?? 'untouched'
+      acc[key] += 1
+    }
+    return acc
+  }, [rows, badges])
+  const groups = groupByType(rows)
   return (
     <div className={css.list} data-testid="src-assets-list">
+      <p className={css.coverageSummary} data-testid="src-assets-coverage-summary">
+        {COVERAGE_ORDER.map(key => (
+          <span key={key} className={`${css.coverageSummaryItem} ${COVERAGE_CLASSES[key]}`}>
+            {COVERAGE_LABELS[key]} {counts[key]}
+          </span>
+        ))}
+      </p>
       {groups.map(group => (
         <section key={group.type} className={css.group} data-testid="src-asset-group">
           <h4 className={css.groupTitle}>{t(TYPE_LABELS[group.type])}</h4>
@@ -127,6 +208,18 @@ function AssetList({ src, t }: AssetsViewProps) {
                   {row.status === 'candidate' ? ' （待确认）' : row.status === 'excluded' ? ' （已排除）' : ''}
                 </span>
                 {row.meta !== '' && <span className={css.rowMeta}>（{row.meta}）</span>}
+                {(() => {
+                  const key = badges.get(row.id) ?? 'untouched'
+                  return (
+                    <span
+                      className={`${css.coverageBadge} ${COVERAGE_CLASSES[key]}`}
+                      data-testid="src-asset-coverage"
+                      title={key === 'assessed' ? '侦察阶段评估过（有事实提及），尚无显式覆盖结论' : key === 'untouched' ? '没有覆盖记录，也没有事实提及' : '来自 src_record_coverage 的单资产结论'}
+                    >
+                      {COVERAGE_LABELS[key]}
+                    </span>
+                  )
+                })()}
                 {(row.source !== '' && row.source !== 'unknown' || row.method !== '' && row.method !== 'passive' || row.confidence >= 0) && (
                   <span className={css.rowParent}>
                     {row.source !== '' && row.source !== 'unknown' ? `来源:${row.source}` : ''}

@@ -19,10 +19,65 @@
  *   BURP_SSE_URL           上游基址，默认 http://localhost:9876/
  *   BURP_BRIDGE_TIMEOUT_MS 单请求超时，默认 90000（宿主 toolCallTimeoutMs=120000）
  *   BURP_BRIDGE_LOG        debug|info|warn|error，默认 info
+ *   DSH_HOME               审批锁文件根目录（默认 ~/.dsh）
  *
  * 零依赖（node ≥18 全局 fetch）。诊断一律走 stderr。
  */
 import { createInterface } from "node:readline";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+
+//#region [local.60] 审批绕行拦截（approval bypass guard）
+/* 插件在 src_http/src_run_capability 挂起高危审批时把 {id,method,url,host,path,category} 写入
+   ~/.dsh/storages/src-approval-locks.json，解决（allow/reject）时清除。桥每次转发 send_http1/2_request
+   前读锁比对 host+pathname：命中即拒绝转发（isError 工具结果），从机制上封死「审批挂起时用 Burp
+   直发绕过授权闸」的旁路（中通 approval-6 实锤）。锁文件缺失/损坏视为空；DSH_HOME 惰性求值。 */
+function approvalLocksPath() {
+	const home = (process.env.DSH_HOME ?? "").trim() !== "" ? path.resolve(process.env.DSH_HOME.trim()) : path.join(homedir(), ".dsh");
+	return path.join(home, "storages", "src-approval-locks.json");
+}
+
+async function readApprovalLocks() {
+	try {
+		const parsed = JSON.parse(await readFile(approvalLocksPath(), "utf8"));
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return [];
+	}
+}
+
+/** 从 send_http1/2_request 参数解析 {method, host, path}；解析不出返回 null（放行，交上游报错）。 */
+function parseBurpRequestTarget(args) {
+	const content = String(args?.content ?? "");
+	if (content === "") return null;
+	const requestLine = content.split(/\r?\n/, 1)[0] ?? "";
+	const m = /^([A-Za-z]+)\s+(\S+)/.exec(requestLine);
+	if (m === null) return null;
+	let host = String(args?.targetHostname ?? "").trim().toLowerCase();
+	if (host === "") {
+		const hm = /^host:\s*(.+)$/im.exec(content);
+		host = hm === null ? "" : hm[1].trim().toLowerCase().split(":")[0];
+	}
+	if (host === "") return null;
+	const rawPath = m[2].split("?")[0];
+	return { method: m[1].toUpperCase(), path: rawPath === "" ? "/" : rawPath, host };
+}
+
+/** 命中挂起审批锁时返回拒绝结果（isError 工具结果，模型可读），未命中返回 null。 */
+async function approvalBypassGuard(params) {
+	if (params?.name !== "send_http1_request" && params?.name !== "send_http2_request") return null;
+	const target = parseBurpRequestTarget(params.arguments);
+	if (target === null) return null;
+	const locks = await readApprovalLocks();
+	const hit = locks.find((lock) => typeof lock?.host === "string" && lock.host !== "" && lock.host === target.host && typeof lock?.path === "string" && lock.path !== "" && lock.path === target.path);
+	if (hit === undefined) return null;
+	return {
+		content: [{ type: "text", text: `⛔ 已拦截（审批绕行硬闸）：请求 ${target.method} ${target.host}${target.path} 与挂起中的高危审批 ${hit.id}${hit.category ? `（${hit.category}）` : ""} 同目标。审批挂起期间禁止经任何通道发送该请求——请等待用户在 SRC 面板批准或拒绝（或 agent 调 src_resolve_approval id=${hit.id} action=allow|reject）后再继续；也可以直接换其他资产/方向，不要尝试用其他工具重发同一目标。` }],
+		isError: true
+	};
+}
+//#endregion
 
 const BASE_URL = (process.env.BURP_SSE_URL ?? "http://localhost:9876/").trim() || "http://localhost:9876/";
 const TIMEOUT_MS = Number(process.env.BURP_BRIDGE_TIMEOUT_MS ?? 90000) || 90000;
@@ -290,6 +345,12 @@ async function handleRequest(id, method, params) {
 				/* 哨兵只应出现在降级期；若上游已恢复但宿主尚未重同步，礼貌转发失败状态。 */
 				log("info", "sentinel burp_status called; upstream unavailable (degraded window)");
 				return { content: [{ type: "text", text: "Burp MCP bridge is DEGRADED: the upstream (Burp MCP extension SSE) is unreachable right now — Burp may be closed, the extension not started, or the SSE session is reconnecting. Traffic-history tools (mcp__burp__get_proxy_http_history*) are temporarily unavailable. IMPORTANT: this is a bridge/infrastructure state, NOT evidence that Burp contains no traffic. The bridge probes recovery every 5s and restores the full tool list automatically; retry on a later turn." }], isError: true };
+			}
+			/* [local.60] 审批绕行硬闸：挂起审批同 host+path 的请求拒绝转发，不碰上游。 */
+			const blocked = await approvalBypassGuard(params);
+			if (blocked !== null) {
+				log("warn", `bypass blocked: ${params?.name} target matches pending approval`);
+				return blocked;
 			}
 			const result = await forwardWithHeal("tools/call", params);
 			return result.result;

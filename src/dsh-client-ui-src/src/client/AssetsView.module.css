@@ -240,3 +240,54 @@
   pointer-events: none;
   white-space: nowrap;
 }
+
+/* [local.60] 单资产覆盖徽标 + 列表顶部覆盖汇总。 */
+.coverageSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.coverageSummaryItem {
+  white-space: nowrap;
+}
+
+.coverageBadge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+
+.covTested {
+  color: #2e7d32;
+}
+
+.covBlocked {
+  color: #b26a00;
+}
+
+.covNa {
+  color: #6b7280;
+}
+
+.covTesting {
+  color: #1565c0;
+}
+
+.covAssessed {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.covUntouched {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  opacity: 0.8;
+}

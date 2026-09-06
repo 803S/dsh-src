@@ -27,8 +27,13 @@ import { homedir } from "node:os";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 /* [local.48] scripts/caps-sync.mjs 一并部署：src_add_capability 动态 import 它的纯函数，
- * 且接线时 spawn 的是【部署副本】里的这份脚本。 */
-const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/tools/index.js", "package.json", "scripts/caps-sync.mjs"];
+ * 且接线时 spawn 的是【部署副本】里的这份脚本。 [local.60] 补 lib/src/approval-locks.js（审批锁）、
+ * lib/ui-src.client.js（UI 产物——此前漏部署靠手动拷，md5 恰好一致）、tools/burp-mcp-bridge.mjs（桥）。 */
+const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/approval-locks.js", "lib/src/tools/index.js", "lib/ui-src.client.js", "package.json", "scripts/caps-sync.mjs"];
+/* [local.60] 单文件资产：burp-mcp-bridge.mjs 装在 ~/.dsh/tools/（profile 配置直接指这里）。 */
+const singleFileAssets = [
+  { src: join(repo, "tools/burp-mcp-bridge.mjs"), dest: join(homedir(), ".dsh/tools/burp-mcp-bridge.mjs") },
+];
 const targets = [
   join(homedir(), ".dsh/profiles/web/node_modules/@lihua_dis/dsh-src"),
   join(homedir(), ".dsh/profiles/headless/node_modules/@lihua_dis/dsh-src"),
@@ -70,6 +75,16 @@ for (const a of dshHomeAssets) {
   }
   const ok = list.length > 0 && !mismatch;
   console.log(`${ok ? "✓" : "✗"} ${a.src} → ${a.dest}（${list.length} 文件${mismatch ? "，md5 不一致" : ""}）`);
+  if (!ok) failed = true;
+}
+
+console.log("─── 单文件资产 ───");
+for (const a of singleFileAssets) {
+  if (!existsSync(a.src)) { console.error(`✗ 源不存在: ${a.src}`); failed = true; continue; }
+  mkdirSync(dirname(a.dest), { recursive: true });
+  copyFileSync(a.src, a.dest);
+  const ok = md5(a.src) === md5(a.dest);
+  console.log(`${ok ? "✓" : "✗"} ${a.src} → ${a.dest}`);
   if (!ok) failed = true;
 }
 

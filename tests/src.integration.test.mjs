@@ -3863,3 +3863,138 @@ test("测试会话 id 规范 [local.49]", async () => {
 	}
 	assert.ok(ids.length >= 4, `应扫到 ≥4 个 sessions.set 调用点，实际 ${ids.length}`);
 });
+
+/* [local.60] 投影分级裁剪：此前 withNode/withAsset 对 nodes/edges/assets 一律 slice(-200)，
+   9864adca 会话实测 177 个节点被静默裁掉（intent-1..10 全灭、finding-1/2 被 add_fact 挤出）。
+   新语义：finding/intent 永不裁；fact 超 500 裁最老并同步清理关联边；assets 同理（root-domain 豁免）。 */
+test("[local.60] 投影分级裁剪：finding/intent 不裁、fact 超 500 裁最老、edges 同步清理", () => {
+  const tc = (name, args) => ({ type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  let st = srcInitialState;
+  st = applySrcEvent(st, tc("src_add_goal", { target: "zto.test", objective: "cap" }));
+  st = applySrcEvent(st, tc("src_add_intent", { title: "cap-intent", goalId: "goal-1" }));
+  for (let i = 1; i <= 520; i++) st = applySrcEvent(st, tc("src_add_fact", { intentId: "intent-1", kind: "http", detail: `fact-${i}` }));
+  st = applySrcEvent(st, tc("src_add_intent", { title: "late-intent", goalId: "goal-1" }));
+  for (let f = 1; f <= 3; f++) {
+    st = applySrcEvent(st, tc("src_add_finding", { intentId: "intent-1", title: `finding-cap-${f}`, severity: "low", impact: "影响说明", affectedScope: "范围", remediation: "修复建议", pocEvidence: ["GET / => x"], reproducibleSteps: ["GET /"], victimImpact: "受害者影响说明", concreteLossEvidence: ["fact-500"] }));
+  }
+  const kinds = { intent: 0, fact: 0, finding: 0 };
+  for (const node of st.nodes) kinds[node.kind] += 1;
+  assert.equal(kinds.intent, 2, "intent 永不裁剪（9864adca 曾全灭）");
+  assert.equal(kinds.finding, 3, "finding 永不裁剪（曾被 add_fact 挤出）");
+  assert.equal(kinds.fact, 500, "fact 超 500 裁最老");
+  assert.equal(st.nodes.some((n) => n.kind === "fact" && n.detail === "fact-1"), false, "最老 fact 被裁");
+  assert.equal(st.nodes.some((n) => n.kind === "fact" && n.detail === "fact-520"), true, "最新 fact 保留");
+  assert.equal(st.edges.some((e) => e.targetId === "fact-1"), false, "被裁 fact 的关联边同步清理");
+  assert.equal(st.edges.some((e) => e.targetId === "fact-520"), true, "保留 fact 的边完好");
+  /* assets 分级：root-domain 豁免，其他超 500 裁最老 */
+  st = applySrcEvent(st, tc("src_add_asset", { type: "root-domain", value: "zto.test", source: "goal" }));
+  for (let i = 1; i <= 505; i++) st = applySrcEvent(st, tc("src_add_asset", { type: "subdomain", value: `s${i}.zto.test`, source: "scan" }));
+  const rootDomains = st.assets.filter((a) => a.type === "root-domain");
+  assert.equal(rootDomains.length, 1, "root-domain 资产永不裁剪（UI 分组依赖）");
+  assert.equal(st.assets.length, 501, "assets 超 500 裁最老（root-domain 除外）");
+  assert.equal(st.assets.some((a) => a.value === "s1.zto.test"), false, "最老 subdomain 被裁");
+  assert.equal(st.assets.some((a) => a.value === "s505.zto.test"), true, "最新 subdomain 保留");
+});
+
+/* [local.60] src_user_todo 更新模式不再强制 title：9864adca 14:00 更新 todo-1 状态被 schema 拒
+   （update 带 userTodoId 时 title 仍 required）。三层修复：schema 可选 + execute 新建缺 title 给
+   指导性报错 + fold 更新分支不再被 title==="" 短路（旧 bug 整个更新含 status 全丢投影）。 */
+test("[local.60] src_user_todo 更新模式不再强制 title（schema+execute+fold 三层）", async () => {
+  const h = harness();
+  assert.equal(h.tools.get("src_user_todo").parameters.properties.title.required, void 0, "schema title 必须 optional");
+  const parent = h.exec("l60todo");
+  await h.run("src_add_goal", { target: "todo.test", objective: "todo 验证" }, parent);
+  const created = await h.run("src_user_todo", { title: "下载小程序确认真实运单号", detail: "用户协同项" }, parent);
+  assert.match(created.id, /^userTodo-\d+$/);
+  const updated = await h.run("src_user_todo", { userTodoId: created.id, status: "done" }, parent);
+  assert.equal(updated.status, "done");
+  assert.equal(updated.title, "下载小程序确认真实运单号", "更新模式保留原标题");
+  await assert.rejects(() => h.run("src_user_todo", { detail: "缺 title" }, parent), /必须给 title/, "新建缺 title 给指导性报错");
+  const tc = (name, args) => ({ type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  let st = srcInitialState;
+  st = applySrcEvent(st, tc("src_user_todo", { title: "T1" }));
+  st = applySrcEvent(st, tc("src_user_todo", { userTodoId: "todo-1", status: "abandoned" }));
+  const row = st.userTodos.find((r) => r.id === "todo-1");
+  assert.equal(row.status, "abandoned", "fold 更新分支生效（旧 bug title===\"\" 短路全丢）");
+  assert.equal(row.title, "T1", "fold 更新保留原标题");
+  st = applySrcEvent(st, tc("src_user_todo", { title: "T2" }));
+  st = applySrcEvent(st, tc("src_user_todo", { detail: "无 id 无 title" }));
+  assert.equal(st.userTodos.length, 2, "fold 新建缺 title 仍忽略");
+});
+
+/* [local.60] 审批锁：src_http 挂起时把 {id,host,path} 写入 ~/.dsh/storages/src-approval-locks.json
+   （burp-mcp-bridge 每次发送前比对，命中拒绝转发）；src_resolve_approval 解决（allow/reject 均算）后清锁。 */
+test("[local.60] src_http 挂起写审批锁，resolve 清锁", async () => {
+  const h = harness();
+  const parent = h.exec("l60lock");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "审批锁验证" }, parent);
+  let hitCount = 0;
+  const server = http.createServer((_req, res) => { hitCount++; res.writeHead(204); res.end(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  const locksFile = nodePath.join(process.env.DSH_HOME, "storages", "src-approval-locks.json");
+  try {
+    await fsPromises.rm(locksFile, { force: true });
+    const pending = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, parent);
+    assert.equal(pending.approval, "pending");
+    const locks = JSON.parse(await fsPromises.readFile(locksFile, "utf8"));
+    assert.equal(locks.length, 1);
+    assert.equal(locks[0].id, pending.pendingApprovalId);
+    assert.equal(locks[0].host, "127.0.0.1");
+    assert.equal(locks[0].path, "/api-c/user/v1/closeAccount");
+    assert.ok(locks[0].category.length > 0, "锁带分类便于桥提示");
+    const approved = await h.run("src_resolve_approval", { id: pending.pendingApprovalId, action: "allow" }, parent);
+    assert.equal(approved.status, "approved");
+    assert.equal(hitCount, 1, "批准后原请求照常发出");
+    const after = JSON.parse(await fsPromises.readFile(locksFile, "utf8"));
+    assert.equal(after.length, 0, "解决后锁清除");
+  } finally { server.close(); }
+});
+
+/* [local.60] 桥端到端：spawn 真桥进程 + 死上游 + 锁文件，命中锁的请求必须立即被拒（不碰上游），
+   未命中的请求放行到上游（连不上报上游错误，且无 ⛔ 标记）。 */
+test("[local.60] burp 桥审批绕行硬闸：命中锁拒绝转发，未命中放行", async () => {
+  const home = nodePath.join(nodeOs.tmpdir(), `dsh-bridge-lock-${process.pid}-${Date.now()}`);
+  await fsPromises.mkdir(nodePath.join(home, "storages"), { recursive: true });
+  await fsPromises.writeFile(nodePath.join(home, "storages", "src-approval-locks.json"), JSON.stringify([
+    { id: "approval-6", method: "POST", url: "https://gw.test/findUserCertRealName", host: "gw.test", path: "/findUserCertRealName", category: "destructive-write", createdAt: 1 },
+  ]));
+  const bridgePath = nodePath.resolve(process.cwd(), "tools/burp-mcp-bridge.mjs");
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, [bridgePath], { env: { ...process.env, DSH_HOME: home, BURP_SSE_URL: "http://127.0.0.1:1/", BURP_BRIDGE_LOG: "error" }, stdio: ["pipe", "pipe", "ignore"] });
+  const pendingLines = [];
+  let buf = "";
+  let wake = null;
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buf += chunk;
+    let idx;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (line === "") continue;
+      if (wake) { const w = wake; wake = null; w(line); } else pendingLines.push(line);
+    }
+  });
+  const readLine = (ms) => new Promise((resolve, reject) => {
+    if (pendingLines.length > 0) return resolve(pendingLines.shift());
+    const timer = setTimeout(() => { wake = null; reject(new Error("桥响应超时")); }, ms);
+    wake = (line) => { clearTimeout(timer); resolve(line); };
+  });
+  const send = (obj) => new Promise((resolve, reject) => { child.stdin.write(`${JSON.stringify(obj)}\n`, (err) => (err ? reject(err) : resolve())); });
+  try {
+    await send({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "send_http1_request", arguments: { content: "POST /findUserCertRealName HTTP/1.1\r\nHost: gw.test\r\nContent-Length: 0\r\n\r\n", targetHostname: "gw.test", targetPort: 443, usesHttps: true } } });
+    const blocked = JSON.parse(await readLine(5000));
+    assert.equal(blocked.id, 1);
+    assert.equal(blocked.result.isError, true, "命中锁必须 isError");
+    assert.match(blocked.result.content[0].text, /⛔.*approval-6/, "拦截文案带审批 id");
+    await send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "send_http1_request", arguments: { content: "GET /other/path HTTP/1.1\r\nHost: gw.test\r\n\r\n", targetHostname: "gw.test", targetPort: 443, usesHttps: true } } });
+    const passed = JSON.parse(await readLine(10000));
+    assert.equal(passed.id, 2);
+    const text = passed.error !== void 0 ? JSON.stringify(passed.error) : (passed.result?.content?.[0]?.text ?? "");
+    assert.doesNotMatch(text, /⛔/, "未命中不得被守卫拦截（连不上是上游错误）");
+  } finally {
+    child.kill("SIGKILL");
+    await fsPromises.rm(home, { recursive: true, force: true }).catch(() => {});
+  }
+});
