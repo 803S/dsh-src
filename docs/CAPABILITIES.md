@@ -61,6 +61,16 @@ capabilities:
     kind: skill                      # 必须；省略默认 mcp
     # docs: SKILL.md                 # 文档入口相对路径（省略则自动探测 SKILL.md > README.md）
     scripts: [scripts/extract-endpoints.sh, scripts/apkx.mjs]   # 白名单（必须内联数组）
+    # [local.62] 数据编排触发器（可选，扁平键）：登记资产时代码机械匹配——
+    #   triggerAssetTypes 精确匹配 src_add_asset 的 type；命中且声明了 todoTitle
+    #   时系统确定性挂用户待办（todoKind 默认 manual-test，todoDetail 可选）；
+    #   triggerKeywords 子串匹配资产 value/source，命中只出提示行不挂待办。
+    #   声明 todoTitle 必须同时声明 triggerAssetTypes（待办只由 type 命中触发）。
+    triggerAssetTypes: [app, mini-program]
+    triggerKeywords: [小程序, apk]
+    todoTitle: 请在手机上安装并打开目标 App 并确认可正常访问
+    todoKind: manual-test
+    todoDetail: 目标包含 App/小程序资产，需要你提供本机登录态后 agent 才能继续逆向。
     when: >
       拿到 APK/小程序包需要反编译、提取端点/密钥时
 

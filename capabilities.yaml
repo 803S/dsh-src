@@ -24,6 +24,11 @@ capabilities:
     from: path:/Users/lihua-dis/Software/dsh-src/skills/wx-minapp-recon
     kind: skill
     scripts: [scripts/scan_wxapkg.py, scripts/run_decompile.py, scripts/extract_minapp.py, scripts/group_apis.py]
+    triggerAssetTypes: [mini-program]
+    triggerKeywords: [小程序, wxapkg, miniprogram]
+    todoTitle: 请在微信打开目标小程序并确认登录
+    todoKind: manual-test
+    todoDetail: 目标包含小程序资产。请在微信中打开该目标小程序并完成登录（若已打开过直接勾选完成）。完成后 agent 将扫描本机 wxapkg 缓存，用已装能力 wx-minapp-recon 执行反编译→端点/密钥提取→src_http 测试（走审批闸）。
     when: 目标含微信小程序资产需要逆向审计时：扫描本机微信缓存 wxapkg 包、wedecode 反编译、提取 API/参数/敏感信息/云开发环境 ID。前置待办已由系统自动挂（mini-program 资产登记时数据编排触发「请在微信打开目标小程序并确认登录」），扫包为空说明用户还没打开过，提醒用户完成后重扫，不虚构包路径
   - id: src-rules-scraper
     from: path:/Users/lihua-dis/Software/dsh-src/skills/src-rules-scraper

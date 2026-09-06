@@ -173,11 +173,43 @@ function serializeCapabilityEntry(entry) {
 	}
 	if (entry.when !== void 0 && entry.when !== null && (typeof entry.when !== "string" || oneLine(entry.when).length > 200)) throw new Error("when 需为 ≤200 字符的一句话");
 	if (entry.ref !== void 0 && entry.ref !== null && (typeof entry.ref !== "string" || !/^[\w./-]{1,60}$/.test(entry.ref))) throw new Error("ref 需为 ≤60 字符的分支/标签名");
+	/* [local.62] 触发器声明（数据编排）：扁平键，与受限 yaml 子集的 4 空格内联数组天然兼容。
+	 * triggerAssetTypes 精确匹配 src_add_asset 的 type；triggerKeywords 子串匹配资产
+	 * value/source；todoTitle 存在时 type 命中会确定性挂用户待办（todoKind/todoDetail 可选）。 */
+	const triggerList = (v, name) => {
+		if (!Array.isArray(v)) throw new Error(`${name} 必须是字符串数组`);
+		if (v.length > 5) throw new Error(`${name} 最多 5 项`);
+		v.forEach((t) => { if (typeof t !== "string" || t === "" || t.length > 40 || /[\r\n"',]/.test(t)) throw new Error(`${name} 项需为 ≤40 字符且不含逗号/引号/换行的非空字符串`); });
+		return v;
+	};
+	let hasTriggers = false;
+	if (entry.triggerAssetTypes !== void 0) { triggerList(entry.triggerAssetTypes, "triggerAssetTypes"); hasTriggers = true; }
+	if (entry.triggerKeywords !== void 0) { triggerList(entry.triggerKeywords, "triggerKeywords"); hasTriggers = true; }
+	if (entry.todoTitle !== void 0) {
+		if (typeof entry.todoTitle !== "string" || entry.todoTitle.trim() === "" || entry.todoTitle.length > 60) throw new Error("todoTitle 需为 ≤60 字符的非空字符串");
+		if (entry.triggerAssetTypes === void 0 || !Array.isArray(entry.triggerAssetTypes) || entry.triggerAssetTypes.length === 0) throw new Error("声明 todoTitle 必须同时声明 triggerAssetTypes（待办只由 type 精确命中触发，关键词命中只出提示）");
+		hasTriggers = true;
+	}
+	if (entry.todoKind !== void 0) {
+		if (typeof entry.todoKind !== "string" || !/^[-a-z]{3,20}$/.test(entry.todoKind)) throw new Error("todoKind 需为 ≤20 字符的小写中划线串（如 manual-test）");
+		if (entry.todoTitle === void 0) throw new Error("todoKind/todoDetail 依赖 todoTitle，不能单独声明");
+	}
+	if (entry.todoDetail !== void 0) {
+		if (typeof entry.todoDetail !== "string" || oneLine(entry.todoDetail).length > 300) throw new Error("todoDetail 需为 ≤300 字符的一句话");
+		if (entry.todoTitle === void 0) throw new Error("todoKind/todoDetail 依赖 todoTitle，不能单独声明");
+	}
 	const lines = [`  - id: ${entry.id}`, `    from: ${entry.from}`, `    kind: ${kind}`];
 	if (entry.ref) lines.push(`    ref: ${entry.ref}`);
 	if (entry.entry) lines.push(`    entry: ${entry.entry}`);
 	if (entry.docs) lines.push(`    docs: ${entry.docs}`);
 	if (Array.isArray(entry.scripts) && entry.scripts.length > 0) lines.push(`    scripts: [${entry.scripts.join(", ")}]`);
+	if (hasTriggers) {
+		if (entry.triggerAssetTypes !== void 0) lines.push(`    triggerAssetTypes: [${entry.triggerAssetTypes.join(", ")}]`);
+		if (entry.triggerKeywords !== void 0) lines.push(`    triggerKeywords: [${entry.triggerKeywords.join(", ")}]`);
+		if (entry.todoTitle !== void 0) lines.push(`    todoTitle: ${entry.todoTitle}`);
+		if (entry.todoKind !== void 0) lines.push(`    todoKind: ${entry.todoKind}`);
+		if (entry.todoDetail !== void 0) lines.push(`    todoDetail: ${oneLine(entry.todoDetail)}`);
+	}
 	if (typeof entry.when === "string" && oneLine(entry.when) !== "") lines.push(`    when: ${oneLine(entry.when)}`);
 	if (entry.enabled === false) lines.push("    enabled: false");
 	return lines.join("\n") + "\n";
@@ -537,7 +569,7 @@ if (!dryRun && caps.length > 0) {
 	for (const c of caps) {
 		const kind = c.kind ?? "mcp";
 		const enabled = c.enabled !== false;
-		const base = { id: c.id, kind, from: c.from, ref: c.ref ?? null, enabled, when: typeof c.when === "string" ? c.when : "", docs: kind === "skill" ? (typeof c.docs === "string" && c.docs !== "" ? c.docs : null) : null, scripts: kind === "skill" ? (Array.isArray(c.scripts) ? c.scripts : []) : [], env: c.env && Object.keys(c.env).length > 0 ? c.env : null };
+		const base = { id: c.id, kind, from: c.from, ref: c.ref ?? null, enabled, when: typeof c.when === "string" ? c.when : "", docs: kind === "skill" ? (typeof c.docs === "string" && c.docs !== "" ? c.docs : null) : null, scripts: kind === "skill" ? (Array.isArray(c.scripts) ? c.scripts : []) : [], env: c.env && Object.keys(c.env).length > 0 ? c.env : null, ...(Array.isArray(c.triggerAssetTypes) ? { triggerAssetTypes: c.triggerAssetTypes } : {}), ...(Array.isArray(c.triggerKeywords) ? { triggerKeywords: c.triggerKeywords } : {}), ...(typeof c.todoTitle === "string" && c.todoTitle !== "" ? { todoTitle: c.todoTitle, ...(typeof c.todoKind === "string" && c.todoKind !== "" ? { todoKind: c.todoKind } : {}), ...(typeof c.todoDetail === "string" && c.todoDetail !== "" ? { todoDetail: c.todoDetail } : {}) } : {}) };
 		if (!enabled) { indexItems.push({ ...base, status: "disabled" }); continue; }
 		if (notReady.has(c.id)) { indexItems.push({ ...base, status: "failed" }); continue; }
 		if (kind === "skill") {

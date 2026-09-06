@@ -30,6 +30,10 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
  * 且接线时 spawn 的是【部署副本】里的这份脚本。 [local.60] 补 lib/src/approval-locks.js（审批锁）、
  * lib/ui-src.client.js（UI 产物——此前漏部署靠手动拷，md5 恰好一致）、tools/burp-mcp-bridge.mjs（桥）。 */
 const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/approval-locks.js", "lib/src/tools/index.js", "lib/ui-src.client.js", "package.json", "scripts/caps-sync.mjs"];
+/* [local.62] 内置经验文件（preset/src-hunter/lessons）：触发器元数据在文件尾部 lesson-meta 里，
+ * 改后必须随部署同步——此前不在清单里，部署副本是首装 rsync 的遗留（后续内置经验更新全部丢丢）。 */
+const presetLessonDir = "preset/src-hunter/lessons";
+const presetLessons = readdirSync(join(repo, presetLessonDir)).filter((f) => f.endsWith(".md")).map((f) => `${presetLessonDir}/${f}`);
 /* [local.60] 单文件资产：burp-mcp-bridge.mjs 装在 ~/.dsh/tools/（profile 配置直接指这里）。 */
 const singleFileAssets = [
   { src: join(repo, "tools/burp-mcp-bridge.mjs"), dest: join(homedir(), ".dsh/tools/burp-mcp-bridge.mjs") },
@@ -94,16 +98,16 @@ for (const t of targets) {
     failed = true;
     continue;
   }
-  for (const f of files) {
+  for (const f of [...files, ...presetLessons]) {
     const destination = join(t, f);
     mkdirSync(dirname(destination), { recursive: true });
     copyFileSync(join(repo, f), destination);
   }
-  console.log(`✓ 已同步 → ${t}`);
+  console.log(`✓ 已同步 → ${t}（${files.length} 核心 + ${presetLessons.length} 内置经验）`);
 }
 
 console.log("─── md5 终验（repo 与各目标必须一致）───");
-for (const f of files) {
+for (const f of [...files, ...presetLessons]) {
   const hashes = new Set([md5(join(repo, f))]);
   for (const t of targets) {
     const p = join(t, f);

@@ -3999,10 +3999,16 @@ test("[local.60] burp 桥审批绕行硬闸：命中锁拒绝转发，未命中�
   }
 });
 
-/* [local.61] 数据编排第一实例：mini-program 资产 → 系统自动挂「请在微信打开目标小程序」待办
- * （不经模型自觉）。断言：投影 fold 有节点、合成事件带 callId、幂等不重复、非小程序不触发、白名单已登记。 */
-test("[local.61] mini-program 资产自动挂用户待办（store+投影双写、幂等、非 minapp 不触发）", async () => {
+/* [local.61/62] 数据编排引擎：mini-program 资产 → 系统自动挂「请在微信打开目标小程序」待办
+ * （不经模型自觉）。断言：投影 fold 有节点、合成事件带 callId、幂等不重复、非小程序不触发、
+ * 白名单已登记。[local.62] 起触发逻辑改为读 DSH_HOME/capabilities/index.json 的能力触发器声明，
+ * 测试先在隔离 DSH_HOME 种子 index.json（顺带验证引擎读真实索引契约）。 */
+test("[local.61/62] mini-program 资产自动挂用户待办（store+投影双写、幂等、非 minapp 不触发）", async () => {
   assert.equal(SYNTHETIC_PROJECTION_EVENTS.has("src_user_todo"), true, "白名单必须登记 src_user_todo");
+  const capsDir = nodePath.join(process.env.DSH_HOME, "capabilities");
+  await fsPromises.mkdir(capsDir, { recursive: true });
+  const capItem = { id: "wx-minapp-recon", kind: "skill", from: "path:/tmp/skill", enabled: true, when: "小程序逆向", status: "installed", dir: "/tmp/skill", scripts: [], triggerAssetTypes: ["mini-program"], triggerKeywords: ["小程序", "wxapkg"], todoTitle: "请在微信打开目标小程序并确认登录", todoKind: "manual-test", todoDetail: "目标包含小程序资产。请在微信中打开该目标小程序并完成登录（若已打开过，直接勾选完成本待办）。完成后 agent 将扫描本机 wxapkg 缓存，用已装能力 wx-minapp-recon 执行 反编译→端点/密钥提取→src_http 测试（走审批闸）。" };
+  await fsPromises.writeFile(nodePath.join(capsDir, "index.json"), JSON.stringify({ generatedAt: new Date().toISOString(), capabilities: [capItem] }));
   const h = harness();
   const parentEvents = [];
   h.sessions.set("l61parent", { append(type, data) { parentEvents.push({ type, data }); } });
@@ -4011,11 +4017,11 @@ test("[local.61] mini-program 资产自动挂用户待办（store+投影双写�
 
   // 非小程序资产：不触发
   const plain = await h.run("src_add_asset", { type: "subdomain", value: "api.minapp.test", source: "CT 日志" }, parent);
-  assert.equal(plain.minappTodo, void 0, "非 mini-program 不挂待办");
+  assert.equal(plain.orchestration, void 0, "非 mini-program 且不命中关键词不触发");
 
   // 小程序资产：自动挂待办
   const mp = await h.run("src_add_asset", { type: "mini-program", value: "wx1234567890abcdef", source: "目标情报" }, parent);
-  assert.match(mp.minappTodo ?? "", /已自动挂起用户待办/, "触发提示进工具返回");
+  assert.match((mp.orchestration ?? []).join("\n"), /已自动挂起用户待办/, "触发提示进工具返回");
   const todoEvents = parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo");
   assert.equal(todoEvents.length, 1, "父日志恰好一条合成 src_user_todo 事件");
   const todoArgs = JSON.parse(todoEvents[0].data.arguments);
@@ -4031,9 +4037,82 @@ test("[local.61] mini-program 资产自动挂用户待办（store+投影双写�
 
   // 幂等：再登记一个小程序资产，不重复挂（「已存在」提示本身证明 store 行可查到）
   const mp2 = await h.run("src_add_asset", { type: "mini-program", value: "wxfedcba0987654321", source: "第二条" }, parent);
-  assert.match(mp2.minappTodo ?? "", /已存在/, "第二次提示已存在（store 幂等依据生效）");
+  assert.match((mp2.orchestration ?? []).join("\n"), /已存在/, "第二次提示已存在（store 幂等依据生效）");
   assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 1, "不重复发合成事件");
   st = srcInitialState;
   for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
   assert.equal(st.userTodos.filter((r) => r.title.startsWith("请在微信打开目标小程序")).length, 1, "投影不重复");
+});
+
+/* [local.62] 数据编排推广：①能力触发器关键词命中只出提示（不挂待办）②决策点经验注入
+ * （lesson-meta.triggers → lessonsForContext → src_add_intent/src_finalize 返回带 lessonHints）
+ * ③src_record_lesson 声明触发器后可被后续决策点命中。 */
+test("[local.62] 能力触发器关键词命中出提示（无待办）", async () => {
+  const capsDir = nodePath.join(process.env.DSH_HOME, "capabilities");
+  await fsPromises.mkdir(capsDir, { recursive: true });
+  const capItem = { id: "fofa", kind: "mcp", from: "npm:x", enabled: true, when: "资产测绘", status: "installed", triggerKeywords: ["诈骗", "钓鱼"] };
+  await fsPromises.writeFile(nodePath.join(capsDir, "index.json"), JSON.stringify({ generatedAt: new Date().toISOString(), capabilities: [capItem] }));
+  const h = harness();
+  const parentEvents = [];
+  h.sessions.set("l62kw", { append(type, data) { parentEvents.push({ type, data }); } });
+  const parent = h.exec("l62kw");
+  await h.run("src_add_goal", { target: "https://kw.test", objective: "关键词触发", authorization: "t62" }, parent);
+  const kw = await h.run("src_add_asset", { type: "subdomain", value: "phish.kw.test", source: "情报：疑似钓鱼域名" }, parent);
+  assert.equal((kw.orchestration ?? []).length, 1, "关键词命中出提示");
+  assert.match(kw.orchestration[0], /能力触发器命中 fofa（关键词命中）/, "提示带能力 id 与命中方式");
+  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 0, "关键词命中不挂待办");
+  const no = await h.run("src_add_asset", { type: "subdomain", value: "plain.kw.test", source: "CT 日志" }, parent);
+  assert.equal(no.orchestration, void 0, "未命中无提示");
+});
+
+test("[local.62] 决策点经验注入：lesson triggers → src_add_intent/finalize 返回带 lessonHints", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const lessonBody = [
+    "# 短信轰炸验证套路",
+    "",
+    "## 触发场景",
+    "接口存在发送短信验证码能力且无频控。",
+    "",
+    "## 验证套路",
+    "1) 抓发送接口 2) 重放观察频控 3) 换参绕过。",
+    "",
+    "## 收录标准",
+    "一分钟内可重复触发 ≥5 条且下游真实送达。",
+    "",
+    "<!-- lesson-meta: " + JSON.stringify({ sessionId: "session-l62", vulnType: "短信轰炸", createdAt: Date.now(), triggers: { keywords: ["短信", "轰炸"] } }) + " -->",
+    ""
+  ].join("\n");
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, "sms-bomb-l62.md"), lessonBody);
+  const h = harness();
+  const parent = h.exec("l62lessons");
+  await h.run("src_add_goal", { target: "https://lesson.test", objective: "注入验证", authorization: "t62b" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const hit = await h.run("src_add_intent", { title: "验证短信轰炸接口", detail: "", goalId: state.goal.id }, parent);
+  assert.equal((hit.lessonHints ?? []).length, 2, "内置+沉淀同名经验都命中（触发器数据生效的最好证明）");
+  assert.match(hit.lessonHints.join("\n"), /【经验库命中】短信轰炸验证套路.*src_read_lesson id="sms-bomb-l62"/, "沉淀经验带读取指引");
+  assert.match(hit.lessonHints.join("\n"), /src_read_lesson id="sms-bomb"/, "内置 sms-bomb 同词命中");
+  const miss = await h.run("src_add_intent", { title: "枚举子域名", detail: "", goalId: state.goal.id }, parent);
+  assert.equal(miss.lessonHints, void 0, "未命中不带字段");
+  // finalize：内置 submission-quality 声明了 tools=[src_finalize_engagement]，按工具名命中推送（收音标准自动到达）
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [], allowIncomplete: true, allowIncompleteReason: "测试路径" }, parent);
+  assert.match((fin.lessonHints ?? []).join("\n"), /src_read_lesson id="submission-quality"；tool=src_finalize_engagement/, "tools 声明在 finalize 决策点命中");
+});
+
+test("[local.62] src_record_lesson 声明触发器 → meta 落盘 → 后续决策点可命中", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("l62record");
+  await h.run("src_add_goal", { target: "https://record.test", objective: "沉淀验证", authorization: "t62c" }, parent);
+  const rec = await h.run("src_record_lesson", { vulnType: "CORS 反射套路", scenario: "Origin 反射", verificationPlaybook: "发双 Origin 头", acceptanceCriteria: "反射+credentials+敏感数据" , triggerTools: "src_add_intent", triggerKeywords: "cors,跨域" }, parent);
+  assert.equal(rec.updatedExisting, false);
+  const text = await fsPromises.readFile(rec.path, "utf8");
+  const meta = JSON.parse(/<!-- lesson-meta: (\{.*?\}) -->/.exec(text)[1]);
+  assert.deepEqual(meta.triggers, { tools: ["src_add_intent"], keywords: ["cors", "跨域"] }, "触发器进 meta");
+  const state = await h.run("src_state", {}, parent);
+  const hit = await h.run("src_add_intent", { title: "CORS 头反射验证", detail: "", goalId: state.goal.id }, parent);
+  assert.equal((hit.lessonHints ?? []).length, 1, "沉淀后立刻可被决策点命中");
 });
