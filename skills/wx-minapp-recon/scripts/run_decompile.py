@@ -7,7 +7,7 @@ import shutil
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-from config_loader import get_tool_cmds
+from config_loader import get_tool_cmds, platform_run
 
 _cfg_tools = get_tool_cmds()
 WEDECODE_CMD = _cfg_tools["wedecode"]
@@ -17,13 +17,10 @@ DECOMPILE_TIMEOUT = 120
 
 def check_wedecode():
     try:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", f"{WEDECODE_CMD} --version"],
-            capture_output=True, text=True, timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        # [local.61] 跨平台：Windows 走 powershell 包装，mac/Linux 直接跑 npm bin
+        r = platform_run([WEDECODE_CMD, "--version"], timeout=10)
         if r.returncode == 0:
-            version = r.stdout.strip() or r.stderr.strip() or "unknown"
+            version = (r.stdout or "").strip() or (r.stderr or "").strip() or "unknown"
             print(f"  [+] wedecode 版本: {version}")
             return True
     except FileNotFoundError:
@@ -45,8 +42,8 @@ def run_decompile(main_pkg, output_dir, sub_pkgs=None):
 
     os.makedirs(output_dir, exist_ok=True)
 
-    ps_cmd = [WEDECODE_CMD, main_pkg, "--out", output_dir, "--clear"]
-    cmd = ["powershell", "-NoProfile", "-Command"] + ps_cmd
+    # [local.61] 跨平台：直接构造 argv，Windows 由 platform_run 内部加 powershell 包装
+    cmd = [WEDECODE_CMD, main_pkg, "--out", output_dir, "--clear"]
 
     print(f"  [*] 执行: wedecode ... (主包: {os.path.basename(main_pkg)})")
     if sub_pkgs:
@@ -55,12 +52,9 @@ def run_decompile(main_pkg, output_dir, sub_pkgs=None):
     sys.stdout.flush()
 
     try:
-        r = subprocess.run(
+        r = platform_run(
             cmd,
-            capture_output=True, text=True,
             timeout=DECOMPILE_TIMEOUT,
-            encoding="utf-8", errors="replace",
-            creationflags=subprocess.CREATE_NO_WINDOW
         )
         out = (r.stdout or "").strip()
         err = (r.stderr or "").strip()

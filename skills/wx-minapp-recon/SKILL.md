@@ -5,11 +5,11 @@ description: 微信小程序安全审计工具。扫描电脑上的微信小程�
 
 <!-- [dsh-src 接入说明] 本 skill 是 dsh-src 运行时能力（id: wx-minapp-recon）的仓库副本，
      扫描/反编译的是【本机微信客户端缓存里已有的 wxapkg 包】。前置条件：目标小程序必须已
-     在本机微信中打开过（含登录态）。因此当目标含小程序资产时：先 src_user_todo
-     (kind=manual-test, title="请在微信打开目标小程序并确认登录") 提待办移交用户，用户完成
-     后再执行本 skill 的扫描→反编译→提取流水线；script 执行走 src_run_capability
-     （异步挂起待审，用户批准后经 src_resolve_approval 拿输出）。产出以 src_record_observation
-     固化，文件产物放本次 engagement 的探测目录。 -->
+     在本机微信中打开过（含登录态）。前置待办已由系统数据编排确定性保障：登记 mini-program
+     资产时自动挂「请在微信打开目标小程序并确认登录」待办，无需重复手提；若扫包为空（微信
+     还没打开过目标小程序），提醒用户完成/打开后重扫，绝不虚构包路径。流水线：扫描→反编译→
+     提取；script 执行走 src_run_capability（异步挂起待审，用户批准后经 src_resolve_approval
+     拿输出）。产出以 src_record_observation 固化，文件产物放本次 engagement 的探测目录。 -->
 
 # 微信小程序安全审计
 
@@ -43,6 +43,10 @@ python <skill_dir>/scripts/scan_wxapkg.py [--dir <path>] [--resolve-names] [--js
 | `--quick` | 跳过所有额外处理（包括名称解析） |
 
 **输出**: 交互式列表，用户选择后输出选中包的 JSON 信息（含主包路径、分包列表）。
+
+**[local.61] 硬规则（数据编排配套）**：
+- `--json` 输出为 `[]`（本机没有目标小程序的包）时：说明用户还没在微信里打开过目标小程序。**不虚构包路径、不硬等**——检查待办面板里系统自动挂的「请在微信打开目标小程序并确认登录」待办，提醒用户完成后重扫；继续推进其他不依赖小程序的方向。
+- 扫描非空时：按 appid/名称匹配目标（用 `--resolve-names` 或读 app-config.json 辅助确认），找到目标后再进入 Phase 2。
 
 ### 名称解析效果示例
 
@@ -319,6 +323,8 @@ python <skill_dir>/scripts/group_apis.py merge --api-groups ./<appid>/_ai_worksp
 
 ## 微信版本与路径
 
+**平台支持**：Windows 与 macOS 均可（[local.61]）。脚本按平台自动选默认路径；路径布局未知/变化时有兑底递归发现（从微信容器根有限深度找所有 `__APP__.wxapkg`，macOS 微信 4.x 实测即靠此命中：`~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/packages/<wxappid>/<version>/__APP__.wxapkg`）。自定义路径仍可用 `--dir` 覆盖。
+
 ### 新版微信 (xwechat) — 完全支持
 - 小程序包存储在 `%APPDATA%\Tencent\xwechat\radium\users\<hash>\applet\packages\<wxappid>\<version>\__APP__.wxapkg`
 - wedecode 可直接解密并反编译
@@ -327,5 +333,10 @@ python <skill_dir>/scripts/group_apis.py merge --api-groups ./<appid>/_ai_worksp
 ### 旧版微信 (WeChat Files) — 完全支持
 - 小程序包存储在 `Documents\WeChat Files\Applet\wx{appid}\__APP__.wxapkg`
 - wedecode 可直接反编译
+
+### macOS — 完全支持（[local.61]）
+- 微信 4.x：`~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/<hash>/applet/packages/<wxappid>/<version>/__APP__.wxapkg`（兑底递归发现自动适配）
+- 微信 3.x：`~/Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/<ver>/<hash>/Applet/<wxappid>/...`（同上）
+- wedecode 以 npm 全局 bin 直接执行（POSIX 可执行文件），无需 powershell 包装
 
 > **注意**：分包文件（`_xxx_.wxapkg`、`__sub_xxx__`）需要与主包在同一目录下。

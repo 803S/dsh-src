@@ -3998,3 +3998,42 @@ test("[local.60] burp 桥审批绕行硬闸：命中锁拒绝转发，未命中�
     await fsPromises.rm(home, { recursive: true, force: true }).catch(() => {});
   }
 });
+
+/* [local.61] 数据编排第一实例：mini-program 资产 → 系统自动挂「请在微信打开目标小程序」待办
+ * （不经模型自觉）。断言：投影 fold 有节点、合成事件带 callId、幂等不重复、非小程序不触发、白名单已登记。 */
+test("[local.61] mini-program 资产自动挂用户待办（store+投影双写、幂等、非 minapp 不触发）", async () => {
+  assert.equal(SYNTHETIC_PROJECTION_EVENTS.has("src_user_todo"), true, "白名单必须登记 src_user_todo");
+  const h = harness();
+  const parentEvents = [];
+  h.sessions.set("l61parent", { append(type, data) { parentEvents.push({ type, data }); } });
+  const parent = h.exec("l61parent");
+  await h.run("src_add_goal", { target: "https://minapp.test", objective: "小程序线验证", authorization: "ticket-61" }, parent);
+
+  // 非小程序资产：不触发
+  const plain = await h.run("src_add_asset", { type: "subdomain", value: "api.minapp.test", source: "CT 日志" }, parent);
+  assert.equal(plain.minappTodo, void 0, "非 mini-program 不挂待办");
+
+  // 小程序资产：自动挂待办
+  const mp = await h.run("src_add_asset", { type: "mini-program", value: "wx1234567890abcdef", source: "目标情报" }, parent);
+  assert.match(mp.minappTodo ?? "", /已自动挂起用户待办/, "触发提示进工具返回");
+  const todoEvents = parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo");
+  assert.equal(todoEvents.length, 1, "父日志恰好一条合成 src_user_todo 事件");
+  const todoArgs = JSON.parse(todoEvents[0].data.arguments);
+  assert.equal(todoArgs.kind, "manual-test");
+  assert.match(todoArgs.title, /^请在微信打开目标小程序并确认登录$/);
+  assert.match(todoEvents[0].data.callId, /^src-submit-/, "合成事件必须带 callId（local.26 闸门）");
+  let st = srcInitialState;
+  for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
+  const folded = st.userTodos.find((r) => r.title.startsWith("请在微信打开目标小程序"));
+  assert.ok(folded, "fold 投影有待办节点");
+  assert.equal(folded.status, "pending");
+  assert.equal(folded.detail.includes("wx-minapp-recon"), true, "detail 引导到已装能力");
+
+  // 幂等：再登记一个小程序资产，不重复挂（「已存在」提示本身证明 store 行可查到）
+  const mp2 = await h.run("src_add_asset", { type: "mini-program", value: "wxfedcba0987654321", source: "第二条" }, parent);
+  assert.match(mp2.minappTodo ?? "", /已存在/, "第二次提示已存在（store 幂等依据生效）");
+  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 1, "不重复发合成事件");
+  st = srcInitialState;
+  for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
+  assert.equal(st.userTodos.filter((r) => r.title.startsWith("请在微信打开目标小程序")).length, 1, "投影不重复");
+});

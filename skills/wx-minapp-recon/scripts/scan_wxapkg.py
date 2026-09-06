@@ -7,19 +7,18 @@ import tempfile
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-from config_loader import get_wechat_paths, get_tool_cmds
+from config_loader import get_wechat_paths, get_tool_cmds, platform_run, IS_WINDOWS
 
 _cfg_paths = get_wechat_paths()
 
-# 旧版微信 (3.x): 直接存储 __APP__.wxapkg 文件
-OLD_FORMAT_PATHS = _cfg_paths["old_format_paths"] or [
-    os.path.join(os.environ.get("USERPROFILE", ""), "Documents", "WeChat Files", "Applet"),
-]
+# 旧版微信 (3.x): 直接存储 __APP__.wxapkg 文件（loader 已按平台给默认值）
+OLD_FORMAT_PATHS = _cfg_paths["old_format_paths"]
 
 # 新版微信 (xwechat): applet/packages/<wxappid>/<version>/__APP__.wxapkg
-XWECHAT_USERS = _cfg_paths["xwechat_users"] or os.path.join(
-    os.environ.get("APPDATA", ""), "Tencent", "xwechat", "radium", "users"
-)
+# macOS 4.x 是 xwechat_files/<wxid>/…，内部布局由兑底递归发现适配
+XWECHAT_USERS = _cfg_paths["xwechat_users"]
+# [local.61] macOS 容器根：布局未知时由 deep_scan 从这里兑底
+CONTAINER_ROOT = _cfg_paths.get("container_root")
 
 _cfg_tools = get_tool_cmds()
 NODE_CMD = _cfg_tools["node"]
@@ -31,20 +30,15 @@ WEDECODE_CMD = _cfg_tools["wedecode"]
 # ============================================================
 
 def check_env():
-    info = {"node": False, "wedecode": False}
+    info = {"node": False, "wedecode": False, "platform": _cfg_paths.get("platform", "")}
     try:
-        r = subprocess.run([NODE_CMD, "--version"], capture_output=True, timeout=5,
-                           creationflags=subprocess.CREATE_NO_WINDOW)
+        r = platform_run([NODE_CMD, "--version"], timeout=5)
         if r.returncode == 0:
             info["node"] = True
     except Exception:
         pass
     try:
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", f"{WEDECODE_CMD} --version"],
-            capture_output=True, text=True, timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        r = platform_run([WEDECODE_CMD, "--version"], timeout=10)
         if r.returncode == 0:
             info["wedecode"] = True
     except Exception:
@@ -191,6 +185,86 @@ def scan_sub_pkgs(pkg_dir):
 
 
 # ============================================================
+# [local.61] 兑底递归发现：路径布局未知/变化（如 macOS 微信 4.x）时，
+# 从容器根有限深度/有限规模找所有 __APP__.wxapkg，自动适配任何内部布局。
+# ============================================================
+
+# 已知不含小程序包、可能很庞大的目录：剪枝不进入
+_DEEP_SCAN_PRUNE = {"message", "Message", "backup", "Backup", "cache", "Cache", "logs", "Log", "log", "db"}
+
+
+def _appid_from_pkg_dir(dirpath):
+    """从包目录名推 appid：wx 开头优先；否则若是版本号形态取上一级。"""
+    name = os.path.basename(dirpath)
+    parent = os.path.basename(os.path.dirname(dirpath))
+    if name.startswith("wx"):
+        return name
+    if parent.startswith("wx"):
+        return parent
+    return name
+
+
+def deep_scan(max_depth=10, max_dirs=30000):
+    found = []
+    seen_dirs = 0
+    seen_paths = set()
+    roots = []
+    if CONTAINER_ROOT and os.path.isdir(CONTAINER_ROOT):
+        roots.append(CONTAINER_ROOT)
+    for base in OLD_FORMAT_PATHS:
+        if os.path.isdir(base) and (not roots or base != roots[0]):
+            roots.append(base)
+    for root in roots:
+        base_depth = root.rstrip(os.sep).count(os.sep)
+        for dirpath, dirnames, filenames in os.walk(root):
+            seen_dirs += 1
+            if seen_dirs > max_dirs:
+                break  # 规模保护：返回已发现的
+            depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
+            if depth >= max_depth:
+                dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if d not in _DEEP_SCAN_PRUNE]
+            if "__APP__.wxapkg" not in filenames:
+                continue
+            main_pkg = os.path.join(dirpath, "__APP__.wxapkg")
+            if main_pkg in seen_paths:
+                continue
+            seen_paths.add(main_pkg)
+            try:
+                size = os.path.getsize(main_pkg)
+                mtime = os.path.getmtime(main_pkg)
+            except OSError:
+                continue
+            sub_pkgs = [os.path.join(dirpath, f) for f in filenames
+                        if f.endswith(".wxapkg") and f != "__APP__.wxapkg"]
+            found.append({
+                "format": "deep",
+                "appid": _appid_from_pkg_dir(dirpath),
+                "path": dirpath,
+                "main_pkg": main_pkg,
+                "size": size,
+                "size_str": fmt_size(size),
+                "mtime": mtime,
+                "mtime_str": fmt_time(mtime),
+                "sub_pkgs": sub_pkgs,
+            })
+    found.sort(key=lambda x: x["mtime"], reverse=True)
+    return found
+
+
+def dedupe_apps(apps):
+    """按 main_pkg 去重（快路径与 deep_scan 可能重叠）。"""
+    seen = set()
+    out = []
+    for a in apps:
+        if a["main_pkg"] in seen:
+            continue
+        seen.add(a["main_pkg"])
+        out.append(a)
+    return out
+
+
+# ============================================================
 # 名称解析（最佳尝试，失败则返回 None）
 # ============================================================
 
@@ -246,12 +320,11 @@ def resolve_name_via_unpack(appid, main_pkg):
     """快速解包 app-config.json 提取 tabBar 文字作为名称提示"""
     tmp = tempfile.mkdtemp(prefix="wx_name_")
     try:
-        # wedecode 是 .ps1 文件，必须通过 powershell 调用
-        cmd = ["powershell", "-NoProfile", "-Command",
-               WEDECODE_CMD, main_pkg, "--out", tmp, "--clear", "--unpack-only"]
-        proc = subprocess.run(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=60, creationflags=subprocess.CREATE_NO_WINDOW
+        # [local.61] 跨平台执行：Windows 走 powershell 包装（npm bin 是 .ps1/.cmd），
+        # macOS/Linux 直接跑带 shebang 的 npm bin
+        proc = platform_run(
+            [WEDECODE_CMD, main_pkg, "--out", tmp, "--clear", "--unpack-only"],
+            timeout=60,
         )
         if proc.returncode != 0:
             return None
@@ -412,8 +485,13 @@ def main():
         apps = scan_custom_dir(args.dir)
     else:
         apps = scan_old_format()
+        xw_apps = scan_xwechat_format()
+        if xw_apps:
+            apps = apps + xw_apps
+        # [local.61] 常规路径扑空时兑底递归发现（macOS 4.x 布局未知也能找到）
         if not apps:
-            apps = scan_xwechat_format()
+            apps = deep_scan()
+        apps = dedupe_apps(apps)
 
     names_resolved = False
     if apps and not args.quick:

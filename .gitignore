@@ -10,3 +10,4 @@ backups/
 # pack artifacts
 *.tgz
 pnpm-lock.yaml
+__pycache__/
