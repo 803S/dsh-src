@@ -1,0 +1,27 @@
+# [local.63] 覆盖面清单：goal 创建时系统确定性挂出的用户待办（数据编排，不经提示词）。
+# 解决的问题：recon 工具面是域名中心的，小程序/App/关联主体/海外资产从没进过资产图 →
+# 触发器没输入、agent 说「没有没测的资产」。本清单把「枚举动作」变成开局待办。
+# 规则：
+#   - {target} 占位符替换为 goal 的裸域名（如 mi.com）
+#   - 幂等：同 engagement 同标题不重复挂（agent 重新建 goal 也不会重复）
+#   - 待办不阻塞 agent：枚举与主站挖掘并行推进
+#   - kind 枚举：auth-session/burp-enable/asset-provide/decision/manual-test/other
+#   - title ≤80 字符、detail ≤600 字符、最多 10 条
+# 运行时覆盖：把本文件复制到 ~/.dsh/coverage.yaml 修改即可（坏文件会让覆盖待办挂不出来，但不影响建 goal）
+checklist:
+  - id: minapp-enum
+    title: 请在微信搜索 {target} 主体相关的小程序并回报名称
+    kind: asset-provide
+    detail: 小程序线常是薄弱面（外包团队开发、迭代慢、接口与云密钥硬编码）。请在微信里搜索目标公司名、产品名、业务词（如「××公益」「××会员」「××快递员」「××超市」），把找到的小程序名称或 appid 逐一告诉 agent，由 agent 登记 type=mini-program 资产；登记后系统会自动挂「请在微信打开目标小程序并确认登录」的后续待办，反编译流水线接管。若确认没有相关小程序，直接勾选完成并备注「无」。
+  - id: app-enum
+    title: 请在应用商店搜索 {target} 主体相关的 App 并回报名称
+    kind: asset-provide
+    detail: 外采/外包团队做的 App 常缺加固、更新滞后、调试接口残留，是经典突破口。查华为/小米/OV/应用宝/App Store/Google Play、官网下载页、蒲公英/fir.im 内测分发页，把 App 名称与安卓包名告诉 agent 登记 type=app 资产；agent 可用 playwright 抓官网下载链接、fofa 测绘协助。确认没有则勾选完成并备注「无」。
+  - id: related-domains
+    title: 枚举 {target} 关联主体（子公司/公益基金会/外采品牌）的备案域名
+    kind: decision
+    detail: 大厂常用独立法人运营外围业务（例：顺丰公益=深圳市顺丰公益基金会，独立 ICP 备案主体）。从天眼查/爱企查对外投资与分支机构图谱、官网页脚版权主体、App 隐私政策里的运营主体出发，逐主体查 ICP 备案域名；每确认一个归属目标集团的域名就 src_add_asset（source 写判定依据）。agent 自查完成后自行勾选本待办；查不到也勾选完成并备注。
+  - id: overseas-enum
+    title: 枚举 {target} 的海外与出海资产
+    kind: decision
+    detail: 海外站/出海 App/多语言站常独立部署、安全投入低。查官网 country selector、上市公司年报对外投资名单、海外招聘站、App Store 各区与 Google Play。注意：先确认厂商对海外资产的收录态度——规则明示不收录的，测试照常推进的同时挂确认待办（src_user_todo，kind=decision）请用户拍板，不要自行放弃也不要静默跳过。agent 自查完成后自行勾选并登记资产。

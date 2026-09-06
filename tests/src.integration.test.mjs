@@ -137,7 +137,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, eventsBeforeRepeat, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 });
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 4, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 }); /* [local.63] goal 创建挂 4 张覆盖面待办 */
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
@@ -632,8 +632,8 @@ test("src_record_observation and src_user_todo lifecycle", async () => {
   assert.equal(done.note, "已导出发你");
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.counts.observations, 1);
-  assert.equal(state.counts.userTodos, 1);
-  assert.equal(state.userTodos[0].status, "done");
+  assert.equal(state.counts.userTodos, 5); /* [local.63] 4 张覆盖待办 + 1 张本测建的 */
+  assert.equal(state.userTodos.filter((t) => t.title === "提供已登录 Burp 请求")[0].status, "done");
 });
 
 test("src_collect_dorks generates five-category queries and records facts", async () => {
@@ -712,6 +712,7 @@ test("src_import_traffic mcp mode consumes pre-fetched flows", async () => {
 });
 
 test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + finalize rawRequest 门禁", async () => {
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), "checklist:\n"); /* [local.63] 空覆盖清单：本测不需要覆盖面待办参与收官闸 */
   const h = harness();
   // 门禁部分：缺 rawRequest 被 finalize 拦截
   const p1 = h.exec("gate");
@@ -786,7 +787,7 @@ test("projection 回放 observation/user_todo 并在 view 输出（UI 数据面�
   const todo = await h.run("src_user_todo", { title: "提供已登录 Burp 请求", detail: "登录态获取", kind: "auth-session" }, parent);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.observations.length, 1);
-  assert.equal(state.userTodos.length, 1);
+  assert.equal(state.userTodos.filter((t) => t.title === "提供已登录 Burp 请求").length, 1); /* [local.63] 另有 4 张覆盖面待办，按标题过滤断言 */
   // 折叠面单测：fold 工具事件后 view 应输出 observations/userTodos（UI 数据面）
   const mod = await import("../lib/src.js");
   let st = JSON.parse(JSON.stringify(mod.srcInitialState));
@@ -975,7 +976,7 @@ test("[local.9] src_state output includes observations/userTodos/infra without s
   const state = await h.run("src_state", {}, parent);
   assert.equal(Array.isArray(state.observations), true);
   assert.equal(Array.isArray(state.userTodos), true);
-  assert.equal(state.userTodos.length, 1);
+  assert.equal(state.userTodos.filter((t) => t.title === "登录 example.test 提供会话").length, 1); /* [local.63] 另有覆盖面待办，按标题过滤 */
   assert.equal(typeof state.infra.proxyUrl, "string");
 });
 
@@ -1749,6 +1750,7 @@ test("[capability] parseCapsYamlSubset 容错与折叠块", async () => {
 });
 
 test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联豁免 + 报告尾节「等你的事」", async () => {
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), "checklist:\n"); /* [local.63] 空覆盖清单：本测专门验证待办闸自身语义 */
   const h = harness();
   const parent = h.exec("g20");
   await h.run("src_add_goal", { target: "https://shop.example.test", objective: "收官闸门", authorization: "SRC" }, parent);
@@ -3444,6 +3446,7 @@ test("[local.42] intent priority：建链带优先级、单独调整、src_state
 });
 
 test("[local.42] deprecated：planned 可废弃；completed 拒绝；finalize 不阻塞且出警告", async () => {
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), "checklist:\n"); /* [local.63] 空覆盖清单 */
   const h = harness();
   const parent = h.exec("g42b");
   await h.run("src_add_goal", { target: "https://shop.example.test", objective: "deprecate gate", authorization: "SRC" }, parent);
@@ -4022,8 +4025,8 @@ test("[local.61/62] mini-program 资产自动挂用户待办（store+投影双�
   // 小程序资产：自动挂待办
   const mp = await h.run("src_add_asset", { type: "mini-program", value: "wx1234567890abcdef", source: "目标情报" }, parent);
   assert.match((mp.orchestration ?? []).join("\n"), /已自动挂起用户待办/, "触发提示进工具返回");
-  const todoEvents = parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo");
-  assert.equal(todoEvents.length, 1, "父日志恰好一条合成 src_user_todo 事件");
+  const todoEvents = parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && JSON.parse(e.data.arguments).title.startsWith("请在微信打开目标小程序"));
+  assert.equal(todoEvents.length, 1, "父日志恰好一条合成 src_user_todo 事件（[local.63] goal 自身的 4 张覆盖待办不计入）");
   const todoArgs = JSON.parse(todoEvents[0].data.arguments);
   assert.equal(todoArgs.kind, "manual-test");
   assert.match(todoArgs.title, /^请在微信打开目标小程序并确认登录$/);
@@ -4038,7 +4041,7 @@ test("[local.61/62] mini-program 资产自动挂用户待办（store+投影双�
   // 幂等：再登记一个小程序资产，不重复挂（「已存在」提示本身证明 store 行可查到）
   const mp2 = await h.run("src_add_asset", { type: "mini-program", value: "wxfedcba0987654321", source: "第二条" }, parent);
   assert.match((mp2.orchestration ?? []).join("\n"), /已存在/, "第二次提示已存在（store 幂等依据生效）");
-  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 1, "不重复发合成事件");
+  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && JSON.parse(e.data.arguments).title.startsWith("请在微信打开目标小程序")).length, 1, "不重复发合成事件");
   st = srcInitialState;
   for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
   assert.equal(st.userTodos.filter((r) => r.title.startsWith("请在微信打开目标小程序")).length, 1, "投影不重复");
@@ -4060,7 +4063,7 @@ test("[local.62] 能力触发器关键词命中出提示（无待办）", async 
   const kw = await h.run("src_add_asset", { type: "subdomain", value: "phish.kw.test", source: "情报：疑似钓鱼域名" }, parent);
   assert.equal((kw.orchestration ?? []).length, 1, "关键词命中出提示");
   assert.match(kw.orchestration[0], /能力触发器命中 fofa（关键词命中）/, "提示带能力 id 与命中方式");
-  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 0, "关键词命中不挂待办");
+  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && String(JSON.parse(e.data.arguments).title).includes("目标小程序")).length, 0, "关键词命中不挂待办（goal 自身的覆盖待办不计）");
   const no = await h.run("src_add_asset", { type: "subdomain", value: "plain.kw.test", source: "CT 日志" }, parent);
   assert.equal(no.orchestration, void 0, "未命中无提示");
 });
@@ -4115,4 +4118,77 @@ test("[local.62] src_record_lesson 声明触发器 → meta 落盘 → 后续决
   const state = await h.run("src_state", {}, parent);
   const hit = await h.run("src_add_intent", { title: "CORS 头反射验证", detail: "", goalId: state.goal.id }, parent);
   assert.equal((hit.lessonHints ?? []).length, 1, "沉淀后立刻可被决策点命中");
+});
+
+/* [local.63] 覆盖面编排：goal 创建时确定性挂覆盖清单待办（小程序/App/关联主体/海外）。
+ * 断言：默认清单 4 张全挂、orchestration 行进返回、幂等不重复、运行时 ~/.dsh/coverage.yaml
+ * 覆盖生效、坏清单不阻塞建 goal；src_state 的 assetGaps 机械算缺口。 */
+test("[local.63] goal 创建挂覆盖面待办（默认清单、幂等、运行时覆盖、坏数据不阻塞）", async () => {
+  await fsPromises.rm(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), { force: true }); /* 先删运行时覆盖，验证默认内置清单 */
+  const h = harness();
+  const parentEvents = [];
+  h.sessions.set("l63cov", { append(type, data) { parentEvents.push({ type, data }); } }); /* 必须先注册再 exec：exec 闭包绑定的 append 就是收集器 */
+  const parent = h.exec("l63cov");
+  const g1 = await h.run("src_add_goal", { target: "one-l63.test", objective: "覆盖面验证", authorization: "t63" }, parent);
+  assert.equal((g1.coverageTodos ?? []).length, 4, "默认清单 4 张待办");
+  assert.match(g1.coverageTodos[0], /已挂覆盖面待办「请在微信搜索 one-l63\.test 主体相关的小程序并回报名称」（minapp-enum，数据编排）/);
+  assert.match(g1.coverageTodos[3], /overseas-enum/);
+  // 投影：4 张 src_user_todo 事件 → fold 后 userTodos 4 条，kind 正确
+  let st = JSON.parse(JSON.stringify(srcInitialState));
+  for (const e of parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo")) st = applySrcEvent(st, e);
+  assert.equal(st.userTodos.length, 4, "投影 4 张待办");
+  assert.equal(st.userTodos.filter((t) => t.kind === "asset-provide").length, 2, "用户动作类 2 张");
+  assert.equal(st.userTodos.filter((t) => t.kind === "decision").length, 2, "agent 自查类 2 张");
+  // 幂等：同会话重建同目标 goal，不重复挂
+  const g2 = await h.run("src_add_goal", { target: "one-l63.test", objective: "覆盖面验证2" }, parent);
+  assert.match((g2.coverageTodos ?? []).join("\n"), /已存在/, "第二次全走已存在分支");
+  assert.equal(g2.coverageTodos.length, 4);
+  st = JSON.parse(JSON.stringify(srcInitialState));
+  for (const e of parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo")) st = applySrcEvent(st, e);
+  assert.equal(st.userTodos.length, 4, "幂等：投影仍 4 张");
+  // 运行时覆盖：~/.dsh/coverage.yaml 生效（{target} 占位符替换）
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), [
+    "# 测试覆盖",
+    "checklist:",
+    "  - id: only-one",
+    "    title: 自定义待办 {target}",
+    "    kind: decision",
+    "    detail: 测试运行时覆盖"
+  ].join("\n"));
+  const p2 = h.exec("l63ovr");
+  h.sessions.set("l63ovr", { append() {} });
+  const g3 = await h.run("src_add_goal", { target: "two-l63.test", objective: "覆盖面覆盖" }, p2);
+  assert.deepEqual(g3.coverageTodos, ["已挂覆盖面待办「自定义待办 two-l63.test」（only-one，数据编排）"], "运行时覆盖生效且占位符已替换");
+  // 坏清单：解析失败 → 不挂待办但 goal 照常创建
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_HOME, "coverage.yaml"), "完全不是清单的内容\n");
+  const g4 = await h.run("src_add_goal", { target: "three-l63.test", objective: "坏清单不阻塞" }, p2);
+  assert.equal(g4.coverageTodos, void 0, "坏清单零待办");
+  assert.equal(g4.target, "three-l63.test", "goal 照常创建");
+});
+
+test("[local.63] src_state assetGaps：核心四类机械缺口（对照已登记资产）", async () => {
+  const h = harness();
+  const parent = h.exec("l63gap");
+  h.sessions.set("l63gap", { append() {} });
+  await h.run("src_add_goal", { target: "gap-l63.test", objective: "缺口验证" }, parent);
+  const empty = await h.run("src_state", {}, parent);
+  assert.deepEqual(empty.assetGaps.gaps, ["root-domain", "subdomain", "app", "mini-program"], "空图四类全缺");
+  await h.run("src_add_asset", { type: "root-domain", value: "gap-l63.test", source: "目标" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "api.gap-l63.test", source: "CT" }, parent);
+  await h.run("src_add_asset", { type: "mini-program", value: "wx63test00000000", source: "枚举" }, parent);
+  const st = await h.run("src_state", {}, parent);
+  assert.deepEqual(st.assetGaps.gaps, ["app"], "仅剩 app 缺口");
+  assert.deepEqual(st.assetGaps.present, [{ type: "root-domain", count: 1 }, { type: "subdomain", count: 1 }, { type: "mini-program", count: 1 }], "present 带计数");
+  // 渲染层：src_state 文本里出现缺口注脚
+  const tool = h.tools.get("src_state");
+  const rendered = tool.output.render("", st).map((r) => r.text).join("");
+  assert.match(rendered, /资产类缺口：app（先枚举登记再谈测完，对应覆盖面待办）/);
+});
+
+test("[local.63] scope 确认经验：关键词命中注入（工具不命中零噪音）", async () => {
+  const { lessonsForContext } = await import("../lib/src/lessons.js");
+  const scopeHits = await lessonsForContext({ tool: "src_add_intent", text: "测试海外 App 是否在收录范围", detail: "" });
+  assert.equal(scopeHits.some((l) => l.file === "scope-confirmation"), true, "关键词「收录」命中 scope 确认经验");
+  const noise = await lessonsForContext({ tool: "src_add_intent", text: "验证 CORS Origin 反射", detail: "" });
+  assert.equal(noise.some((l) => l.file === "scope-confirmation"), false, "无关意图零噪音");
 });

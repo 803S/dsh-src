@@ -175,6 +175,8 @@ python <skill_dir>/scripts/group_apis.py group <recon_dir>/api_endpoints.xlsx <r
 
 ## Phase 4: AI 语义分析（大模型执行）
 
+**[local.63] 硬规则：反编译产物 → 外围资产扩展（数据编排配套）**：Phase 3 提取出的后端 URL / API 域名（extract 产出的 backend_urls 与 api 表 host 列）逐个做归属判定——归属目标主体集团的，逐个 `src_add_asset` 登记（type=subdomain 或 root-domain，source 标注「小程序反编译产物」）；这是外围薄弱资产（外包/外采团队建的 API、CDN、测试环境）进资产图的主通道，不登记它们就无法被后续编排触发。判定不了归属的记 fact 不硬登记。
+
 脚本仅生成数据，AI 分析由大模型（当前对话）逐组完成：
 
 **2a. 接口功能分析（逐模块）**
