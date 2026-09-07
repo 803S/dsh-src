@@ -1309,6 +1309,78 @@ test("[local.15] 智能代理路由：非名单域名直连、名单域名走代
   server.close();
 });
 
+test("[local.64] legacy TLS 重协商降级：报错后自动用 SSL_OP_LEGACY_SERVER_CONNECT 重试一次", async () => {
+  const { makeHttpFetch } = await import("../lib/src.js");
+  const http = makeHttpFetch({ proxyUrl: "", httpTimeoutMs: "4000" });
+  const originalFetch = globalThis.fetch;
+  const originalTlsReject = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  try {
+    // 本地 TLS 服务（自签证书，openssl CLI 生成；macOS 自带 LibreSSL）
+    const fsPromises = (await import("node:fs")).promises;
+    const tmpDir = await fsPromises.mkdtemp("/tmp/l64-tls-");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const run = promisify(execFile);
+    const keyP = `${tmpDir}/key.pem`, certP = `${tmpDir}/cert.pem`;
+    await run("/usr/bin/openssl", ["req", "-x509", "-newkey", "rsa:2048", "-keyout", keyP, "-out", certP, "-days", "1", "-nodes", "-subj", "/CN=localhost"]);
+    const [key, cert] = await Promise.all([fsPromises.readFile(keyP, "utf8"), fsPromises.readFile(certP, "utf8")]);
+    const tls = await import("node:tls");
+    const server = tls.createServer({ key, cert }, (socket) => {
+      socket.on("data", () => socket.write("HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\nlegacy-ok"));
+      socket.on("error", () => {});
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // 自签证书：降级路径默认严格校验会拒，仅测试进程内临时放宽
+    // ① 严格 fetch 被打桩成报 legacy renegotiation（模拟 kfapi 场景）→ 应自动降级重试并拿到响应
+    globalThis.fetch = async () => {
+      const err = new TypeError("fetch failed");
+      err.cause = Object.assign(new Error("ssl routines:unsafe legacy renegotiation disabled"), { opensslErrorStack: ["806105F601000000:error:0A000152:SSL routines:final_renegotiate:unsafe legacy renegotiation disabled"] });
+      throw err;
+    };
+    const res = await http(`https://localhost:${port}/x`, { method: "POST", redirect: "manual", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "legacy-ok");
+    // ② 降级重试也失败（必败端口）→ 报错带通道对照指引与原始原因
+    await assert.rejects(
+      () => http("https://127.0.0.1:1/x", { method: "GET", redirect: "manual" }),
+      (e) => /网络层失败|legacy renegotiation|通道/.test(e.message) && /ECONNREFUSED/.test(e.message),
+    );
+    // ③ 非 legacy 的普通网络失败：不触发降级（直接抛），报错仍带通道对照指引与原始原因
+    globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+    await assert.rejects(
+      () => http("https://127.0.0.1:1/y", { method: "GET", redirect: "manual" }),
+      (e) => /通道差异/.test(e.message) && /fetch failed/.test(e.message),
+    );
+    server.close();
+    await fsPromises.rm(tmpDir, { recursive: true, force: true });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalTlsReject === void 0) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED; else process.env.NODE_TLS_REJECT_UNAUTHORIZED = originalTlsReject;
+  }
+});
+
+test("[local.64] 投影待办 id 与 store 同源：合成事件带真实 id；无 id 新建回退 userTodo- 前缀；更新按 id 命中不再静默丢失", async () => {
+  const { applySrcEvent, srcInitialState } = await import("../lib/src.js");
+  const fold = (state, name, args) => applySrcEvent(state, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
+  // ① 合成事件携带真实 store id（覆盖面待办/数据编排路径）→ 投影行 id 与 store 一致
+  const withId = fold(srcInitialState, "src_user_todo", { id: "userTodo-1", title: "请在微信搜索 l63ui-e2e.test 主体相关的小程序", detail: "d", kind: "asset-provide" });
+  assert.equal(withId.userTodos[0].id, "userTodo-1");
+  // ② 无 id 新建（agent 直接 src_user_todo 的常规事件）→ 回退 userTodo-<行数+1>，不再自造 todo- 前缀
+  const noId = fold(srcInitialState, "src_user_todo", { title: "t1", detail: "", kind: "other" });
+  assert.equal(noId.userTodos[0].id, "userTodo-1");
+  const noId2 = fold(noId, "src_user_todo", { title: "t2", detail: "" });
+  assert.equal(noId2.userTodos[1].id, "userTodo-2");
+  // ③ 更新事件按 store id 命中投影行（此前 todo- vs userTodo- 漂移导致更新静默丢失）
+  const updated = fold(withId, "src_user_todo", { userTodoId: "userTodo-1", status: "abandoned", note: "用户拍板放弃" });
+  assert.equal(updated.userTodos[0].status, "abandoned");
+  assert.equal(updated.userTodos[0].note, "用户拍板放弃");
+  // ④ 更新不存在的 id：安全 no-op（不建新行）
+  const noop = fold(withId, "src_user_todo", { userTodoId: "userTodo-99", status: "done" });
+  assert.equal(noop.userTodos.length, 1);
+  assert.equal(noop.userTodos[0].status, "pending");
+});
+
 test("[local.15] src_recover_child 无 checkpoint 子代理也可唤醒；额度限制与 intent 状态回写不变", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   __resetSharedDomainOpensForTests();
@@ -3916,8 +3988,10 @@ test("[local.60] src_user_todo 更新模式不再强制 title（schema+execute+f
   const tc = (name, args) => ({ type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
   let st = srcInitialState;
   st = applySrcEvent(st, tc("src_user_todo", { title: "T1" }));
-  st = applySrcEvent(st, tc("src_user_todo", { userTodoId: "todo-1", status: "abandoned" }));
-  const row = st.userTodos.find((r) => r.id === "todo-1");
+  const createdId = st.userTodos[0].id; /* [local.64] fold 新建 id 与 store 同源（userTodo- 前缀），不再自造 todo- */
+  assert.match(createdId, /^userTodo-\d+$/);
+  st = applySrcEvent(st, tc("src_user_todo", { userTodoId: createdId, status: "abandoned" }));
+  const row = st.userTodos.find((r) => r.id === createdId);
   assert.equal(row.status, "abandoned", "fold 更新分支生效（旧 bug title===\"\" 短路全丢）");
   assert.equal(row.title, "T1", "fold 更新保留原标题");
   st = applySrcEvent(st, tc("src_user_todo", { title: "T2" }));
