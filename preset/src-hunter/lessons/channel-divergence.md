@@ -1,19 +1,21 @@
-# fetch failed ≠ 目标不可达：先对照 Burp 通道再定性
+# 网络层失败：通道分歧对照——换工具，不定性，不放弃
 
 ## 触发场景
 - `src_http` / 审批放行（src_resolve_approval）返回「网络层失败（无 HTTP 响应）」或 `fetch failed`。
-- 同一目标不同通道结果不同：本机 fetch 失败但 Burp 可达（或反之）。
+- 同一目标不同工具/通道结果不同：本机 fetch 失败但 Burp 可达（或反之）。
 - 报错里出现 `unsafe legacy renegotiation`（服务端 TLS 只支持老式重协商，OpenSSL 默认拒绝；Java/Burp 的 JSSE 兼容，所以 Burp 打得通）。
-- 想把连续失败解释成「审批通道兼容问题」「目标封禁」「服务下线」等结论之前——先做通道对照，不要凭空归因。
+- 想把连续失败解释成「审批通道兼容问题」「目标封禁」「服务下线」之前——这些结论必须先验证，不许凭空归因。
 
-## 对照步骤
-1. 用 `mcp__burp__send_http1_request` 发同一个请求（同 method/path/body，Host 头一致）。
-2. Burp 返回 HTTP 响应 → 本机 fetch 的 TLS/网络兼容性问题：local.64 起 src_http 已自动对 legacy renegotiation 降级重试，报错依旧时换代理出口或记录通道差异后转其他方向；不要反复空重试。
-3. Burp 也无响应 → 才是目标侧封禁/下线：如实记录（记 fact，写明「双通道均无响应」），不要编造「已知兼容问题」之类无法验证的归因。
-4. 结论写进 checkpoint/fact 时必须注明通道（「经 Burp 通道」「经 src_http」），父会话据此判断放行重放能否成功。
+## 处置原则：一个工具失败 ≠ 资产没价值，先穷尽通道与工具
+1. src_http 直连失败先读报错：local.64 起遇到 legacy renegotiation 已自动降级重试一次（SSL_OP_LEGACY_SERVER_CONNECT）；仍失败说明还有别的网络层问题，报错里带了指引。
+2. 换通道对照：用 `mcp__burp__send_http1_request` 发同一个请求（同 method/path/body，Host 头一致；Burp 的 TLS 栈更宽容）。Burp 通 → 通道差异实锤，**继续用 Burp 打这个目标**——找到可用通道就是资产可测，不是放弃理由。
+3. 再换：配了代理就切代理出口再试 src_http；Burp 也不通试 capability 里的 curl/脚本通道。
+4. 所有常规通道均无响应，才记一条「双通道均无响应」的 fact（附时间与报错原文），转向其他方向；目标可能真下线，但这是验证后的结论。
+5. 结论写进 checkpoint/fact 必须注明通道（「经 src_http 直连」「经 Burp 通道」「经代理」），父会话据此判断审批重放能否成功、该用哪个通道续打。
 
 ## 纪律
-- 连续 ≥2 次同类失败必须停下来做通道对照或换方向，不空转重试。
+- 连续 ≥2 次同类失败必须换通道或换方向，不空转重试同一条路。
+- 审批重放失败的常见根因是「取证通道 ≠ 放行执行通道」（如当初用 Burp 取证、重放走 src_http）：先对照通道，不要怪审批系统。
 - 对用户的汇报只说可验证的事实（报错原文、通道、时间），不发明「已知问题」。
 
 <!-- lesson-meta: {"sessionId": "builtin", "vulnType": "网络层失败通道对照", "createdAt": 1788720000000, "triggers": {"keywords": ["fetch failed", "网络层失败", "legacy renegotiation", "通道", "审批失败", "不可达"], "tools": ["src_http", "src_resolve_approval", "src_test_bypass"]}} -->

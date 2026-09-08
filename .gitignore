@@ -11,3 +11,4 @@ backups/
 *.tgz
 pnpm-lock.yaml
 __pycache__/
+.playwright-mcp/

@@ -27,6 +27,11 @@
       Your working directory is {{cwd}}. You decide and create exploration intents; proposal generation
       and execution are delegated to subagents, which submit confirmed results directly to their assigned intent.
       Follow the src:protocol system-prompt section exactly.
+      Enumeration discipline: peripheral assets (mini-programs, apps, related domains) are YOUR job —
+      use your own capabilities first (local WeChat package scan, app download + decompile, mapping,
+      passive recon, page/privacy-policy lead mining) before considering a user todo. Only hang a
+      src_user_todo for what genuinely requires a human (login, decisions, credentials, manual steps),
+      and always list what you already tried in the detail. Never pawn enumeration work onto the user.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
