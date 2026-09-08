@@ -215,7 +215,8 @@ test("references and child-only submission boundaries are enforced", async () =>
   await h.run("src_add_goal", { target: "example.test", objective: "test", authorization: "ticket" }, parent);
   await assert.rejects(() => h.run("src_add_fact", { intentId: "intent-404", detail: "x" }, parent), /unknown intent/);
   await assert.rejects(() => h.run("src_submit", { intentId: "intent-1", facts: [], assets: [], findings: [] }, parent), /only available to a delegated subagent/);
-  await assert.rejects(() => h.run("src_add_intent", { title: "bad", goalId: "goal-1", derivedFromFactId: "fact-1" }, parent), /exactly one anchor/);
+  /* [local.66] 双锚点自愈后 fact 不存在退不回：store 的 unknown fact 指导性报错（不再泛泛 exactly-one-anchor） */
+  await assert.rejects(() => h.run("src_add_intent", { title: "bad", goalId: "goal-1", derivedFromFactId: "fact-1" }, parent), /unknown fact/);
 });
 
 test("invalid child batches are rejected before any row is written", async () => {
@@ -879,18 +880,26 @@ test("[local.33] fold src_domain_notes_snapshot：快照替换 domainNotes，脏
 });
 
 test("/src-todo feedback parser validates id/status and keeps note", () => {
-	const good = parseTodoFeedback(" todo-2   done 已用 Burp 抓包 ");
+	const good = parseTodoFeedback(" userTodo-2   done 已用 Burp 抓包 ");
 	assert.equal(good.ok, true);
-	assert.equal(good.userTodoId, "todo-2");
+	assert.equal(good.userTodoId, "userTodo-2");
 	assert.equal(good.status, "done");
 	assert.equal(good.note, "已用 Burp 抓包");
-	const reopened = parseTodoFeedback("todo-3 pending");
+	const reopened = parseTodoFeedback("userTodo-3 pending");
 	assert.equal(reopened.ok, true);
 	assert.equal(reopened.note, "");
+	/* [local.64 后 id 统一为 userTodo-N；旧前缀 todo-N 仍兼容；hackone 实错 userTodo-6 abandoned 被旧正则拒收 */
+	const legacy = parseTodoFeedback("todo-2 done 已用 Burp 抓包");
+	assert.equal(legacy.ok, true);
+	assert.equal(legacy.userTodoId, "todo-2");
+	const abandoned = parseTodoFeedback("userTodo-6 abandoned 没钱买，跳过");
+	assert.equal(abandoned.ok, true);
+	assert.equal(abandoned.status, "abandoned");
 	for (const [input, reason] of [
 		["", "缺少参数"],
 		["todo-x done", "不合法"],
-		["todo-1 finished", "必须是"]
+		["userTodo done", "不合法"],
+		["userTodo-1 finished", "必须是"]
 	]) {
 		const bad = parseTodoFeedback(input);
 		assert.equal(bad.ok, false);
@@ -2616,11 +2625,15 @@ test("[local.57] src_add_intent 锚点缺失自动锚到当前 goal，无 goal �
   const intent = await h.run("src_add_intent", { title: "被动侦察", priority: 8 }, parent);
   assert.equal(intent.edgeKind, "spawns");
   assert.equal(intent.sourceId, goal.id);
-  /* 两锚点同时出现：依旧报错（语义冲突不猜） */
+  /* [local.66] 两锚点同时出现：自愈为 derived_from 锚（更具体），不再报错浪费重试轮 */
   const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: "d" }, parent);
+  const healed = await h.run("src_add_intent", { title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }, parent);
+  assert.equal(healed.edgeKind, "derived_from");
+  assert.equal(healed.sourceId, fact.id);
+  /* 双锚点但 fact 不存在：store 的 unknown fact 报错照常可读 */
   await assert.rejects(
-    () => h.run("src_add_intent", { title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }, parent),
-    /exactly one anchor/
+    () => h.run("src_add_intent", { title: "both anchors bad fact", goalId: goal.id, derivedFromFactId: "fact-999" }, parent),
+    /unknown fact|fact-999/
   );
 });
 
@@ -2650,10 +2663,23 @@ test("[local.58] fold 层锚点自愈：无锚点 intent 收下并级联恢复 f
   assert.equal(view.counts.intents, 1, "无锚点 intent 在 fold 必须被自愈收下（local.57 实测曾为 0）");
   assert.equal(view.counts.facts, 1, "intent 恢复后 fact 级联恢复");
   assert.equal(st.nodes.find((n) => n.kind === "intent")?.id, "intent-1");
-  /* 两锚点同传：fold 仍丢弃（语义冲突不猜，与 execute 报错语义一致） */
+  /* [local.66] 两锚点同传：fold 镜像 execute 层自愈——fact 存在即按 derived_from 锚收下
+     （hackone 实战里同 title+detail 的失败重传会被去重，不产生双节点） */
   st = applySrcEvent(st, { type: "tool/call", data: { turn: 1, step: 99, callId: "call-both", name: "src_add_intent", arguments: JSON.stringify({ title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }) } });
-  assert.equal(viewSrcState(st).counts.intents, 1, "两锚点同传 fold 仍丢弃");
-  /* 无 goal：无锚点 intent 仍丢弃 */
+  assert.equal(viewSrcState(st).counts.intents, 2, "双锚点同传 fold 必须收下（local.58 曾丢弃）");
+  const healedNode = st.nodes.filter((n) => n.kind === "intent" && n.title === "both anchors")[0];
+  const healedEdge = (st.edges ?? []).find((e) => e.targetId === healedNode?.id);
+  assert.equal(healedEdge?.kind, "derived_from", "fact 存在时优先按 derived_from 锚");
+  st = applySrcEvent(st, { type: "tool/call", data: { turn: 1, step: 100, callId: "call-both-2", name: "src_add_intent", arguments: JSON.stringify({ title: "双锚新意图", goalId: goal.id, derivedFromFactId: fact.id }) } });
+  const bothNode = st.nodes.filter((n) => n.kind === "intent" && n.title === "双锚新意图")[0];
+  assert.notEqual(bothNode, void 0, "双锚点同传 fold 必须收下（local.58 曾丢弃）");
+  assert.equal((st.edges ?? []).find((e) => e.targetId === bothNode?.id)?.kind, "derived_from", "fact 存在时优先按 derived_from 锚");
+  /* 双锚点但 fact 不在投影：退回 goal 锚 */
+  st = applySrcEvent(st, { type: "tool/call", data: { turn: 1, step: 101, callId: "call-both-3", name: "src_add_intent", arguments: JSON.stringify({ title: "双锚退锚意图", goalId: goal.id, derivedFromFactId: "fact-424242" }) } });
+  const fallbackNode = st.nodes.filter((n) => n.kind === "intent" && n.title === "双锚退锚意图")[0];
+  assert.notEqual(fallbackNode, void 0, "fact 缺失时双锚点退回 goal 锚收下");
+  assert.equal((st.edges ?? []).find((e) => e.targetId === fallbackNode?.id)?.kind, "spawns", "退回锚走 spawns");
+  /* 无锚点且无 goal：仍丢弃 */
   let st2 = srcInitialState;
   st2 = applySrcEvent(st2, { type: "tool/call", data: { turn: 1, step: 1, callId: "call-nogoal", name: "src_add_intent", arguments: JSON.stringify({ title: "no goal" }) } });
   assert.equal(viewSrcState(st2).counts.intents, 0, "无 goal 时无锚点 intent 仍丢弃");
@@ -4244,4 +4270,19 @@ test("[local.63] scope 确认经验：关键词命中注入（工具不命中零
   assert.equal(scopeHits.some((l) => l.file === "scope-confirmation"), true, "关键词「收录」命中 scope 确认经验");
   const noise = await lessonsForContext({ tool: "src_add_intent", text: "验证 CORS Origin 反射", detail: "" });
   assert.equal(noise.some((l) => l.file === "scope-confirmation"), false, "无关意图零噪音");
+});
+
+/* [local.66] toolFilter 对齐回归闸：hackone 会话（session-f64ff5b1）实测协议文本与运行时父代委派
+   prompt 都点名 src_scan_surface（「已对子代理开放」「可用于批量预检」），但 recon/audit 的 deny
+   列表把它拦死（子代理 4512125b 两次 unknown tool）。解禁后此闸防回退。 */
+test("[local.66] recon/audit toolFilter 不得 deny src_scan_surface（prompt 与工具面对齐）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+  const text = readFileSync(resolve(root, "preset/src-hunter/agent.cordis.yml"), "utf8");
+  const denyBlocks = [...text.matchAll(/deny:\s*\[([^\]]*)\]/g)].map((m) => new Set(m[1].split(",").map((s) => s.trim()).filter(Boolean)));
+  assert.equal(denyBlocks.length >= 3, true, "至少应有 recon/audit/verify 三组 deny 列表");
+  for (const deny of denyBlocks.slice(0, 2)) {
+    assert.equal(deny.has("src_scan_surface"), false, "recon/audit 不得 deny src_scan_surface");
+  }
 });
