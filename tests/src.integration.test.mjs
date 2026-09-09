@@ -4327,3 +4327,114 @@ test("[local.67 靶场] 基建烟测：四类端点行为符合设计（415/写�
     assert.match((await users.json()).data.sessionToken, /^tok-live-/);
   } finally { await range.close(); }
 });
+
+/* ==================== [local.67 #17] src_http/src_resolve_approval 响应体透传+四件防护 ==================== */
+test("[local.67 #17-④] Content-Type 自动补全硬闸：JSON body 未带头自动补（放行 200），非 JSON 不补（415 保留）", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("g67ct");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17-④ 硬闸" }, parent);
+  try {
+    const acct = await h.run("src_add_test_account", { label: "用户A", credential: "Cookie: sid=own-token-1; role=user" }, parent);
+    /* JSON 形态 body、未显式带 Content-Type：自动补 application/json → 200（无硬闸时是 415 假阴性）。 */
+    const ok = await h.run("src_http", { url: `${range.url}/api/v1/schedule/upload`, method: "POST", credentialRef: acct.credentialRef, body: '{"title":"probe"}', justification: "写排程验证自动补头" }, parent);
+    assert.equal(ok.approval, "allowed-auto");
+    assert.equal(ok.status, 200, "自动补 Content-Type 后 415 消灭");
+    assert.equal(ok.contentTypeAutoAdded, true, "输出标注自动补头");
+    assert.equal(range.db.records.size, 1, "写入确实落库（不再是盲发）");
+    /* 非 JSON body（表单）：不自动补 → 415 保留（避免给表单错误强塞 application/json 的另一种假阴性）。 */
+    const form = await h.run("src_http", { url: `${range.url}/api/v1/schedule/upload`, method: "POST", credentialRef: acct.credentialRef, body: "a=1&b=2", justification: "表单写入不自动补头" }, parent);
+    assert.equal(form.status, 415, "非 JSON body 不补头，415 行为保留");
+    assert.equal(form.contentTypeAutoAdded, void 0);
+  } finally { await range.close(); }
+});
+test("[local.67 #17] 响应体透传：敏感端点 body 可见 + 截断 2KB + full 强制完整 + 二进制只回长度", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("g67body");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17 body 透传" }, parent);
+  try {
+    /* 未授权可达敏感端点：body 里能看到 secretKey（§1.5 之前只能看到 200）。 */
+    const leak = await h.run("src_http", { url: `${range.url}/api/v1/health/config`, method: "GET", justification: "诊断端点探测" }, parent);
+    assert.equal(leak.approval, "allowed-auto");
+    assert.match(leak.responseBody, /sk-live-0123456789abcdef/, "响应体透传：secretKey 可见");
+    /* 大响应：默认 2KB 截断；full:true 完整。 */
+    const big = await h.run("src_http", { url: `${range.url}/api/v1/export/big`, method: "GET", justification: "大响应截断" }, parent);
+    assert.equal(big.truncated, true);
+    assert.ok(big.responseBody.length < 2400, `截断后长度受控（实际 ${big.responseBody.length}）`);
+    assert.match(big.responseBody, /\[截断\]/, "截断注脚");
+    const bigFull = await h.run("src_http", { url: `${range.url}/api/v1/export/big`, method: "GET", justification: "full 强制完整", full: true }, parent);
+    assert.equal(bigFull.truncated, void 0);
+    assert.ok(bigFull.responseBody.length > 20 * 1024, "full:true 返回完整 body");
+    /* 二进制：只回长度不透传内容。 */
+    const img = await h.run("src_http", { url: `${range.url}/api/v1/export/image`, method: "GET", justification: "二进制只回长度" }, parent);
+    assert.match(img.responseBody, /非 text\/json 类，共 4096 字节/, "二进制只回长度");
+    assert.doesNotMatch(img.responseBody, /[\x00-\x08\x0e-\x1f]/, "无二进制垃圾字符");
+  } finally { await range.close(); }
+});
+test("[local.67 #17] 响应哈希去重：同 host+method+path 完全相同响应第二次只回 hash；full:true 强制；不同响应不误吞", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("g67dedup");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17 去重" }, parent);
+  try {
+    const first = await h.run("src_http", { url: `${range.url}/api/v1/status`, method: "GET", justification: "状态探测一" }, parent);
+    assert.match(first.responseBody, /"succ":"ok"/, "第一次完整透传");
+    const second = await h.run("src_http", { url: `${range.url}/api/v1/status`, method: "GET", justification: "状态探测二（去重）" }, parent);
+    assert.equal(second.deduped, true, "相同响应第二次去重");
+    assert.match(second.responseBody, /\[响应体去重\]/);
+    assert.doesNotMatch(second.responseBody, /"succ":"ok"/, "不重复注入 body");
+    const forced = await h.run("src_http", { url: `${range.url}/api/v1/status`, method: "GET", justification: "full 强制", full: true }, parent);
+    assert.equal(forced.deduped, void 0);
+    assert.match(forced.responseBody, /"succ":"ok"/, "full:true 强制完整");
+    /* 关键场景：写入后回读，两次响应不同——绝不能误吞（越权验证的关键信号）。 */
+    const acct = await h.run("src_add_test_account", { label: "用户A", credential: "Cookie: sid=own-token-2" }, parent);
+    const write = await h.run("src_http", { url: `${range.url}/api/v1/notes`, method: "POST", credentialRef: acct.credentialRef, body: '{"mark":"dedup-check"}', justification: "写入" }, parent);
+    const recId = /rec-\d+/.exec(write.responseBody)?.[0];
+    assert.ok(recId, "写入响应透传出 id");
+    const readBack = await h.run("src_http", { url: `${range.url}/api/v1/notes/${recId}`, method: "GET", justification: "回读" }, parent);
+    assert.match(readBack.responseBody, /dedup-check/, "回读内容可见（不同响应不去重）");
+  } finally { await range.close(); }
+});
+test("[local.67 #17] 凭证掩码：echo 回显的认证头值与 Bearer 形态均打 <stored>，不落会话明文", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("g67mask");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17 掩码" }, parent);
+  try {
+    const acct = await h.run("src_add_test_account", { label: "用户A", credential: "Cookie: sid=maskme-secret-9876" }, parent);
+    const echo = await h.run("src_http", { url: `${range.url}/api/v1/echo/headers`, method: "GET", credentialRef: acct.credentialRef, justification: "回显验证掩码" }, parent);
+    assert.doesNotMatch(echo.responseBody, /maskme-secret-9876/, "回显的凭证值已掩码");
+    assert.match(echo.responseBody, /<stored>/, "掩码标记在场");
+    /* 掩码不能吞越权证据：PII 形态（手机号/身份证）不掩。 */
+    const users = await h.run("src_http", { url: `${range.url}/api/v1/users/query`, method: "GET", justification: "敏感字段可见性" }, parent);
+    assert.match(users.responseBody, /13800001111/, "手机号证据保留（越权取证的实体）");
+  } finally { await range.close(); }
+});
+test("[local.67 #17] 重放透传（主修点）：未授权写挂起→allow 重放→responseBody 可见+落库+投影同步", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("g67replay");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17 重放透传" }, parent);
+  try {
+    /* 无认证头 + POST + 非读语义 → 挂起。挂起阶段硬闸已把 Content-Type 存进待审行。 */
+    const pending = await h.run("src_http", { url: `${range.url}/api/v1/notes`, method: "POST", body: '{"mark":"replay-probe"}', justification: "未授权写入探测" }, parent);
+    assert.equal(pending.approval, "pending");
+    assert.equal(range.db.records.size, 0, "挂起未发出");
+    const approved = await h.run("src_resolve_approval", { id: pending.pendingApprovalId, action: "allow", note: "验证重放" }, parent);
+    assert.equal(approved.status, "approved");
+    assert.equal(approved.responseStatus, 201, "重放收到 201（Content-Type 经挂起行/重放侧双保险）");
+    assert.match(approved.responseBody, /rec-\d+/, "重放响应体透传（此前只有状态码）");
+    /* 落库：responseBody 随待审行持久化；src_state 投影行也带 responseBody。 */
+    const state = await h.run("src_state", {}, parent);
+    const row = state.pendingApprovals.find((r) => r.id === pending.pendingApprovalId);
+    assert.equal(row.status, "approved");
+    assert.match(row.responseBody ?? "", /rec-\d+/, "投影行带 responseBody");
+    assert.equal(range.db.records.size, 1, "写入落库可回读验证");
+  } finally { await range.close(); }
+});
