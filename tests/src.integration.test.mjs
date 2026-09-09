@@ -4286,3 +4286,44 @@ test("[local.66] recon/audit toolFilter 不得 deny src_scan_surface（prompt �
     assert.equal(deny.has("src_scan_surface"), false, "recon/audit 不得 deny src_scan_surface");
   }
 });
+
+/* ==================== [local.67 #19] 本地渗透靶场 ====================
+ * 直击「155 测试全绿、实战产出为零」的盲区：现有测试验证代码不坏，靶场验证产出。
+ * 靶场端点四类（tests/src.range.mjs）：①未授权可达敏感端点 ②缺 Content-Type 即 415 写入端点
+ * ③写入→回读→删除零残留链 ④大响应/二进制/凭证回显（#17 防护与掩码素材）。
+ * 本 commit 先落基建与烟测；行为断言随 #17/#18/#11b 各 commit 逐个挂上。 */
+test("[local.67 靶场] 基建烟测：四类端点行为符合设计（415/写入回读删除/敏感返回/大响应）", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  try {
+    /* ② 缺 Content-Type → 415；带头 → 200 succ:ok（§1.5 假阴性事故的端点级复刻） */
+    const bare = await fetch(`${range.url}/api/v1/schedule/upload`, { method: "POST", body: JSON.stringify({ title: "t" }) });
+    assert.equal(bare.status, 415, "JSON body 无 Content-Type 必须 415（复刻 Spring 行为）");
+    const withHeader = await fetch(`${range.url}/api/v1/schedule/upload`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "t" }) });
+    assert.equal(withHeader.status, 200);
+    assert.deepEqual((await withHeader.json()).succ, "ok");
+    /* ③ 写入→回读→删除零残留 */
+    const write = await fetch(`${range.url}/api/v1/notes`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mark: "probe" }) });
+    assert.equal(write.status, 201);
+    const { id } = await write.json();
+    const readBack = await fetch(`${range.url}/api/v1/notes/${id}`);
+    assert.equal(readBack.status, 200);
+    assert.deepEqual((await readBack.json()).data.mark, "probe");
+    const del = await fetch(`${range.url}/api/v1/notes/${id}`, { method: "DELETE" });
+    assert.equal(del.status, 204);
+    assert.equal(range.db.records.has(id), false, "零残留：链路写入的记录已删干净（db 仅余 schedule/upload 那条独立写入）");
+    assert.equal((await fetch(`${range.url}/api/v1/notes/${id}`)).status, 404);
+    /* ① 未授权可达敏感端点 */
+    const leak = await fetch(`${range.url}/api/v1/health/config`);
+    assert.equal(leak.status, 200);
+    const leakBody = await leak.json();
+    assert.match(leakBody.data.secretKey, /^sk-live-/, "无认证即返回 secretKey（#11b 素材）");
+    /* ④ 大响应/二进制/敏感字段返回 */
+    const big = await fetch(`${range.url}/api/v1/export/big`);
+    assert.equal((await big.text()).length > 20 * 1024, true);
+    const img = await fetch(`${range.url}/api/v1/export/image`);
+    assert.match(img.headers.get("content-type") ?? "", /image\/png/);
+    const users = await fetch(`${range.url}/api/v1/users/query`);
+    assert.match((await users.json()).data.sessionToken, /^tok-live-/);
+  } finally { await range.close(); }
+});
