@@ -4438,3 +4438,21 @@ test("[local.67 #17] 重放透传（主修点）：未授权写挂起→allow �
     assert.equal(range.db.records.size, 1, "写入落库可回读验证");
   } finally { await range.close(); }
 });
+
+/* ==================== [local.67 #18] 阴性判定回炉注脚 ==================== */
+test("[local.67 #18] negative/blocked 落盘返回值强制带自查清单；hypothesis/testing 不带", async () => {
+  const h = harness();
+  const parent = h.exec("g67neg");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "#18 注脚" }, parent);
+  const intent = await h.run("src_add_intent", { title: "上传限制探测", hypothesis: "上传可能只允许图片" }, parent);
+  /* blocked：带清单（顺丰「上传白名单」错误归因的教训——定性前先回炉）。 */
+  const blocked = await h.run("src_record_research", { intentId: intent.id, category: "file-upload", hypothesis: "上传口可能收任意扩展名", status: "blocked", stopReason: "415，疑似上传白名单" }, parent);
+  assert.match(blocked.negativeChecklist ?? "", /换请求形态重试/, "blocked 带自查清单");
+  assert.match(blocked.negativeChecklist ?? "", /本机通道/, "通道差异自查在场");
+  /* false-positive：同样带。 */
+  const fp = await h.run("src_record_research", { intentId: intent.id, category: "file-upload", hypothesis: "同假设复测", status: "false-positive" }, parent);
+  assert.match(fp.negativeChecklist ?? "", /阴性回炉自查/);
+  /* 非阴性状态：零噪音。 */
+  const hypo = await h.run("src_record_research", { intentId: intent.id, category: "file-upload", hypothesis: "继续测", status: "testing" }, parent);
+  assert.equal(hypo.negativeChecklist, void 0, "testing 不带清单（不制造噪音）");
+});
