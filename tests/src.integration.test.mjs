@@ -4456,3 +4456,49 @@ test("[local.67 #18] negative/blocked 落盘返回值强制带自查清单；hyp
   const hypo = await h.run("src_record_research", { intentId: intent.id, category: "file-upload", hypothesis: "继续测", status: "testing" }, parent);
   assert.equal(hypo.negativeChecklist, void 0, "testing 不带清单（不制造噪音）");
 });
+
+/* ==================== [local.67 #12] src_state/src_report 输出预算（facts 分级） ==================== */
+test("[local.67 #12] src_state 事实分级：只出最近 24 条与 P≥8 意图下的，其余计数+src_graph 指引；finding 素材永不省略", async () => {
+  const h = harness();
+  const parent = h.exec("g67budget");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "#12 输出预算" }, parent);
+  const intentLow = await h.run("src_add_intent", { title: "低优先面", hypothesis: "常规面" }, parent);
+  const intentHigh = await h.run("src_add_intent", { title: "高优先面", hypothesis: "重点面", priority: 9 }, parent);
+  /* 低优先 intent 下 30 条事实：只应保留最近 24 条。 */
+  for (let i = 1; i <= 30; i++) await h.run("src_add_fact", { intentId: intentLow.id, kind: "info", detail: `低优先事实-${i}` }, parent);
+  /* 高优先 intent（P9）下 1 条老事实：必须保留。 */
+  await h.run("src_add_fact", { intentId: intentHigh.id, kind: "info", detail: "高优先关键事实" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.facts.length, 24, `最近 24 窗口含 P9 事实（实际 ${state.facts.length}）`);
+  assert.equal(state.factsOmitted, 7, "省略计数 = 7");
+  assert.ok(state.facts.some((f) => f.detail === "高优先关键事实"), "P≥8 意图下的事实保留");
+  assert.ok(state.facts.some((f) => f.detail === "低优先事实-30"), "最近一条保留");
+  assert.ok(!state.facts.some((f) => f.detail === "低优先事实-1"), "最老的低优先事实被省略");
+  const rendered = h.tools.get("src_state").output.render("", state).map((r) => r.text).join("");
+  assert.match(rendered, /Facts omitted: 7/, "render 带省略计数");
+  assert.match(rendered, /src_graph/, "render 带 src_graph 指引");
+  /* src_graph 仍可查全量：31 条都在。 */
+  const graph = await h.run("src_graph", {}, parent);
+  assert.equal(graph.graph.facts.length, 31, "src_graph 全量不受预算影响");
+});
+test("[local.67 #12] src_report 探索链路节同样分级：省略行带计数与 src_graph 指引；少图零变化", async () => {
+  const h = harness();
+  const parent = h.exec("g67budget2");
+  await h.run("src_add_goal", { target: "xiaomi.test", objective: "#12 报告预算" }, parent);
+  const intent = await h.run("src_add_intent", { title: "常规面", hypothesis: "面" }, parent);
+  for (let i = 1; i <= 30; i++) await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: `事实-${i}` }, parent);
+  const report = await h.run("src_report", {}, parent);
+  assert.doesNotMatch(report.markdown, /事实-1（?!）/);
+  assert.doesNotMatch(report.markdown, /\(fact fact-1\)/, "最老事实不进报告链路");
+  assert.match(report.markdown, /事实共 30 条/, "省略行带总数");
+  assert.match(report.markdown, /其余 6 条用 src_graph 查全量/, "src_graph 指引");
+  /* 少图（≤24 条）零变化：无省略行。 */
+  const h2 = harness();
+  const parent2 = h2.exec("g67budget3");
+  await h2.run("src_add_goal", { target: "xiaomi.test", objective: "少图" }, parent2);
+  const intent2 = await h2.run("src_add_intent", { title: "小图", hypothesis: "面" }, parent2);
+  await h2.run("src_add_fact", { intentId: intent2.id, kind: "info", detail: "唯一事实" }, parent2);
+  const report2 = await h2.run("src_report", {}, parent2);
+  assert.doesNotMatch(report2.markdown, /src_graph 查全量/, "少图无省略行");
+  assert.match(report2.markdown, /唯一事实/);
+});
