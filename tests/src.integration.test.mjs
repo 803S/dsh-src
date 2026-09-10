@@ -4511,3 +4511,29 @@ test("[local.67 #12] src_report 探索链路节同样分级：省略行带计数
   assert.doesNotMatch(report2.markdown, /src_graph 查全量/, "少图无省略行");
   assert.match(report2.markdown, /唯一事实/);
 });
+
+/* ==================== [local.67 #10] 防再膨胀预算闸（CI 检查同步进测试套） ==================== */
+test("[local.67 #10] 防再膨胀预算：协议 ≤8k 字符 + 工具级 description 合计 ≤15k + 小节名查重", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+  const srcJs = readFileSync(resolve(root, "lib/src.js"), "utf8");
+  const pStart = srcJs.indexOf("const SRC_INSTRUCTIONS = `\\") + "const SRC_INSTRUCTIONS = `\\".length;
+  const proto = srcJs.slice(pStart, srcJs.indexOf("`;", pStart));
+  assert.ok(proto.length <= 8000, `SRC_INSTRUCTIONS=${proto.length} 字符超 8k 预算——先做减法再加约束`);
+  const sectionNames = [...proto.matchAll(/【([^】]+)】/g)].map((m) => m[1]);
+  const dupes = sectionNames.filter((name, i) => sectionNames.indexOf(name) !== i);
+  assert.deepEqual(dupes, [], `协议小节名重复：${[...new Set(dupes)].join(", ")}`);
+  const toolsJs = readFileSync(resolve(root, "lib/src/tools/index.js"), "utf8");
+  let descTotal = 0;
+  const nameRe = /\n\t\tname: "([a-z_]+)",/g;
+  const starts = [];
+  let nm;
+  while ((nm = nameRe.exec(toolsJs)) !== null) starts.push(nm.index);
+  for (let i = 0; i < starts.length; i++) {
+    const block = toolsJs.slice(starts[i], i + 1 < starts.length ? starts[i + 1] : toolsJs.length);
+    const dm = block.match(/description: (`)([^`]*)`\1|description: "([^"]*)"/);
+    if (dm) descTotal += (dm[2] ?? dm[3] ?? "").length;
+  }
+  assert.ok(descTotal <= 15000, `工具级 description 合计 ${descTotal} 超 15k 预算——先做减法再加约束`);
+});

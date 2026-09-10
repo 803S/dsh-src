@@ -89,4 +89,11 @@ finding 被用户打回（src_reject_finding，status=rejected + 打回备注）
 
 报告四大节：①漏洞描述&发现方式、漏洞利用及危害 ②漏洞的详细复现/证明过程 ③测试源信息（从 concreteLossEvidence 指针解析真实证据） ④修复方案。打回的 finding 自动移出主清单、进「已打回」节保留备查，主清单只保留 active。
 
+## 通用定级基准（小米 SRC 四档；厂商公开规则优先，可从 vendor-policy fact 推导）
+- **严重**：直接获取系统权限 / RCE / 核心数据库数据。
+- **高**：敏感数据泄露 / 重要业务越权（如任意用户简历读取）。
+- **中**：普通越权 / 一般信息泄露 / 短信轰炸 / 验证码爆破可利用。
+- **低**：反射 XSS / 一般未授权信息 / 轻微逻辑缺陷。
+- 提交时 impact 注明对应平台定级依据；找不到厂商公开规则时按本基准执行。
+
 <!-- lesson-meta: {"triggers": {"tools": ["src_finalize_engagement", "src_submit"]}} -->

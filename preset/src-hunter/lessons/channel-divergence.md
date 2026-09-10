@@ -18,4 +18,8 @@
 - 审批重放失败的常见根因是「取证通道 ≠ 放行执行通道」（如当初用 Burp 取证、重放走 src_http）：先对照通道，不要怪审批系统。
 - 对用户的汇报只说可验证的事实（报错原文、通道、时间），不发明「已知问题」。
 
+## 能力路由反面清单（抓取/枚举受阻 ≠ 结束）
+- 抓规则页面撞 SPA 空壳就写「正文反爬无法抓取」然后放弃 = 不合格——抓取受阻是「换方法」信号，不是「结束」信号：先调 src_list_capabilities 查能力清单（skill 型如 src-rules-scraper 走浏览器渲染），再换 web_search 找镜像/转载，最后才向用户待办降级。
+- 同理适用于所有「本机工具面没覆盖」的场景：先查清单，没有再如实告知用户建议接入，不要硬猜 API。
+
 <!-- lesson-meta: {"sessionId": "builtin", "vulnType": "网络层失败通道对照", "createdAt": 1788720000000, "triggers": {"keywords": ["fetch failed", "网络层失败", "legacy renegotiation", "通道", "审批失败", "不可达"], "tools": ["src_http", "src_resolve_approval", "src_test_bypass"]}} -->

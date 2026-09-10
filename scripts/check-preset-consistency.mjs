@@ -65,5 +65,45 @@ for (const e of entries) {
   }
 }
 
+/* [local.67 #10] 防再膨胀硬闸（plan §11）：
+ * ① SRC_INSTRUCTIONS 字符数 ≤8,000——超限即 fail（先做减法再加约束）；
+ * ② 工具级 description 合计 ≤15,000；
+ * ③ 协议小节名查重：同名【小节】出现两次即 fail（本轮三个重复小节就是靠这个拦住）。 */
+const srcJs = readFileSync(join(root, "lib/src.js"), "utf8");
+const protoStart = srcJs.indexOf("const SRC_INSTRUCTIONS = `\\");
+if (protoStart < 0) { console.error("::error file=lib/src.js::找不到 SRC_INSTRUCTIONS"); violations += 1; }
+else {
+  const pStart = protoStart + "const SRC_INSTRUCTIONS = `\\".length;
+  const pEnd = srcJs.indexOf("`;", pStart);
+  const proto = srcJs.slice(pStart, pEnd);
+  if (proto.length > 8000) {
+    console.error(`::error file=lib/src.js::SRC_INSTRUCTIONS = ${proto.length} 字符，超过 8,000 预算（local.67 #10 防再膨胀硬闸）——先做减法再加约束`);
+    violations += 1;
+  }
+  const sectionNames = [...proto.matchAll(/【([^】]+)】/g)].map((m) => m[1]);
+  const seen = new Map();
+  for (const name of sectionNames) seen.set(name, (seen.get(name) ?? 0) + 1);
+  const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([name, n]) => `${name}×${n}`);
+  if (dupes.length > 0) {
+    console.error(`::error file=lib/src.js::协议小节名重复（local.67 #10 查重）：${dupes.join(", ")}——同名小节合并后再提交`);
+    violations += dupes.length;
+  }
+}
+const toolsJs = readFileSync(join(root, "lib/src/tools/index.js"), "utf8");
+let descTotal = 0;
+const nameRe = /\n\t\tname: "([a-z_]+)",/g;
+const nameStarts = [];
+let nm;
+while ((nm = nameRe.exec(toolsJs)) !== null) nameStarts.push(nm.index);
+for (let i = 0; i < nameStarts.length; i++) {
+  const block = toolsJs.slice(nameStarts[i], i + 1 < nameStarts.length ? nameStarts[i + 1] : toolsJs.length);
+  const dm = block.match(/description: (`)([^`]*)`\1|description: "([^"]*)"/);
+  if (dm) descTotal += (dm[2] ?? dm[3] ?? "").length;
+}
+if (descTotal > 15000) {
+  console.error(`::error file=lib/src/tools/index.js::工具级 description 合计 ${descTotal} 字符，超过 15,000 预算（local.67 #10 防再膨胀硬闸）——先做减法再加约束`);
+  violations += 1;
+}
+
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
-console.log("check-preset-consistency: persona×toolFilter 一致性 OK");
+console.log(`check-preset-consistency: persona×toolFilter 一致性 OK；防再膨胀预算 OK（协议+工具描述=${descTotal}+协议字符见上，小节无重复）`);
