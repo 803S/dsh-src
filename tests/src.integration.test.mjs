@@ -1464,7 +1464,7 @@ test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同
   );
 });
 
-test("[local.25] finding 准入闸：危害链三要素缺一拒绝 + 不可解析证据拒绝 + info 移除与弱信号路由", async () => {
+test("[local.25→67 #11b] finding 准入闸：low 未授权可达+PoC 即入库（三要素降为升危依据），medium+ 仍要三要素", async () => {
   const h = harness();
   const parent = h.exec("gate25");
   await h.run("src_add_goal", { target: "https://example.test", objective: "准入闸验证", authorization: "SRC" }, parent);
@@ -1481,24 +1481,33 @@ test("[local.25] finding 准入闸：危害链三要素缺一拒绝 + 不可解�
     pocEvidence: ["GET / with Origin: https://evil.example -> ACAO 反射 + ACAC true"],
     reproducibleSteps: ["curl -H 'Origin: https://evil.example' https://example.test/"]
   };
-  // 缺 victimImpact → 拒绝
+  // ① low 三要素全缺 → 入库（#11b 核心断言：对照报告 16 条全是「未授权可达」粒度，顺丰 7+ 端点此前被挡在 fact 态）
+  const lowFinding = await h.run("src_add_finding", { ...base, title: "CORS 反射-low" }, parent);
+  assert.ok(lowFinding.id, "low 未授权可达+PoC 即入库");
+  // ② low 提供了不可解析的 concreteLossEvidence → 仍拒（提供即校验存在性）
   await assert.rejects(
-    () => h.run("src_add_finding", { ...base, attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击", concreteLossEvidence: [factEvidence6] }, parent),
+    () => h.run("src_add_finding", { ...base, title: "CORS 反射-坏指针", concreteLossEvidence: ["fact-999"] }, parent),
+    /不可解析|concreteLossEvidence/,
+  );
+  // ③ medium 缺 victimImpact → 拒绝（三要素是 medium+ 准入条件）
+  await assert.rejects(
+    () => h.run("src_add_finding", { ...base, severity: "medium", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击", concreteLossEvidence: [factEvidence6] }, parent),
     /victimImpact|受害者/,
   );
   // 缺 attackPrerequisites → 拒绝
+  // ④ medium 缺 attackPrerequisites → 拒绝
   await assert.rejects(
-    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", concreteLossEvidence: [factEvidence6] }, parent),
+    () => h.run("src_add_finding", { ...base, severity: "medium", victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", concreteLossEvidence: [factEvidence6] }, parent),
     /attackPrerequisites|利用前提/,
   );
-  // 缺 concreteLossEvidence → 拒绝
+  // ⑤ medium 缺 concreteLossEvidence → 拒绝
   await assert.rejects(
-    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击" }, parent),
+    () => h.run("src_add_finding", { ...base, severity: "medium", victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击" }, parent),
     /concreteLossEvidence|损失证据/,
   );
-  // 证据 id 不可解析 → 拒绝（服务端校验存在性）
+  // ⑥ medium 带不可解析证据 → 拒绝（服务端校验存在性）
   await assert.rejects(
-    () => h.run("src_add_finding", { ...base, victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击", concreteLossEvidence: ["fact-999"] }, parent),
+    () => h.run("src_add_finding", { ...base, severity: "medium", victimImpact: "已登录用户的个人资料被第三方站点静默读取且全程无感知，存在批量泄露风险", attackPrerequisites: "攻击者需在任意外域托管页面诱导用户点击", concreteLossEvidence: ["fact-999"] }, parent),
     /不可解析|concreteLossEvidence/,
   );
   // src_submit 省略 severity → mapper 回退 info → 准入闸给出弱信号路由信息
@@ -1508,10 +1517,10 @@ test("[local.25] finding 准入闸：危害链三要素缺一拒绝 + 不可解�
     () => h.run("src_submit", { intentId: intent.id, facts: [], assets: [], findings: [submitFinding] }, childGate),
     /severity=info 已移除|research/,
   );
-  // 三要素齐全 + 真实证据指针 → 通过，新字段落库
-  await h.run("src_add_finding", { ...base, title: "CORS 反射致资料泄露", victimImpact: "已登录用户的姓名手机号等资料被第三方站点静默读取且全程无感知，可被批量收集倒卖", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击；厂商规则若要求自有域则此条不提交", concreteLossEvidence: [factEvidence6] }, parent);
+  // ⑦ 三要素齐全 + 真实证据指针 → 通过（medium 路径），新字段落库
+  await h.run("src_add_finding", { ...base, title: "CORS 反射致资料泄露", severity: "medium", victimImpact: "已登录用户的姓名手机号等资料被第三方站点静默读取且全程无感知，可被批量收集倒卖", attackPrerequisites: "攻击者需在任意外域托管页面并诱导已登录用户点击；厂商规则若要求自有域则此条不提交", concreteLossEvidence: [factEvidence6] }, parent);
   const state = await h.run("src_state", {}, parent);
-  const finding = state.findings.find((row) => row.id === "finding-1");
+  const finding = state.findings.find((row) => row.title === "CORS 反射致资料泄露");
   assert.ok(finding, "合格 finding 已入库");
   assert.ok((finding.attackPrerequisites ?? "").includes("自有域"), "attackPrerequisites persisted");
   assert.deepEqual(finding.concreteLossEvidence, [factEvidence6], "concreteLossEvidence persisted");
@@ -2706,11 +2715,11 @@ test("[local.58] attackPrerequisites schema 可选：漏传不再被宿主拦截
   await h.run("src_add_intent", { title: "audit", goalId: "goal-1" }, parent);
   const factEvidence = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET / => 200", confidence: 0.9 }, parent)).id;
   await assert.rejects(
-    () => h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", concreteLossEvidence: [factEvidence] }, parent),
+    () => h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "medium", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", concreteLossEvidence: [factEvidence] }, parent),
     /准入拒绝.*利用前提/
   );
   /* 补上前提后照常入库 */
-  const finding = await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "low", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", attackPrerequisites: "仅需网络可达目标首页，无需登录或任何用户交互", concreteLossEvidence: [factEvidence] }, parent);
+  const finding = await h.run("src_add_finding", { intentId: "intent-1", title: "版本指纹泄露", severity: "medium", impact: "暴露版本号，可匹配已知 CVE 定向利用", affectedScope: "全站", remediation: "隐藏版本", pocEvidence: ["GET / => VAppServer"], reproducibleSteps: ["GET /"], victimImpact: "运维与用户均无感知地暴露后端框架与版本信息，攻击者可据此检索匹配的已知漏洞发起定向利用", attackPrerequisites: "仅需网络可达目标首页，无需登录或任何用户交互", concreteLossEvidence: [factEvidence] }, parent);
   assert.ok(finding.id, "补齐前提后入库成功");
 });
 
