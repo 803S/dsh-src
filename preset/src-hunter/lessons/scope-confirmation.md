@@ -13,4 +13,4 @@
 ## 收录标准
 任何「规则 vs 行动」冲突的决策点都适用；核心是**拦在提交前交给用户，而不是拦在测试前由 agent 自决**。
 
-<!-- lesson-meta: {"sessionId": "builtin", "vulnType": "收录范围确认", "createdAt": 1757160000000, "triggers": {"keywords": ["收录", "范围", "scope", "不收", "驳回"]}} -->
+<!-- lesson-meta: {"sessionId": "builtin", "vulnType": "收录范围确认", "hook": "不收清单必须单独记录（vendor-policy fact）；规则冲突以厂商为准", "createdAt": 1757160000000, "triggers": {"keywords": ["收录", "范围", "scope", "不收", "驳回"]}} -->

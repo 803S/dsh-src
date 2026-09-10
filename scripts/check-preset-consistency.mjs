@@ -3,7 +3,7 @@
 // ① prompt 文本里点名的 src_* 工具，若出现在该 persona 的 deny 列表里 = 提示词与工具面矛盾（子代理按提示词行事会被 deny 拦死）
 // ② 所有 persona 都应 deny 指挥官专用工具（src_add_goal/src_add_intent/src_add_test_account/src_finalize_engagement/src_set_infra/src_fetch_policy）防越权改会话状态
 // 行扫描器（不依赖 js-yaml，因 preset 含 !!js 自定义标签标准解析器会拒），按 - id: 行切块，逐块读 persona 块标量与 deny 流式序列。
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -106,4 +106,33 @@ if (descTotal > 15000) {
 }
 
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
-console.log(`check-preset-consistency: persona×toolFilter 一致性 OK；防再膨胀预算 OK（协议+工具描述=${descTotal}+协议字符见上，小节无重复）`);
+console.log(`check-preset-consistency: persona×toolFilter 一致性 OK；防再膨胀预算 OK（工具级 description 合计 ${descTotal} ≤ 15000，协议与小节名无超限）`);
+
+/* [local.68 轮 2] lessons 防再膨胀：逐篇 ≤ 预算（plan §6.1 处置表）+ 内置合计 ≤ 20k（原 8 篇 ≤15k，
+ * local.67/68 新增 burp-mcp/nday-framework/unauth-write-chain 三篇后按 1.9k/篇口径折算）。 */
+const LESSON_BUDGETS = {
+	"submission-quality": 2600, "token-lifecycle": 2000, "ai-abuse": 2500, "cors": 2000,
+	"csrf": 1500, "sms-bomb": 1500, "channel-divergence": 3200, "scope-confirmation": 1600,
+	"burp-mcp": 1800, "nday-framework": 1300, "unauth-write-chain": 1200
+};
+const lessonsDir = join(root, "preset/src-hunter/lessons");
+let lessonsTotal = 0;
+for (const [name, budget] of Object.entries(LESSON_BUDGETS)) {
+	const size = readFileSync(join(lessonsDir, `${name}.md`), "utf8").length;
+	lessonsTotal += size;
+	if (size > budget) {
+		console.error(`::error file=preset/src-hunter/lessons/${name}.md::${size} 字符超逐篇预算 ${budget}（local.68 轮 2 防再膨胀）——先做减法再加内容`);
+		violations += 1;
+	}
+}
+const extraLessons = readdirSync(lessonsDir).filter((f) => f.endsWith(".md") && !(f.replace(/\.md$/, "") in LESSON_BUDGETS));
+for (const f of extraLessons) {
+	lessonsTotal += readFileSync(join(lessonsDir, f), "utf8").length;
+	console.error(`::warning file=preset/src-hunter/lessons/${f}::新增内置 lesson 未登记逐篇预算——请同步扩 LESSON_BUDGETS（一进一出纪律）`);
+}
+if (lessonsTotal > 20000) {
+	console.error(`::error file=preset/src-hunter/lessons/::内置 lessons 合计 ${lessonsTotal} 字符超 20k 预算（local.68 轮 2 防再膨胀）——先做减法再加约束`);
+	violations += 1;
+}
+if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
+console.log(`check-preset-consistency: lessons 预算 OK（内置 ${Object.keys(LESSON_BUDGETS).length + extraLessons.length} 篇合计 ${lessonsTotal} ≤ 20000）`);

@@ -16,4 +16,4 @@
 ## 纪律
 - auth-session 类用户待办创建前先 regex 试拉一次（用户可能早已挂着 Burp 浏览过目标），拉到流量直接 `src_import_traffic(mode=mcp)` 免建待办。
 
-<!-- lesson-meta: {"sessionId": "builtin", "vulnType": "Burp MCP 通道", "createdAt": 1788720000000, "triggers": {"keywords": ["burp", "proxy history", "get_proxy_http_history", "桥降级", "Repeater", "React chunk", "拉包"], "tools": ["src_import_traffic", "src_user_todo"]}} -->
+<!-- lesson-meta: {"sessionId": "builtin", "vulnType": "Burp MCP 通道", "hook": "查流量必须 get_proxy_http_history_regex 过滤；看不到 burp 工具≠无流量，下回合重试", "createdAt": 1788720000000, "triggers": {"keywords": ["burp", "proxy history", "get_proxy_http_history", "桥降级", "Repeater", "React chunk", "拉包"], "tools": ["src_import_traffic", "src_user_todo"]}} -->

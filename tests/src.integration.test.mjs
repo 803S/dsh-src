@@ -4537,3 +4537,47 @@ test("[local.67 #10] 防再膨胀预算：协议 ≤8k 字符 + 工具级 descri
   }
   assert.ok(descTotal <= 15000, `工具级 description 合计 ${descTotal} 超 15k 预算——先做减法再加约束`);
 });
+
+/* ==================== [local.68 轮 2] 打法钩子渲染 + lessons 防再膨胀预算 ==================== */
+test("[local.68] lesson hook：有 hook 的内置经验渲染一句话打法钩子，沉淀经验保持原格式", async () => {
+  const { lessonsForContext, lessonHintLines } = await import("../lib/src/lessons.js");
+  const hits = await lessonsForContext({ tool: "src_add_intent", text: "验证短信轰炸接口是否有频控" });
+  const sms = hits.find((h) => h.file === "sms-bomb");
+  assert.ok(sms, "关键词命中内置 sms-bomb");
+  assert.match(sms.hook ?? "", /短信 ~10 次|有界/, "内置经验带 hook 一句话打法");
+  const lines = lessonHintLines(hits);
+  const smsLine = lines.find((l) => l.includes('id="sms-bomb"'));
+  assert.match(smsLine, /^【打法钩子】/, "hook 版渲染为打法钩子");
+  assert.match(smsLine, /src_read_lesson id="sms-bomb"；/, "id+reason 结构保持");
+  // 沉淀经验（无 hook 字段）走原格式
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  await fsPromises.writeFile(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, "nohook.md"), [
+    "# 无钩子经验", "", "<!-- lesson-meta: " + JSON.stringify({ sessionId: "s-l68", vulnType: "测试", createdAt: Date.now(), triggers: { keywords: ["测试钩子"] } }) + " -->", ""
+  ].join("\n"));
+  const hits2 = await lessonsForContext({ tool: "src_add_intent", text: "这是一个测试钩子场景" });
+  const distilled = hits2.find((h) => h.file === "nohook");
+  assert.ok(distilled, "沉淀经验被命中");
+  assert.equal(distilled.hook, void 0, "无 hook 字段");
+  assert.match(lessonHintLines([distilled])[0], /^【经验库命中】无钩子经验/, "沉淀经验保持原格式");
+});
+
+test("[local.68] lessons 防再膨胀预算：内置合计 ≤20k 且逐篇 ≤ 预算", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+  const dir = resolve(root, "preset/src-hunter/lessons");
+  let total = 0;
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".md"))) {
+    total += readFileSync(resolve(dir, f), "utf8").length;
+  }
+  assert.ok(total <= 20000, `内置 lessons 合计 ${total} 超 20k 预算——先做减法再加内容`);
+  const dupHeaders = readdirSync(dir).filter((n) => {
+    const t = readFileSync(resolve(dir, n), "utf8");
+    const heads = t.match(/^# /gm) ?? [];
+    return heads.length > 1;
+  });
+  assert.deepEqual(dupHeaders, [], `lesson 正文重复（历史事故）：${dupes(dupHeaders)}`);
+  function dupes(a) { return [...new Set(a)].join(", "); }
+});

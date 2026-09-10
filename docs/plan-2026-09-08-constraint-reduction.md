@@ -426,6 +426,8 @@ local.65 拆机械待办后的软提示（一行，四类缺口枚举引导语�
 > #19 靶场先行（四类端点+烟测）→ #17 响应体透传+四件防护（2KB 截断/哈希去重/凭证掩码/Content-Type 硬闸，重放侧同款）→ #18 阴性回炉注脚 → #12 src_state/src_report 输出预算（facts 分级：最近 24+P≥8+finding 素材）→ #11b 准入闸放宽（未授权可达+PoC 即 low 入库，三要素降为 medium+ 准入/升危依据）→ 协议重写 19,085→7,929 字符 + 工具级描述 24.3k→13.1k + #10 防再膨胀硬闸（协议 ≤8k/工具描述 ≤15k/小节查重，进 check-preset-consistency 与回归套）。165/165 绿，双 profile 部署+重启验证。
 > 待实战验收：顺丰域重跑 finding≥8 + 415 类请求带正确 Content-Type + src_state 输出 ≤ 预算；A/B 实测新协议（§10）。
 
+> **✅ 轮 2 已完成（2026-09-10）**：六篇去重（历史正文重复事故：6 篇一级标题 ×2，去重即砍半）+ 压缩至逐篇预算（submission-quality 11.7k→2.0k、token-lifecycle 7.5k→1.7k、ai-abuse 6.7k→1.5k、cors 4.9k→1.4k、csrf 4.3k→1.2k、sms-bomb 4.2k→1.0k 并补验证码 ~30 次有界数值）；submission-quality 三要素同步 #11b 语义（medium+ 准入/low 升危）。#2/#16 钩子：lesson-meta 加 `hook` 字段（一句话打法），命中渲染为【打法钩子】（沉淀经验无 hook 保持原格式，id+reason 结构不变）；Cairn 三步实证打法入 lessons/unauth-write-chain.md。逐篇+合计预算闸（≤20k，11 篇实际 14,081）进 check-preset-consistency 与回归套。内置 lessons 总量 42k+新增 → **14.1k**。
+
 
 | 轮 | 内容 | 风险 | 验收 |
 |---|---|---|---|
