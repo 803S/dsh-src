@@ -161,8 +161,9 @@ test("finalize engagement reports blockers and supports documented interruption"
   await h.run("src_add_goal", { target: "example.test", objective: "test", authorization: "ticket" }, parent);
   await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
   const blocked = await h.run("src_finalize_engagement", { remainingDirections: ["扩展子域枚举"], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
-  assert.equal(blocked.ready, false);
-  assert.ok(blocked.blockers.some((b) => /可继续推进的方向/.test(b)), "non-empty directions blocked");
+  /* [local.68 #6] 非空方向不再拒绝：降为逐条警告（剩余 blocker 来自未完成 intent）。 */
+  assert.ok(blocked.blockers.every((b) => !/可继续推进的方向/.test(b)), "非空方向不再进 blockers");
+  assert.ok(blocked.warnings.some((w) => /遗留可推进方向 1 条/.test(w) && /扩展子域枚举/.test(w)), "非空方向逐条警告在场");
   const blocked2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   assert.equal(blocked2.ready, false);
   assert.match(blocked2.blockers[0], /未完成 intent/);
@@ -1866,7 +1867,7 @@ test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联�
   assert.match(report.markdown, /intent-1\/登录态越权面/);
 });
 
-test("[local.20] finalize remainingDirections 必填：缺失抛错、非空拦截、空数组放行", async () => {
+test("[local.20/68] finalize remainingDirections 必填：缺失抛错、非空逐条警告（#6 折中后不拦截）、空数组零噪音", async () => {
   const h = harness();
   const parent = h.exec("g20b");
   await h.run("src_add_goal", { target: "example.test", objective: "方向闸", authorization: "t" }, parent);
@@ -1874,9 +1875,11 @@ test("[local.20] finalize remainingDirections 必填：缺失抛错、非空拦�
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
   await assert.rejects(() => h.run("src_finalize_engagement", {}, parent), /remainingDirections/);
   const listed = await h.run("src_finalize_engagement", { remainingDirections: ["深挖 /api/admin 越权", "GraphQL schema 复核"], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
-  assert.equal(listed.ready, false);
-  assert.match(listed.blockers.join(" "), /可继续推进的方向却要求收官/);
-  assert.match(listed.blockers.join(" "), /GraphQL schema 复核/, "directions echoed back");
+  /* [local.68 #6] 非空方向从拒绝降为逐条警告；无其他 blocker 时应直接 ready。 */
+  assert.equal(listed.ready, true);
+  assert.equal(listed.blockers.length, 0, "非空方向不再进 blockers");
+  assert.match(listed.warnings.join(" "), /遗留可推进方向 2 条/);
+  assert.match(listed.warnings.join(" "), /GraphQL schema 复核/, "directions echoed back");
 });
 
 test("[local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派生/报告渲染", async () => {
@@ -4111,70 +4114,26 @@ test("[local.60] burp 桥审批绕行硬闸：命中锁拒绝转发，未命中�
   }
 });
 
-/* [local.61/62] 数据编排引擎：mini-program 资产 → 系统自动挂「请在微信打开目标小程序」待办
- * （不经模型自觉）。断言：投影 fold 有节点、合成事件带 callId、幂等不重复、非小程序不触发、
- * 白名单已登记。[local.62] 起触发逻辑改为读 DSH_HOME/capabilities/index.json 的能力触发器声明，
- * 测试先在隔离 DSH_HOME 种子 index.json（顺带验证引擎读真实索引契约）。 */
-test("[local.61/62] mini-program 资产自动挂用户待办（store+投影双写、幂等、非 minapp 不触发）", async () => {
-  assert.equal(SYNTHETIC_PROJECTION_EVENTS.has("src_user_todo"), true, "白名单必须登记 src_user_todo");
+/* [local.68 #1] 触发器引擎已拆（争议点 #1 拍板：整拆）：capabilities.yaml 触发器声明不再驱动
+ * 任何行为——资产登记无 orchestration 字段、无合成待办事件。能力触发编排由 when 描述+
+ * src_user_todo 枚举纪律承接（agent 自行挂待办）。本测试用「旧格式声明在场」锁死反回归：
+ * 引擎若被意外恢复（revert 或误合），声明在场必复挂待办，断言立即失败。 */
+test("[local.68 #1] 触发器引擎已拆：旧触发器声明在场也不自动挂待办、无 orchestration 输出", async () => {
   const capsDir = nodePath.join(process.env.DSH_HOME, "capabilities");
   await fsPromises.mkdir(capsDir, { recursive: true });
-  const capItem = { id: "wx-minapp-recon", kind: "skill", from: "path:/tmp/skill", enabled: true, when: "小程序逆向", status: "installed", dir: "/tmp/skill", scripts: [], triggerAssetTypes: ["mini-program"], triggerKeywords: ["小程序", "wxapkg"], todoTitle: "请在微信打开目标小程序并确认登录", todoKind: "manual-test", todoDetail: "目标包含小程序资产。请在微信中打开该目标小程序并完成登录（若已打开过，直接勾选完成本待办）。完成后 agent 将扫描本机 wxapkg 缓存，用已装能力 wx-minapp-recon 执行 反编译→端点/密钥提取→src_http 测试（走审批闸）。" };
+  const capItem = { id: "wx-minapp-recon", kind: "skill", from: "path:/tmp/skill", enabled: true, when: "小程序逆向", status: "installed", dir: "/tmp/skill", scripts: [], triggerAssetTypes: ["mini-program"], triggerKeywords: ["小程序", "wxapkg"], todoTitle: "请在微信打开目标小程序并确认登录", todoKind: "manual-test", todoDetail: "旧格式声明残留样本" };
   await fsPromises.writeFile(nodePath.join(capsDir, "index.json"), JSON.stringify({ generatedAt: new Date().toISOString(), capabilities: [capItem] }));
   const h = harness();
   const parentEvents = [];
-  h.sessions.set("l61parent", { append(type, data) { parentEvents.push({ type, data }); } });
-  const parent = h.exec("l61parent");
-  await h.run("src_add_goal", { target: "https://minapp.test", objective: "小程序线验证", authorization: "ticket-61" }, parent);
-
-  // 非小程序资产：不触发
-  const plain = await h.run("src_add_asset", { type: "subdomain", value: "api.minapp.test", source: "CT 日志" }, parent);
-  assert.equal(plain.orchestration, void 0, "非 mini-program 且不命中关键词不触发");
-
-  // 小程序资产：自动挂待办
-  const mp = await h.run("src_add_asset", { type: "mini-program", value: "wx1234567890abcdef", source: "目标情报" }, parent);
-  assert.match((mp.orchestration ?? []).join("\n"), /已自动挂起用户待办/, "触发提示进工具返回");
-  const todoEvents = parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && JSON.parse(e.data.arguments).title.startsWith("请在微信打开目标小程序"));
-  assert.equal(todoEvents.length, 1, "父日志恰好一条合成 src_user_todo 事件");
-  const todoArgs = JSON.parse(todoEvents[0].data.arguments);
-  assert.equal(todoArgs.kind, "manual-test");
-  assert.match(todoArgs.title, /^请在微信打开目标小程序并确认登录$/);
-  assert.match(todoEvents[0].data.callId, /^src-submit-/, "合成事件必须带 callId（local.26 闸门）");
-  let st = srcInitialState;
-  for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
-  const folded = st.userTodos.find((r) => r.title.startsWith("请在微信打开目标小程序"));
-  assert.ok(folded, "fold 投影有待办节点");
-  assert.equal(folded.status, "pending");
-  assert.equal(folded.detail.includes("wx-minapp-recon"), true, "detail 引导到已装能力");
-
-  // 幂等：再登记一个小程序资产，不重复挂（「已存在」提示本身证明 store 行可查到）
-  const mp2 = await h.run("src_add_asset", { type: "mini-program", value: "wxfedcba0987654321", source: "第二条" }, parent);
-  assert.match((mp2.orchestration ?? []).join("\n"), /已存在/, "第二次提示已存在（store 幂等依据生效）");
-  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && JSON.parse(e.data.arguments).title.startsWith("请在微信打开目标小程序")).length, 1, "不重复发合成事件");
-  st = srcInitialState;
-  for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e);
-  assert.equal(st.userTodos.filter((r) => r.title.startsWith("请在微信打开目标小程序")).length, 1, "投影不重复");
-});
-
-/* [local.62] 数据编排推广：①能力触发器关键词命中只出提示（不挂待办）②决策点经验注入
- * （lesson-meta.triggers → lessonsForContext → src_add_intent/src_finalize 返回带 lessonHints）
- * ③src_record_lesson 声明触发器后可被后续决策点命中。 */
-test("[local.62] 能力触发器关键词命中出提示（无待办）", async () => {
-  const capsDir = nodePath.join(process.env.DSH_HOME, "capabilities");
-  await fsPromises.mkdir(capsDir, { recursive: true });
-  const capItem = { id: "fofa", kind: "mcp", from: "npm:x", enabled: true, when: "资产测绘", status: "installed", triggerKeywords: ["诈骗", "钓鱼"] };
-  await fsPromises.writeFile(nodePath.join(capsDir, "index.json"), JSON.stringify({ generatedAt: new Date().toISOString(), capabilities: [capItem] }));
-  const h = harness();
-  const parentEvents = [];
-  h.sessions.set("l62kw", { append(type, data) { parentEvents.push({ type, data }); } });
-  const parent = h.exec("l62kw");
-  await h.run("src_add_goal", { target: "https://kw.test", objective: "关键词触发", authorization: "t62" }, parent);
-  const kw = await h.run("src_add_asset", { type: "subdomain", value: "phish.kw.test", source: "情报：疑似钓鱼域名" }, parent);
-  assert.equal((kw.orchestration ?? []).length, 1, "关键词命中出提示");
-  assert.match(kw.orchestration[0], /能力触发器命中 fofa（关键词命中）/, "提示带能力 id 与命中方式");
-  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo" && String(JSON.parse(e.data.arguments).title).includes("目标小程序")).length, 0, "关键词命中不挂待办（goal 自身的覆盖待办不计）");
-  const no = await h.run("src_add_asset", { type: "subdomain", value: "plain.kw.test", source: "CT 日志" }, parent);
-  assert.equal(no.orchestration, void 0, "未命中无提示");
+  h.sessions.set("l68noeng", { append(type, data) { parentEvents.push({ type, data }); } });
+  const parent = h.exec("l68noeng");
+  await h.run("src_add_goal", { target: "https://minapp.test", objective: "引擎已拆验证", authorization: "t68" }, parent);
+  const mp = await h.run("src_add_asset", { type: "mini-program", value: "wx1234567890abcdef", source: "目标情报：小程序资产 wxapkg" }, parent);
+  assert.equal(mp.orchestration, void 0, "orchestration 字段已随引擎拆除");
+  assert.equal(parentEvents.filter((e) => e.type === "tool/call" && e.data.name === "src_user_todo").length, 0, "不自动挂待办（旧声明不被执行）");
+  const folded = (() => { let st = srcInitialState; for (const e of parentEvents.filter((e) => e.type === "tool/call")) st = applySrcEvent(st, e); return st; })();
+  assert.equal(folded.userTodos.filter((r) => r.title.startsWith("请在微信打开目标小程序")).length, 0, "投影无引擎残留待办");
+  assert.ok(mp.id && mp.type === "mini-program" && mp.duplicate === false, "资产登记本体行为不受影响");
 });
 
 test("[local.62] 决策点经验注入：lesson triggers → src_add_intent/finalize 返回带 lessonHints", async () => {
@@ -4295,6 +4254,9 @@ test("[local.66] recon/audit toolFilter 不得 deny src_scan_surface（prompt �
     assert.equal(deny.has("src_scan_surface"), false, "recon/audit 不得 deny src_scan_surface");
   }
 });
+
+
+
 
 /* ==================== [local.67 #19] 本地渗透靶场 ====================
  * 直击「155 测试全绿、实战产出为零」的盲区：现有测试验证代码不坏，靶场验证产出。
@@ -4580,4 +4542,83 @@ test("[local.68] lessons 防再膨胀预算：内置合计 ≤20k 且逐篇 ≤ 
   });
   assert.deepEqual(dupHeaders, [], `lesson 正文重复（历史事故）：${dupes(dupHeaders)}`);
   function dupes(a) { return [...new Set(a)].join(", "); }
+});
+
+/* ==================== [local.68 #20] 同域多后端侦察：前缀分簇 + Cookie 服务名 ==================== */
+test("[local.68 #20] scan_surface 前缀分簇：多簇+跨前缀提示触发多后端注脚；单簇零噪音", async () => {
+  const h = harness();
+  const parent = h.exec("l68cluster");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "多后端侦察" }, parent);
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => {
+      const path = new URL(url).pathname;
+      if (path.startsWith("/hkhub_attend")) return new Response("<script src=\"/hkhub_attend/static/app.js\"></script>", { status: 200, headers: { "content-type": "text/html", "set-cookie": "klb_session=abc; Path=/" } });
+      if (path.startsWith("/api/")) return new Response("{\"ok\":true}", { status: 200, headers: { "content-type": "application/json", "set-cookie": "klb_token=x; Path=/; bgs_uid=y; Path=/" } });
+      return new Response("home", { status: 200, headers: { "content-type": "text/html" } });
+    };
+    const multi = await h.run("src_scan_surface", { baseUrl: "https://example.test", paths: ["/hkhub_attend/att", "/hkhub_attend/list", "/api/v1/users", "/api/v1/roles"] }, parent);
+    assert.ok(Array.isArray(multi.prefixClusters) && multi.prefixClusters.length >= 2, "分簇输出在场");
+    assert.match(multi.multiBackendNote ?? "", /同域疑似多后端/, "多簇触发注脚");
+    assert.match(multi.multiBackendNote, /klb/, "Cookie 服务名前缀 klb 被提取");
+    const clusterApi = multi.prefixClusters.find((c) => c.prefix === "/api");
+    assert.ok(clusterApi && clusterApi.paths === 2, "各簇计数正确");
+    /* 单簇（全部路径同前缀）不触发注脚 */
+    const single = await h.run("src_scan_surface", { baseUrl: "https://example.test", paths: ["/only/a", "/only/b"] }, parent);
+    assert.equal(single.multiBackendNote, void 0, "单簇零噪音");
+    assert.ok(Array.isArray(single.prefixClusters) && single.prefixClusters.length === 1 && single.prefixClusters[0].prefix === "/only", "单簇分簇数据仍输出");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+/* ==================== [local.68 #19 尾款] 靶场产出回归：未授权可达 finding 端到端入库 ====================
+ * plan §10 ①：断言「finding ≥N 且含未授权可达类」，把 #11b 锁进每版自动回归——直击
+ * 「测试全绿、实战产出为零」盲区：不是驱动模型，而是用靶场真实端点走完整 agent 链路
+ * （探测→fact→finding→研究复核→finalize），任何一环闸坏断言即炸。 */
+test("[local.68 #19 尾款] 靶场端到端产出：未授权可达端点探测→finding≥1（未授权类）→verify→finalize 全链路", async () => {
+  const { createRange } = await import("./src.range.mjs");
+  const range = await createRange();
+  const h = harness();
+  const parent = h.exec("l68e2e");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "靶场产出回归" }, parent);
+  try {
+    /* ① 探测未授权可达敏感端点（模拟 agent 用 src_http 打靶场） */
+    const probe = await h.run("src_http", { url: `${range.url}/api/v1/users/query`, method: "GET", justification: "未授权访问探测" }, parent);
+    assert.match(probe.responseBody, /13800001111/, "靶场端点真返回敏感数据（未授权可达）");
+    /* ② 端到端入库：intent→fact→finding（#11b：low 未授权可达+PoC 即入库） */
+    const intent = await h.run("src_add_intent", { title: "未授权访问验证", goalId: "goal-1" }, parent);
+    await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
+    const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: `无认证 GET ${range.url}/api/v1/users/query -> 200 敏感数据（无任何鉴权头）`, confidence: 0.95 }, parent);
+    const f1 = await h.run("src_add_finding", {
+      intentId: intent.id,
+      title: "用户查询接口未授权访问",
+      severity: "low",
+      impact: `攻击者无需任何认证即可直接请求 ${range.url}/api/v1/users/query 批量拉取平台用户手机号等敏感资料，用于精准诈骗或撞库`,
+      vulnType: "未授权访问",
+      affectedScope: "/api/v1/users/query",
+      remediation: "接口增加鉴权中间件",
+      pocEvidence: [probe.responseBody.slice(0, 200)],
+      rawRequest: `GET /api/v1/users/query HTTP/1.1\nHost: 127.0.0.1\n\n`,
+      reproducibleSteps: [`curl ${range.url}/api/v1/users/query`]
+    }, parent);
+    assert.ok(f1.id, "finding 入库");
+    assert.equal(f1.severity ?? "low", "low", "未授权类如实 low");
+    /* ③ 研究复核闸：verified 研究记录关联 finding（finalize 前置） */
+    await h.run("src_record_research", { intentId: intent.id, category: "unauthorized-access", hypothesis: "复核用户接口未授权访问", status: "verified", findingId: f1.id, evidence: [typeof fact === "string" ? fact : fact.id] }, parent);
+    /* ④ 收官：remainingDirections=[]（穷尽）+ blindSpots 全声明（基线五维 + mobile-api 不派生） */
+    const fin = await h.run("src_finalize_engagement", {
+      remainingDirections: [],
+      blindSpots: [
+        { dimension: "http-authz-surface", status: "covered", evidenceId: typeof fact === "string" ? fact : fact.id },
+        { dimension: "cors-headers", status: "notApplicable" },
+        { dimension: "dom-xhr", status: "notApplicable" },
+        { dimension: "dict-budget", status: "notApplicable" },
+        { dimension: "multi-account-cross-authz", status: "notApplicable" }
+      ]
+    }, parent);
+    assert.equal(fin.ready, true, "全链路收官 ready（#11b 语义下未授权 low 粒度可交付）");
+    /* ⑤ 报告产出断言：finding 出现在报告里（交付即停的产物可验收） */
+    const report = await h.run("src_report", {}, parent);
+    assert.match(report.markdown, /用户查询接口未授权访问/, "finding 进报告");
+    assert.match(report.markdown, /13800001111|users\/query/, "证据可回溯");
+  } finally { await range.close(); }
 });
