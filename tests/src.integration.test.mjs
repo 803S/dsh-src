@@ -4622,3 +4622,23 @@ test("[local.68 #19 尾款] 靶场端到端产出：未授权可达端点探测�
     assert.match(report.markdown, /13800001111|users\/query/, "证据可回溯");
   } finally { await range.close(); }
 });
+
+/* ==================== [opt Phase 0] 特性开关：默认值/非法值回落/惰性求值 ==================== */
+test("[opt Phase 0] 优化开关：默认值正确、非法值回落、env 惰性求值", async () => {
+  const flags = await import("../lib/src/flags.js");
+  flags.resetFlagsForTests();
+  assert.equal(flags.srcTelemetryFlag(), "shadow", "telemetry 默认 shadow");
+  assert.equal(flags.srcStateVersionFlag(), "1", "state 默认 legacy");
+  assert.equal(flags.srcOrchestratorFlag(), "off", "orchestrator 默认 off");
+  assert.equal(flags.srcRouteV2Flag(), "off", "route v2 默认 off");
+  /* 非法值回落默认 */
+  process.env.DSH_SRC_TELEMETRY = "loud";
+  assert.equal(flags.srcTelemetryFlag(), "shadow", "非法值回落默认");
+  /* 惰性求值：import 之后设置 env 仍生效 */
+  process.env.DSH_SRC_TELEMETRY = "off";
+  assert.equal(flags.srcTelemetryFlag(), "off", "env 覆盖惰性生效");
+  process.env.DSH_SRC_ROUTE_V2 = "shadow";
+  assert.equal(flags.srcRouteV2Flag(), "shadow", "第二个 flag 惰性生效");
+  flags.resetFlagsForTests();
+  assert.equal(flags.srcTelemetryFlag(), "shadow", "reset 恢复默认");
+});
