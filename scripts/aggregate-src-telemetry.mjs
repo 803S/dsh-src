@@ -34,6 +34,10 @@ try {
 		}
 	}
 } catch (error) {
+	if (error?.code === "ENOENT") {
+		console.log(`src telemetry：${telemetryDir} 不存在（尚无会话写入，正常）。`);
+		process.exit(0);
+	}
 	console.error(`无法读取遥测目录 ${telemetryDir}：${error?.message ?? error}`);
 	process.exit(1);
 }
