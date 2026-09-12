@@ -1,8 +1,25 @@
 # dsh-src 优化方案实现细节手册
 
-版本：v1.0
+版本：v1.2（2026-09-12 能力评审增补）
 
 日期：2026-09-12
+
+v1.1 修订记录（对照 local.69 + Phase 0 工作区代码逐项复核）：
+
+- §7 勘误：`src_state` 默认返回 v1 而非 v2（Phase 0 拍板，`flags.js` 已落地）。
+- §5.2 补充 telemetry 模块已实现状态与设计稿偏差；Phase 1 标注半途。
+- §6/§11 Phase 3 加范围声明：on 模式（lease/后台 tick）依赖宿主钩子，本轮只做 shadow。
+- 新增 Phase 0.5：两处 #11b 相关代码缺陷修复（`src_submit` items required 残留、`victimImpact` 重复键），P0 先行。
+- §12.3 回归数 168→169 并补第 5 类靶场场景；§12.4 A/B 口径与计划文档 §10 统一。
+- §13.3 新增部署清单纪律（local.67 事故 6e1faf4 教训）。
+- 本手册所有基线数字（测试数、字符数、预算阈值、flag 默认值）以 `docs/optimization-baseline-2026-09-12.md` 为唯一维护源；正文数字截至 Phase 0（commit 18e4b16，169/169、13106/7929/14081）。
+
+v1.2 修订记录（对照 clown-src-6k-skill 能力评审）：
+
+- 评审结论：Phase 0–6 完成后单目标工程可靠性持平或局部反超，但存在两个结构性产出口径缺口——测绘（目标从哪来、怎么穷尽）与打法模式库（高危招式密度）。新增 Phase 7、Phase 8 补齐。
+- Phase 7 测绘：FOFA 为可选依赖，**无 key 时全流程降级可用**（种子队列/存活筛选/一种子闭环均不依赖 FOFA）。
+- Phase 8 打法库：pattern 四列结构 + 服务端沉淀门槛，种子数据源为本地 clown-src-6k-skill 打穿短表（86 行）。
+- Phase 7/8 引入的新数字（pattern 行数与预算、种子预算）落地时须同步写入基线文档。
 
 适用范围：`/Users/lihua-dis/Software/dsh-src` 当前 Node.js ESM 实现、SRC 工具协议、会话投影、能力/Skill 路由和本地 lessons。
 
@@ -81,7 +98,7 @@ flowchart LR
 | `lib/src/tools/index.js` | 约 44 个工具、长状态渲染、网络编排 | 薄工具适配层 | 工具只校验参数、调用 command/service、返回结构化结果 |
 | `lib/src/playbooks.js` | substring 召回 | 兼容召回器 | 增加 manifest、分数、冲突和理由 |
 | `lib/src/lessons.js` | 文件索引、触发提示 | pull 型经验库 | 记录 read/use 事件，禁止承担硬门禁 |
-| `lib/src/state.js` | 少量运行时 Map | scheduler lease、退避和进程内缓存 | 不存唯一事实，重启可从 durable job 恢复 |
+| `lib/src/state.js` | 少量运行时 Map | scheduler lease、退避和进程内缓存（on 模式，已推迟） | 不存唯一事实，重启可从 durable job 恢复；本轮仅 shadow 模式、不依赖 lease（见基线文档「明确不做」第 1 条） |
 | `lib/src/mutations.js` | synthetic projection event | 迁移兼容层 | 逐步改为 domain event append |
 | `lib/src/reporting.js` | 纯报告投影 | 保持纯函数 | 只从 projection/evidence index 读，不主动查网络 |
 
@@ -232,6 +249,8 @@ lib/src/
 
 ### 5.2 发射器接口
 
+实现状态（2026-09-13 已完成，local.70 commit 5114005）：三模块已提交、17 类发射点全接线进工具执行路径、deploy 清单已补齐。实现与本节设计稿的偏差以代码为准：`createTelemetry` 内置 pending 写入追踪、测试钩子 `flush()` 与 `enabled()` 开关；事件 id 为 `randomUUID()` 而非 `traceId:timestamp` 拼接；sink 目录默认 `~/.dsh/storages/src-telemetry`（env 可覆盖），单事件预算硬顶 4KB。验收遗留：顺丰回放需待真实会话重跑后核对漏斗（见 Phase 1 验收段「route 级漏斗以新会话为准」）。
+
 新增 `lib/src/telemetry/events.js`：
 
 ```js
@@ -294,6 +313,8 @@ GROUP BY skill_id;
 每周人工抽样 20 个 intent 标注“应该使用的 Skill”，计算 route precision/recall。只有当漏斗和标注集稳定后，才调整阈值。
 
 ## 6. Orchestrator 和 Scheduler
+
+范围声明：本轮只落 shadow 模式（`transitions.js` 纯函数迁移校验 + 建议事件，不执行）。§6.2 scheduler 循环、§6.3 重试预算的后台执行、§6.4 自动恢复均属 on 模式规格，依赖宿主后台 tick/生命周期钩子——已列入基线文档「明确不做」，另立项目后再实施。
 
 ### 6.1 状态机
 
@@ -405,7 +426,7 @@ async function tick(now) {
 
 实现方式：
 
-1. `src_state` 默认返回 v2；增加 `detail` 参数：`summary`、`evidence`、`orchestration`、`legacy`。
+1. `src_state` 默认返回 v1（Phase 0 勘误：本条原文「默认 v2」与 §13.1 灰度顺序矛盾，按灰度原则默认 1，已落地 `DSH_SRC_STATE_VERSION=1`，A/B 数据达标后再翻默认）；v2 经 `detail="summary"` 或 flag=2 显式启用；`detail` 参数全集：`summary`、`evidence`、`orchestration`、`legacy`。
 2. `summary` 只返回上例字段，事实正文不超过最近 12 条；finding 相关证据永不被预算裁剪。
 3. 新增 `src_get_evidence({ ids, full })`，按 ID 拉取正文，复用现有 `http-output.js` 截断和去重。
 4. 保留 v1 兼容窗口 30 天；旧模型检测到 `version=1` 时仍可拿到旧字段，但不再作为默认 prompt 输入。
@@ -539,7 +560,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 ## 11. 分阶段实施计划
 
-### Phase 0：基线、开关和回滚（1–2 天）
+### Phase 0：基线、开关和回滚（1–2 天）——✅ 已完成（2026-09-12，commit 18e4b16：flags 四开关全惰性求值+非法值回落、基线文档入库、deploy 清单加 flags.js，169/169 绿；默认 telemetry=shadow、state=1、orchestrator=off、route_v2=off）
 
 任务：
 
@@ -549,16 +570,26 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 验收：关闭全部 flag 时 `node scripts/check-preset-consistency.mjs` 和 `npm test` 与当前一致。
 
-### Phase 1：Telemetry（3–5 天）
+### Phase 0.5：#11b 相关代码缺陷修复（P0，先行于 Phase 1 与顺丰重跑）
 
-实现：
+2026-09-12 代码复核实测发现两处缺陷：#11b（未授权可达+可复现 PoC 即 low 入库）目前只在父会话直连路径生效。
 
-- 新增 `lib/src/telemetry/{events,sink,budget}.js`。
-- 在 `src_add_intent`、`src_read_capability`、`src_run_capability`、`src_http`、approval、`src_submit`、`src_record_research` 和 finalize 处发事件。
-- 先写 JSONL，不改变工具返回；增加 trace/span/engagement 关联。
-- 写 `scripts/aggregate-src-telemetry.mjs`，输出 funnel、token、重复调用和 orphan 报表。
+1. `src_submit` findings items 内嵌 schema 的 `victimImpact`/`concreteLossEvidence` 仍为 `required: true`（commit b410890 只放宽了 `src_add_finding` 参数层与 store 门禁）。宿主 `validateArgs` 在 execute 之前拦截——子代理按新语义提交三要素全缺的 low finding 会被整体拒绝（实测复现：`missing required property "findings[0].victimImpact"`）。顺丰重跑的 finding 验收（≥8）依赖子代理提交路径，此项不修则大概率半路失败。修法：items 内两字段转 optional、描述同步 #11b 语义；补「子代理经 `src_submit` 提交 low finding」回归（现有 #11b 测试只覆盖父会话 `src_add_finding` 直连，靶场 E2E 同样是父会话直连）。
+2. `src_add_finding` 参数对象中 `victimImpact` 重复定义：#11b 版（optional+新语义）之后残留旧版键，JS 后键覆盖前键，模型实际看到的字段说明是旧版（无「low 可缺省」指引）。修法：删旧键；`check-preset-consistency` 增加参数对象重复键静态检查防复发。
 
-验收：回放顺丰会话日志时能得到完整漏斗；telemetry sink 故障不影响工具；事件和状态视图均遵守体积预算。
+验收：子代理路径 low finding（三要素全缺）经 `src_submit` 入库的回归通过；重复键检查进 CI；169/169 保持绿。
+
+### Phase 1：Telemetry（3–5 天）——✅ 已完成（2026-09-13，local.70：commit 5114005+c555dd6，175/175 绿）
+
+实现（实际落地情况）：
+
+- 新增 `lib/src/telemetry/{events,sink,budget}.js`：fire-and-forget JSONL（`$DSH_HOME/storages/src-telemetry/src-telemetry-YYYY-MM-DD.jsonl`，日轮转、懒 mkdir、错误计数不抛）；emit 永不抛（循环引用吞掉）；单事件 4KB 预算（超限 `{truncated:true, head}` 渐进截断）。
+- 17 类发射点全接线 `lib/src/tools/index.js`：route.offered/selected、evidence.created/linked(proves/verifies)、submit.checkpoint（跨会话 engagementId=父）、intent.completed、http.request（直发+审批重放 `replay:true`）、approval.waiting/resolved（含 latencyMs）、skill.read（lesson/capability-doc）、capability.requested/outcome、asset-attribution waiting、intent.recovered、engagement.finalized。
+- `scripts/aggregate-src-telemetry.mjs`：漏斗（finding_rate 按会话去重）/skill 用率/审批率/http/token 体积（chars/4）/重复调用/orphan 报表，`--json` 机器可读；ENOENT 报「无数据」。
+- `scripts/deploy.mjs` 清单已补 telemetry 三件（防 http-output 同类事故）。
+- 回归 7 条：模块单元（预算/永不抛/off 不落盘/惰性目录）、wiring 全链路落 JSONL、http+审批事件、capability 事件、sink 失败不阻塞工具、off 零落盘；另有「telemetry 行不进会话日志/投影」红线测试。
+
+验收：回放顺丰会话日志能得到工具调用级漏斗（read/run/submit/http 等）；`route.offered`/`route.selected` 等 route 级事件只对新会话生效（历史会话无这些事件、回放没有 route 分母），route 级漏斗以新会话为准；telemetry sink 故障不影响工具；事件和状态视图均遵守体积预算。
 
 ### Phase 2：结构化 State View（4–7 天）
 
@@ -580,7 +611,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 - shadow 模式只计算迁移和下一动作，不执行；比较模型实际行为和 scheduler 建议。
 - on 模式先接 recovery、timeout 和 finalize check，再接普通 capability job。
 
-验收：杀掉子代理进程后 30 分钟内自动生成 orphan/recovery 事件；重复 job 不重复发请求；批准前不会执行高危操作。
+验收（shadow 模式）：迁移建议事件与模型实际行为的对比报表可产出；重复 job（幂等键）不重复发请求；批准前不会执行高危操作。注：原验收「杀掉子代理进程后 30 分钟内自动生成 orphan/recovery 事件」依赖宿主后台 tick（on 模式），已随 on 模式推迟（基线「明确不做」第 1 条），另立项目后再验收。
 
 ### Phase 4：规则真相收敛（1 周）
 
@@ -613,6 +644,40 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 验收：主 prompt 和常驻工具 description 的 token 占比下降 40%；多轮任务的重复 tool call 率下降 30%；finding 交付率不下降。
 
+### Phase 7：测绘与种子闭环（可选立项，1–2 周，超越项）
+
+动机（2026-09-12 能力评审实测）：现有工具面解决「给了目标怎么测」，不解决「目标从哪来、怎么穷尽」。对照报告 16 条 finding 中 9 条来自资产测绘面（同域多后端、相邻系统）；clown-src-6k-skill 的产出广度主要来自测绘引擎（种子无上限+一种子闭环+优质根域回灌）。这是 Phase 0–6 均未覆盖的缺口。
+
+**FOFA 可选原则（硬性）**：无 FOFA key 时全部功能降级可用，不许出现「没 key 就不可用」的路径。种子队列、去重去废、存活筛选、一种子闭环、回灌队列均不依赖 FOFA；无 key 时种子来源=用户给定清单/宿主手动发现/JS 与回包中带出的新 host（现有 §4.1.3 线索回收的自然延伸）。有 key 时 FOFA 只是种子搜索的一个可选 provider。
+
+实现：
+
+- 新增 flag `DSH_SRC_SURVEY=off|shadow|on`（沿用 flags.js 惰性求值模式，默认 off，关闭时行为与当前完全一致）。
+- 种子队列：新增 `src_survey_seed` 工具（动作：add/list/next/complete/backfill），种子状态 pending/active/done 复用 store 持久化（种子可作为 asset 的特殊 kind 或独立表，实施时按 store 现有结构选，避免引入第二事实源）。
+- 一种子闭环（服务端硬闸，非提示语）：同一时间只允许一个 active 种子；该种子清洗后的活面未全部处置（挖完/记废/非存活/同皮代表已做）时，`next` 直接拒绝并返回剩余活面计数。这是 clown 版靠提示词纪律实现的东西，我们用代码闸——模型忘了纪律也绕不过去。
+- 存活筛选：去重→去废（停放页/无业务响应）→非存活（超时/探不通）批量探测，复用 `http-output.js` 与代理通道；**401/403/登录墙/管理台挑战页判为存活不丢弃**（clown 实战口径：存活≠在登录表单上耗）。
+- 股权闸（人工确认版）：全资 1–4 级主体名/品牌/根域建议入队、参股默认不挖的判定提示交给模型+用户确认，不自动调工商 API（数据源不稳定，先不接）。
+- FOFA provider（可选）：key 从 env/宿主配置读，**禁止写进对话、文档、工具返回**；无 key 自动跳过该 provider 不报错；有 key 时实现翻页、限流退避（429 指数退避）、单种子搜索只围绕该种子。后续可扩展 hunter/shodan 等 provider，接口按 provider 抽象。
+- 模式判定：用户给定 URL 清单/固定站=锁面（现有行为不变，禁出圈 FOFA）；模糊目标（只给集团名）=自由跳（新能力）。判定逻辑写进种子工具返回的引导语，不进协议常驻文本。
+- 优质根域回灌：挖到优质面时把其注册根域作为新 pending 种子入队（backfill 动作），但 active 种子未闭环前不弹给模型。
+
+验收：无 FOFA key 环境全流程可用（手动种子→闭环→done，一条 e2e 证明）；「剩余活面未挖完时 next 被服务端拒绝」有回归；401 站不被判死有回归；`DSH_SRC_SURVEY=off` 时工具面与当前完全一致；新增 `lib/src/` 子模块进 deploy.mjs 清单（§13.3）。
+
+### Phase 8：打法模式库 pattern lessons（1 周，超越项）
+
+动机（同评审）：打法知识密度缺口——内置 lessons 14.1k 字符偏纪律与流程；clown 打穿短表 86 行「认什么→打哪→出什么算成→假点」是具体高危招式（对象存储 STS 通配覆盖、假签 302 回显算出的签、GOPROXY hg 元数据、IMDS 405 转 GET、发签 nonce 是 PKCS8 私钥、云 IDE 弱口令→RPC RCE 链等），密度差约一个量级。且「假点」列（防把没打穿当洞、防把单站失败当手法失效）在现有 lesson 机制无对应物。
+
+实现：
+
+- 新 lesson 类型 `pattern`，四列固定结构：**认什么**（形态描述，禁止具体厂商/path/字段名）、**打哪**（试法，标不登录/要会话，两句封顶）、**出什么算成**（差分标准，必须能回答比基线多了谁的什么）、**假点**（形态级证伪条件，必填）。细节超两句的进对应模块篇，pattern 行只留指针。
+- 存储与召回：复用 lesson 机制（goal 索引+决策点钩子），lesson-meta 加 `kind: pattern`；进站时按目标特征匹配召回（复用 playbook 路由的召回字段机制，特征词对齐 pattern 的认法关键词）。禁止每站通读全库——只召回匹配行。
+- 沉淀门槛（服务端闸，防表膨胀）：`src_record_lesson(kind=pattern)` 强制四列齐全；认法做形态化校验（正则拦具体 path/域名/字段名枚举）；假点必填；同型已有 pattern 时拒绝新建、返回已有行让模型走「补差分」路径。普通 lesson 不受影响。
+- 报告层吸收两闸（clown 实战打磨的防退回设计）：**匿名闸**——有会话禁标「匿名未授权」，改越权口径（src_report 渲染时校验 finding 的会话上下文标记）；**认钥闸**——凭证类 finding 未附「假值对照+认钥枪带出身份/列表」证据时，报告渲染显著警告（不阻塞入库，与 #11b 宽准入一致）。
+- 种子数据导入：clown-src-6k-skill 打穿短表 86 行（`/Users/lihua-dis/Downloads/clown-src-6k-skill/skills/skill/知识库/打穿短表.md`，朋友授权的身份包）逐行转 pattern 四列格式入内置库；转换脚本一次性入库，密钥实值/完整 JS 地址不入库；导入后 pattern 行数与字符数进基线预算与 check-preset-consistency。
+- 预算：pattern 库总量设闸（初版 ≤40k 字符，导入后实测再定），行数超过阈值时提示合并（并：同一认法多行合一；分流：细节进模块篇留指针），不自动删。
+
+验收：pattern 四列结构校验+形态化校验进 check-preset-consistency；「同型 pattern 已存在时新建被拒」有回归；进站特征匹配能召回对应 pattern（至少 5 个目标特征用例）；匿名闸/认钥闸渲染路径各有回归；种子导入后 pattern 总量写入基线文档；169/169+新增回归全绿。
+
 ## 12. 测试和评估体系
 
 ### 12.1 单元与契约测试
@@ -636,12 +701,15 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 ### 12.3 Mock 靶场 E2E
 
-保留现有 168 项回归，增加四类场景：
+保留现有 169 项回归（Phase 0 后），增加五类场景：
 
 1. low-only 多 finding 可以 finalize 和出报告；
 2. JSON body 缺 Content-Type 时自动补全，415 会返回 body 诊断；
 3. 写入→回读→删除的三步证据链能关联到一个 finding；
-4. provider unavailable、child orphan、approval pending 在 scheduler 中可恢复。
+4. provider unavailable、child orphan、approval pending 在 scheduler 中可恢复；
+5. 子代理经 `src_submit` 提交三要素全缺的 low finding 可入库（Phase 0.5 #1 的回归）；
+6. （Phase 7）无 FOFA key 时种子闭环全流程可用；active 种子剩余活面未挖完时 `next` 被服务端拒绝；401/403 站判存活不丢弃；
+7. （Phase 8）pattern 四列不全/认法含具体 path 时 `src_record_lesson` 被拒；同型 pattern 已存在时新建被拒；有会话的 finding 报告渲染出匿名闸警告。
 
 ### 12.4 Agent A/B 评估
 
@@ -652,7 +720,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 - legacy state vs decision view v2；
 - orchestrator off vs on。
 
-每组至少 20 个 intent，记录 route precision/recall、skill 有效激活率、工具重复率、上下文 token、orphan/recovery、finding 数量和人工可交付率。不要只以 finding 数量为 KPI，必须同时看误报、越权和清理完整性。
+每组至少 20 个 intent 或 30 分钟（先到为准，与计划文档 §10 A/B 口径统一），记录 route precision/recall、skill 有效激活率、工具重复率、上下文 token、orphan/recovery、finding 数量和人工可交付率。不要只以 finding 数量为 KPI，必须同时看误报、越权和清理完整性。
 
 ## 13. 灰度、迁移和回滚
 
@@ -679,6 +747,10 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 回滚只切 flag，保留事件和 job 记录。不要删除新事件或清空 durable store，以便定位和重放。
 
+### 13.3 部署清单纪律
+
+新增 `lib/src/` 子模块（如 `http-output.js`、`flags.js`、`telemetry/`）必须同 commit 更新 `scripts/deploy.mjs` 清单。local.67 事故（commit 6e1faf4）：#17 新模块 `http-output.js` 未进清单，线上副本 import 失败导致 preset 挂载失败。Phase 1 提交 `telemetry/` 时必须同步补清单。
+
 ## 14. 风险清单和应对
 
 | 风险 | 影响 | 预防/处理 |
@@ -690,6 +762,8 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 | 事件和快照不一致 | 面板/报告分叉 | append + snapshot 同一 command；定期 divergence replay |
 | 响应体摘要过短 | 证据不可用 | `full=true` 受控拉取；记录 hash、长度和 content-type |
 | prompt 变短后行为退化 | 研究漏项 | A/B、人工标注集、固定靶场和快速回滚 |
+| 测绘自由跳扩面失控 | 越权/打无关资产 | 一种子闭环服务端硬闸；锁面默认禁出圈；授权边界仍以 asset 清单为准；FOFA 无 key 自动降级 |
+| pattern 库膨胀或误报 | 知识库变噪音、假洞入库 | 四列强校验+形态化正则+假点必填+总量预算闸；同型拒绝新建；出什么算成必须写差分标准 |
 
 ## 15. 30/60/90 天排期
 
@@ -699,7 +773,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 - 完成 state v2 summary、evidence index、`src_get_evidence`。
 - 建立顺丰日志 replay fixture 和四类新增 E2E。
 
-交付标准：能回答每个 intent 为什么选/没选某 Skill；97 facts 会话不再因状态渲染触发 oversized；现有 168/168 回归保持通过。
+交付标准：能回答每个 intent 为什么选/没选某 Skill；97 facts 会话不再因状态渲染触发 oversized；现有 169/169 回归保持通过。
 
 ### 31–60 天：编排自动化
 
@@ -719,7 +793,16 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 交付标准：有效 Skill 激活率、finding 交付率、重复调用率和上下文成本都有可比较的基线；没有用“调用次数增加”冒充质量提升。
 
+### 91–120 天：测绘与打法库（Phase 7/8，超越项，可选立项）
+
+- Phase 7 测绘：种子队列+一种子闭环硬闸+存活筛选先行；FOFA provider 视 key 到位情况随时可插（无 key 不阻塞）。
+- Phase 8 打法库：pattern 四列结构+沉淀门槛+打穿短表 86 行导入；匿名闸/认钥闸进报告渲染层。
+
+交付标准：模糊目标（只给集团名）可自主完成种子→闭环→换种的完整测绘循环；进站能召回匹配 pattern 并在报告层拦住匿名/认钥口径错误；两 Phase 新数字全部进基线。
+
 ## 16. 首批可直接建 issue 的任务
+
+Phase 0.5 的两项 P0 缺陷修复优先于本清单全部任务。任务 1 的模块初版已存在（见 §5.2 实现状态），实施以接线与测试为主、避免按设计稿重写。
 
 1. `telemetry: add trace/span context and budgeted JSONL sink`：新增事件接口和 JSONL sink。
 2. `telemetry: instrument capability and approval funnel`：覆盖 offered/read/requested/waiting/resolved/outcome。
@@ -735,19 +818,27 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 12. `projection: dual-fold replay and divergence metric`：新旧 reducer 同步校验。
 13. `config: separate capability loading from orchestration`：配置解析与调度边界解耦。
 14. `tests: add scheduler/orphan/approval/replay property cases`：覆盖中断、重复和超时。
+15. `survey: seed queue with closed-loop hard gate`：种子状态机+`next` 拒绝逻辑（Phase 7）。
+16. `survey: aliveness filter`：批量探测+401/403 判存活（Phase 7）。
+17. `survey: optional FOFA provider with key-less degradation`：env 读 key、无 key 跳过、限流退避（Phase 7）。
+18. `patterns: four-column pattern lessons with server-side gate`：结构校验+形态化正则+同型拒绝（Phase 8）。
+19. `report: anonymity and key-acknowledgment gates in rendering`：匿名闸/认钥闸渲染校验（Phase 8）。
+20. `patterns: import clown strike-list as seed data`：打穿短表 86 行一次性转换脚本（Phase 8）。
 
 ## 17. 最终验收清单
 
 - [ ] `npm test`、preset consistency 和新增 replay/property/E2E 全通过。
 - [ ] telemetry 事件大小受预算控制，完整响应体通过 evidence id 按需读取，不被默认状态视图无限展开。
 - [ ] 每个 selected route 都能看到 read/run/outcome，或者明确 blocked/rejected 原因。
-- [ ] low-only finding 可以带限制完成报告，不再被 medium+ 门槛阻断。
+- [ ] low-only finding 可以带限制完成报告，不再被 medium+ 门槛阻断；`src_submit` 子代理路径与 `src_add_finding` 的 #11b 语义一致（Phase 0.5）。
 - [ ] `src_state` 默认不渲染全量 facts；finding 证据可按 ID 拉回。
 - [ ] orphan、approval、provider unavailable 和 415 请求形态均有结构化处理路径。
 - [ ] store snapshot 与 projection replay 关键字段一致，divergence 为零。
 - [ ] 主 prompt、工具描述、Skill 和 lesson 的规则归属有清单且无重复硬门禁。
 - [ ] Router v2 有人工标注集、precision/recall 和回滚开关。
 - [ ] 顺丰授权环境的任何新结论都来自重新验证；本地靶场和历史会话只作为设计/回放证据。
+- [ ] （Phase 7）无 FOFA key 时测绘全流程可用；一种子闭环由服务端强制而非提示语。
+- [ ] （Phase 8）pattern 沉淀有服务端门槛（四列/形态化/假点/同型拒绝）；报告层匿名闸/认钥闸生效。
 
 ## 18. 边界说明
 

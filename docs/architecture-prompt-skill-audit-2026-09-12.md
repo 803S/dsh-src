@@ -11,7 +11,7 @@
 结论排序如下：
 
 1. **首要问题是编排架构**。大量异步状态机仍由模型通过提示词手动推进：创建 intent、委派、等待 completion、checkpoint、发现 orphan、恢复、收官前补缺都依赖模型正确调用工具。服务端只保存和校验状态，没有一个独立的 planner/scheduler/event consumer 把状态自动推进起来。
-2. **主提示词过载，但不是唯一根因**。`SRC_INSTRUCTIONS` 当前约 7,931 个 Unicode 字符、111 行；长度本身并非灾难性问题，真正的问题是它把授权政策、状态机、能力路由、故障恢复、报告格式、语言纪律和安全边界全部塞进每轮决策上下文。约束密度高、顺序要求多、同一语义在多处重复，容易导致工具参数错误、遗漏和规则冲突。
+2. **主提示词过载，但不是唯一根因**。`SRC_INSTRUCTIONS` 当前 7,929 个 Unicode 字符（轮 1 重写后，重写前 19,085；数字唯一维护源为基线文档）、111 行；长度本身并非灾难性问题，真正的问题是它把授权政策、状态机、能力路由、故障恢复、报告格式、语言纪律和安全边界全部塞进每轮决策上下文。约束密度高、顺序要求多、同一语义在多处重复，容易导致工具参数错误、遗漏和规则冲突。
 3. **Skill 激活率目前无法被证明或诊断**。playbook 是 17 个方向的静态 substring 匹配，能力清单的 `when` 只是自然语言提示；系统没有记录“被推荐→被读取→被执行→改变了哪次行动→结果如何”的漏斗。因此低产出不能直接归因于模型没有激活 skill。
 4. **Durable store 与 session projection 形成双语义系统**。同一业务语义分别由 storage domain 和 projection reducer 实现，并通过 synthetic events、委派投影补写和自愈逻辑保持一致。这种设计可工作，但一致性成本和回归风险已经很高。
 5. **规则来源过多且重复**。`SRC_INSTRUCTIONS`、工具 description、`store` 门禁、playbook、`SKILL.md`、rules 和知识库都在描述 finding 准入、授权、报告和推进纪律。实际强制法律主要在服务端，其他层应更多承担解释和建议，否则会出现语义漂移。
@@ -78,7 +78,7 @@ finding 准入至少同时出现在：主提示词的“漏洞质量标准”段
 
 ### 提示词是不是太长、太烂？
 
-不是单纯“太长”，而是**职责过多、规则密度过高、法律重复**。约 7.9k 字符在现代上下文窗口内并不夸张，但它让每轮模型都携带 45 个左右的规则段落和大量顺序约束。更严重的是，很多内容已经由工具 schema 和 store 强制执行，继续把同一规则写入主 prompt 只会增加冲突面。
+不是单纯“太长”，而是**职责过多、规则密度过高、法律重复**。约 7.9k 字符在现代上下文窗口内并不夸张，但它让每轮模型都携带 32 个小节（轮 1 重写后；重写前为 45 节）和大量顺序约束。更严重的是，很多内容已经由工具 schema 和 store 强制执行，继续把同一规则写入主 prompt 只会增加冲突面。
 
 建议把主 prompt 压到三个区块：当前角色与授权原则、四步主循环、失败时的最小恢复原则。字段细则、审批、报告模板、Burp 说明和专题打法移到工具错误、结构化状态和按需 skill 文档。目标不是追求最短字符数，而是减少模型需要同时记住的状态变量。
 
@@ -98,14 +98,14 @@ finding 准入至少同时出现在：主提示词的“漏洞质量标准”段
 
 ## 测试与验证评估
 
-现有 [tests/src.integration.test.mjs](../tests/src.integration.test.mjs) 约 4,624 行，覆盖协议回归、store 门禁、projection replay、审批、能力安装、lesson 触发、playbook 路由、输出预算、orphan/delegation、靶场端到端和报告。它适合证明工具协议没有明显回归，但不能衡量真实 agent 质量。
+现有 [tests/src.integration.test.mjs](../tests/src.integration.test.mjs) 约 4,644 行（Phase 0 后），覆盖协议回归、store 门禁、projection replay、审批、能力安装、lesson 触发、playbook 路由、输出预算、orphan/delegation、靶场端到端和报告。它适合证明工具协议没有明显回归，但不能衡量真实 agent 质量。
 
 缺失的评估包括：真实模型下的 route precision/recall、skill read 后的行为变化、多轮工具选择准确率、上下文膨胀、委派完成率、恢复成功率、重复调用率、projection/store 长期一致性，以及规则冲突时的优先级行为。
 
 本次运行结果：
 
 - `node scripts/check-preset-consistency.mjs` 通过：工具级 description 合计 13,106，协议预算和 lessons 预算均通过。
-- `npm test` 在允许本地 mock HTTP server 的环境中通过：168 个测试全部通过，0 个失败，耗时约 23.8 秒。此前沙箱运行时出现的 `listen EPERM` 属于环境限制，不计为项目回归。
+- `npm test` 在允许本地 mock HTTP server 的环境中通过：169 个测试全部通过（Phase 0 新增 flags 回归），0 个失败，耗时约 23.6 秒。此前沙箱运行时出现的 `listen EPERM` 属于环境限制，不计为项目回归。
 
 ## 建议的修复路线
 
@@ -197,10 +197,11 @@ finding 准入至少同时出现在：主提示词的“漏洞质量标准”段
 
 ## 约束减法方案状态矩阵
 
-下表以 [docs/plan-2026-09-08-constraint-reduction.md](plan-2026-09-08-constraint-reduction.md) 的轮次结论和当前仓库代码为准。“本地测试”表示代码或本地靶场证据；“顺丰重跑”只有在授权环境再次执行后才能填为已验证。
+下表以 [docs/plan-2026-09-08-constraint-reduction.md](plan-2026-09-08-constraint-reduction.md) 的轮次结论和当前仓库代码为准（数字截至 Phase 0/commit 18e4b16，169/169；基线数字唯一维护源为 [optimization-baseline-2026-09-12.md](optimization-baseline-2026-09-12.md)）。“本地测试”表示代码或本地靶场证据；“顺丰重跑”只有在授权环境再次执行后才能填为已验证。
 
 | 措施 | 计划项 | 当前代码状态 | 本地测试 | 顺丰重跑 | 风险/备注 |
 |---|---|---|---|---|---|
+| Phase 0 基线与特性开关 | 手册 §11 Phase 0（flags 四开关+基线文档） | 已完成（18e4b16） | 169/169 | — | 开关默认 telemetry=shadow、其余 off；关闭时行为与 local.69 一致 |
 | 主 prompt 瘦身 | 轮 1，约 19,085→7,929 字符 | 已完成 | preset consistency 与回归覆盖 | 未完成 | 仍有授权、编排、路由、报告多职责，不能只看字符数 |
 | 工具描述瘦身 | 轮 1，约 24.3k→13.1k | 已完成 | preset consistency | 未完成 | 工具 schema 仍是常驻上下文的一部分 |
 | low-only 报告交付 | 删除 medium+ 才能报告 | 已完成 | 靶场可生成 low finding 并 finalize | 未完成 | 旧会话结果不追溯重写 |
@@ -214,12 +215,12 @@ finding 准入至少同时出现在：主提示词的“漏洞质量标准”段
 | 触发器引擎拆除 | 轮 3，capabilities.yaml 不再自动编排待办 | 已完成 | 旧触发器在场也不自动挂 todo | 未完成 | 能力清单仍是展示和自主选择入口 |
 | remainingDirections | 非空降为逐条 warning | 已完成 | finalize 与 coverage 回归 | 未完成 | warning 不应被模型当成无限追击命令 |
 | 同域多后端扫描 | URL 前缀分簇、chunk/Cookie 服务名提示 | 已完成 | 多簇与单簇噪声回归 | 未完成 | 只能扩大候选面，不能证明接口已授权测试 |
-| 靶场 E2E | 探测→fact→finding→finalize→报告 | 已完成 | 168/168 回归中包含产出链 | 未完成 | 目标环境需另行授权和清理验证 |
-| telemetry | skill funnel、intent funnel、prompt/state 成本 | 未实现 | 无真实漏斗测试 | 未完成 | 当前无法给出 skill activation rate |
+| 靶场 E2E | 探测→fact→finding→finalize→报告 | 已完成 | 169/169 回归中包含产出链 | 未完成 | 目标环境需另行授权和清理验证 |
+| telemetry | skill funnel、intent funnel、prompt/state 成本 | 部分实现：`lib/src/telemetry/`（events/sink/budget）初版已写，未提交、未接入工具路径与 deploy 清单 | 模块测试未并入回归 | 未完成 | 接线与聚合脚本见手册 Phase 1；当前无法给出 skill activation rate |
 | orchestrator/scheduler | 事件驱动依赖、超时、重试、orphan 恢复 | 未实现 | 只有工具协议回归 | 未完成 | 这是架构主因，不能靠继续加 prompt 解决 |
 | 规则真相收敛 | store/schema 成为唯一可执行法律 | 部分完成 | store 门禁回归 | 未完成 | prompt、tool、skill、rules 仍有重复语义 |
 
-轮 1、轮 2、轮 3 的“完成”表示代码和本地回归已经落地，不表示顺丰会话已获得新证据。计划文档本身也把顺丰重跑列为开放验证项，后续验收至少应记录 finding 数量、真实 Content-Type、响应体可见性和 `src_state` 输出预算。
+轮 1、轮 2、轮 3 的“完成”表示代码和本地回归已经落地，不表示顺丰会话已获得新证据。2026-09-12 代码复核另发现两处 #11b 相关缺陷（`src_submit` findings items 内三要素仍 required，子代理路径 low 提交被宿主 schema 拦截；`src_add_finding` 参数对象 `victimImpact` 重复定义、生效为旧描述），已排入手册 Phase 0.5 优先修复。计划文档本身也把顺丰重跑列为开放验证项，后续验收至少应记录 finding 数量、真实 Content-Type、响应体可见性和 `src_state` 输出预算。
 
 ## Cairn 对照报告的 16 条 finding
 
@@ -281,6 +282,6 @@ npm test
 实际结果：
 
 - `node scripts/check-preset-consistency.mjs` 通过；工具级 description 合计 13,106（≤15,000），协议/小节名检查通过，内置 lessons 合计 14,081（≤20,000）。
-- `npm test` 通过：168 个测试全部通过，0 失败、0 取消、0 跳过，耗时约 23.0 秒。覆盖响应体透传、Content-Type 自动补全、negative 自查、low finding 准入、facts 分级预算、触发器拆除、同域多后端提示和靶场端到端产出链。
+- `npm test` 通过：169 个测试全部通过（Phase 0 后），0 失败、0 取消、0 跳过，耗时约 23.6 秒。覆盖响应体透传、Content-Type 自动补全、negative 自查、low finding 准入、facts 分级预算、触发器拆除、同域多后端提示和靶场端到端产出链。
 
 这些是当前代码和本地靶场的验证结果，不能替代顺丰授权环境重跑；后者仍需单独记录请求形态、响应体摘要、evidence id、finding 数量和清理结果。
