@@ -5,8 +5,9 @@ import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
+import { flushDefaultTelemetry } from "../lib/src/telemetry/events.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
 import { routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
@@ -4641,4 +4642,258 @@ test("[opt Phase 0] 优化开关：默认值正确、非法值回落、env 惰�
   assert.equal(flags.srcRouteV2Flag(), "shadow", "第二个 flag 惰性生效");
   flags.resetFlagsForTests();
   assert.equal(flags.srcTelemetryFlag(), "shadow", "reset 恢复默认");
+});
+
+/* ==================== [opt Phase 1] telemetry 观测旁路（优化手册 2026-09-12 §5） ==================== */
+/* 发射点→JSONL 全链路验收：route.offered/selected、evidence.created/linked、submit.checkpoint、
+   intent.completed、http.request、approval.waiting/resolved、skill.read、capability.requested/outcome、
+   engagement.finalized。telemetry 必须永不阻塞工具路径、永不注入上下文（fire-and-forget 旁路）。 */
+
+/* 读遥测目录里某事件（或全部）的行；先小延迟收敛再 flush（tel() 的 engagement 解析是微任务链）。 */
+async function readTelemetryRows(dir, event) {
+  await new Promise((r) => setTimeout(r, 20));
+  await flushDefaultTelemetry();
+  const out = [];
+  let names = [];
+  try { names = readdirSync(dir); } catch { return out; }
+  for (const name of names.filter((f) => /^src-telemetry-\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort()) {
+    for (const line of readFileSync(nodePath.join(dir, name), "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      try { const row = JSON.parse(line); if (event === undefined || row.event === event) out.push(row); } catch {}
+    }
+  }
+  return out;
+}
+
+test("[opt Phase 1] telemetry 模块：预算截断、emit 永不抛（循环引用）、off 不落盘、sink 失败被吞、惰性目录", async () => {
+  const events = await import("../lib/src/telemetry/events.js");
+  const budget = await import("../lib/src/telemetry/budget.js");
+  /* 预算：超大 payload 序列化后有界；行超限时标记 truncated */
+  const big = budget.budgetEvent({ id: "x", event: "t", occurredAt: 1, schemaVersion: 1, sessionId: "s", engagementId: "s", payload: { blob: "A".repeat(9000) } });
+  assert.ok(JSON.stringify(big).length <= budget.TELEMETRY_MAX_EVENT_BYTES, "budgetEvent 输出有序界");
+  const tiny = budget.budgetEvent({ id: "x", event: "t", occurredAt: 1, schemaVersion: 1, sessionId: "s", engagementId: "s", payload: { blob: "B".repeat(500) } }, 300);
+  assert.equal(tiny.payload.truncated, true, "超限行标记 truncated");
+  /* emit 永不抛：循环引用 payload 也吞掉 */
+  const noopSink = { append: async () => {}, stats: () => ({ errors: 0, writes: 0 }) };
+  const t = events.createTelemetry({ sink: noopSink });
+  const circular = {}; circular.self = circular;
+  assert.doesNotThrow(() => t.emit("t.x", { sessionId: "s" }, { circular }));
+  await t.flush();
+  /* enabled=false：emit 返回 "" 且不触 sink */
+  let writes = 0;
+  const countingSink = { append: async () => { writes += 1; }, stats: () => ({ errors: 0, writes }) };
+  const off = events.createTelemetry({ sink: countingSink, enabled: () => false });
+  assert.equal(off.emit("t.x", { sessionId: "s" }, {}), "");
+  await off.flush();
+  assert.equal(writes, 0, "off 不触 sink");
+  /* sink append 抛错被吞（观测旁路不炸工具路径） */
+  const badSink = { append: async () => { throw new Error("disk full"); }, stats: () => ({ errors: 0, writes: 0 }) };
+  const bad = events.createTelemetry({ sink: badSink });
+  assert.doesNotThrow(() => bad.emit("t.x", { sessionId: "s" }, { a: 1 }));
+  await bad.flush();
+  /* 惰性目录：DSH_HOME 优先（与 approval-locks 同约定），显式 env 再优先 */
+  const prevHome = process.env.DSH_HOME;
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  try {
+    delete process.env.DSH_SRC_TELEMETRY_DIR;
+    process.env.DSH_HOME = "/tmp/dsh-tel-home-test";
+    assert.ok(events.srcTelemetryDir().startsWith("/tmp/dsh-tel-home-test"), "DSH_HOME 优先于 homedir");
+    process.env.DSH_SRC_TELEMETRY_DIR = "/tmp/dsh-tel-override";
+    assert.equal(events.srcTelemetryDir(), "/tmp/dsh-tel-override", "显式 env 优先于 DSH_HOME");
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+  }
+});
+
+test("[opt Phase 1] telemetry wiring：route/evidence/submit.checkpoint/intent.completed/finalize 全链路落 JSONL", async () => {
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel1-"));
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  try {
+    const h = harness();
+    const parent = h.exec("tel-parent");
+    const child = h.exec("tel-child", "tel-parent");
+    const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "telemetry wiring" }, parent);
+    const intent = await h.run("src_add_intent", { title: "越权探测方向", detail: "换回包 id 试越权", goalId: goal.id }, parent);
+    assert.equal(intent.id, "intent-1");
+    const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "http", target: "https://example.test", detail: "/api/users 200" }, parent);
+    const finding = await h.run("src_add_finding", { intentId: intent.id, title: "未授权可达", severity: "low", impact: "攻击者无需认证即可直接读取用户列表数据并批量获取全量记录，危害论证利用场景——恶意请求构造简单、拿到敏感数据、危害全部用户", affectedScope: "/api/users", remediation: "补鉴权", pocEvidence: ["curl 200"], reproducibleSteps: ["GET /api/users"], rawRequest: "GET /api/users" }, parent);
+    const research = await h.run("src_record_research", { intentId: intent.id, category: "unauthorized-access", hypothesis: "复核未授权访问", status: "verified", findingId: finding.id }, parent);
+    const submit = await h.run("src_submit", { intentId: intent.id, stage: "completed", summary: "done", facts: [{ kind: "info", target: "x.test", detail: "child fact" }] }, child);
+    assert.equal(submit.duplicateCheckpoint, false);
+    await h.run("src_finalize_engagement", {
+      remainingDirections: [],
+      blindSpots: [
+        { dimension: "http-authz-surface", status: "covered", evidenceId: fact.id },
+        { dimension: "cors-headers", status: "notApplicable" },
+        { dimension: "dom-xhr", status: "notApplicable" },
+        { dimension: "dict-budget", status: "notApplicable" },
+        { dimension: "multi-account-cross-authz", status: "notApplicable" }
+      ]
+    }, parent);
+
+    /* 路由漏斗：offered + selected（非重复写入才发） */
+    const offered = await readTelemetryRows(telDir, "route.offered");
+    assert.equal(offered.length, 1, "route.offered 恰一条");
+    assert.ok(offered[0].payload.candidates.includes("authorization"), "越权标题命中 authorization 路由");
+    const selected = await readTelemetryRows(telDir, "route.selected");
+    assert.equal(selected.length, 1);
+    assert.equal(selected[0].payload.skillId, "authorization");
+
+    /* 证据漏斗：fact/finding/research + submit 提交的证据（source=src_submit） */
+    const created = await readTelemetryRows(telDir, "evidence.created");
+    const kinds = created.map((r) => r.payload.evidenceType).sort();
+    assert.deepEqual(kinds, ["fact", "fact", "finding", "research"], "3 决策侧证据 + 1 子代理提交 fact");
+    const findingCreated = created.find((r) => r.payload.evidenceType === "finding");
+    assert.equal(findingCreated.payload.evidenceId, finding.id);
+    const linked = await readTelemetryRows(telDir, "evidence.linked");
+    const proves = linked.find((r) => r.payload.relation === "proves");
+    const verifies = linked.find((r) => r.payload.relation === "verifies");
+    assert.ok(proves && proves.payload.targetId === finding.id && proves.payload.sourceId === intent.id, "proves 边事件");
+    assert.ok(verifies && verifies.payload.sourceId === research.id && verifies.payload.targetId === finding.id, "verifies 边事件");
+
+    /* 提交漏斗：跨会话 engagementId=父、sessionId=子；intent.completed 随 completed checkpoint */
+    const checkpoints = await readTelemetryRows(telDir, "submit.checkpoint");
+    assert.equal(checkpoints.length, 1);
+    assert.equal(checkpoints[0].sessionId, "tel-child");
+    assert.equal(checkpoints[0].engagementId, "tel-parent", "engagementId=父会话");
+    assert.equal(checkpoints[0].payload.stage, "completed");
+    assert.equal(checkpoints[0].payload.facts, 1);
+    const completed = await readTelemetryRows(telDir, "intent.completed");
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].payload.intentId, intent.id);
+    assert.equal(completed[0].engagementId, "tel-parent");
+
+    /* 收官快照 */
+    const fin = await readTelemetryRows(telDir, "engagement.finalized");
+    assert.equal(fin.length, 1);
+    assert.equal(typeof fin[0].payload.blockersCount, "number");
+    assert.equal(fin[0].payload.findingsCount, 1);
+
+    /* 观测旁路红线：telemetry 行永不进会话事件/投影 */
+    const parentSession = h.sessions.get("tel-parent");
+    const leaked = parentSession.events.filter((e) => e.type === "route.offered" || e.type === "evidence.created");
+    assert.equal(leaked.length, 0, "telemetry 不进会话日志");
+  } finally {
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
+});
+
+test("[opt Phase 1] telemetry：src_http http.request（直发+审批重放）/approval.waiting/resolved", async () => {
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel2-"));
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  const server = http.createServer((req, res) => { res.writeHead(200, { "content-type": "text/plain" }); res.end("tel-ok"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  try {
+    const h = harness();
+    const parent = h.exec("tel-http");
+    await h.run("src_add_goal", { target: "127.0.0.1", objective: "telemetry http" }, parent);
+    const ok = await h.run("src_http", { url: `http://127.0.0.1:${port}/api/v1/list`, method: "GET", justification: "读名单" }, parent);
+    assert.equal(ok.approval, "allowed-auto");
+    const pending = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, parent);
+    assert.equal(pending.approval, "pending");
+    const resolvedRow = await h.run("src_resolve_approval", { id: pending.pendingApprovalId, action: "allow" }, parent);
+    assert.equal(resolvedRow.status, "approved");
+
+    const httpRows = await readTelemetryRows(telDir, "http.request");
+    assert.equal(httpRows.length, 2, "直发 + 审批重放各一条");
+    const direct = httpRows.find((r) => r.payload.replay !== true);
+    const replay = httpRows.find((r) => r.payload.replay === true);
+    assert.ok(direct && direct.payload.host === "127.0.0.1" && direct.payload.status === 200 && Number.isFinite(direct.payload.durationMs), "直发行含 host/状态/耗时");
+    assert.ok(replay && replay.payload.approvalId === pending.pendingApprovalId && replay.payload.status === 200, "重放行带 approvalId");
+    const waiting = await readTelemetryRows(telDir, "approval.waiting");
+    assert.equal(waiting.length, 1);
+    assert.equal(waiting[0].payload.approvalId, pending.pendingApprovalId);
+    assert.ok(String(waiting[0].payload.category).includes("破坏性写入"), "closeAccount 分类正确");
+    const resolvedEvents = await readTelemetryRows(telDir, "approval.resolved");
+    assert.equal(resolvedEvents.length, 1);
+    assert.equal(resolvedEvents[0].payload.decision, "allow");
+    assert.ok(resolvedEvents[0].payload.latencyMs >= 0, "等待时长非负");
+  } finally {
+    server.close();
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
+});
+
+test("[opt Phase 1] telemetry：skill.read（capability-doc）+ capability.requested/outcome", async () => {
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel3-"));
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  const caps = await makeCapsEnv("src-tel-caps-");
+  const restoreHome = setDshHome(caps.tmp);
+  try {
+    const h = harness();
+    const parent = h.exec("tel-cap");
+    await h.run("src_add_goal", { target: "127.0.0.1", objective: "telemetry capability" }, parent);
+    const doc = await h.run("src_read_capability", { id: "apkx" }, parent);
+    assert.equal(doc.file, "SKILL.md");
+    const run = await h.run("src_run_capability", { id: "apkx", script: "scripts/run.sh", args: ["a"], justification: "提取端点" }, parent);
+    assert.equal(run.dedupe, false);
+    const out = await h.run("src_resolve_approval", { id: run.pendingApprovalId, action: "allow" }, parent);
+    assert.equal(out.status, "approved");
+    assert.match(String(out.runOutput), /ran:a/, "脚本真实执行");
+
+    const reads = await readTelemetryRows(telDir, "skill.read");
+    assert.equal(reads.length, 1);
+    assert.equal(reads[0].payload.source, "capability-doc:SKILL.md");
+    const requested = await readTelemetryRows(telDir, "capability.requested");
+    assert.equal(requested.length, 1);
+    assert.equal(requested[0].payload.capabilityId, "apkx");
+    assert.equal(requested[0].payload.jobId, run.pendingApprovalId);
+    const outcomes = await readTelemetryRows(telDir, "capability.outcome");
+    assert.equal(outcomes.length, 1);
+    assert.equal(outcomes[0].payload.status, "completed");
+    assert.equal(outcomes[0].payload.exitCode, 0);
+    assert.ok(Number.isFinite(outcomes[0].payload.durationMs));
+  } finally {
+    restoreHome();
+    await caps.restore();
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
+});
+
+test("[opt Phase 1] telemetry：sink 目录不可写不阻塞工具路径（观测旁路红线）", async () => {
+  const blocker = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel-block-"));
+  const blockedFile = nodePath.join(blocker, "occupied");
+  await fsPromises.writeFile(blockedFile, "not-a-dir", "utf8");
+  const badDir = nodePath.join(blockedFile, "sub", "deeper");
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_SRC_TELEMETRY_DIR = badDir;
+  try {
+    const h = harness();
+    const parent = h.exec("tel-bad");
+    const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "sink fail" }, parent);
+    const intent = await h.run("src_add_intent", { title: "方向", detail: "d", goalId: goal.id }, parent);
+    const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "info", target: "x", detail: "d" }, parent);
+    assert.equal(fact.id, "fact-1", "sink 全失败时工具路径照常返回");
+  } finally {
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+    await fsPromises.rm(blocker, { recursive: true, force: true });
+  }
+});
+
+test("[opt Phase 1] telemetry：DSH_SRC_TELEMETRY=off 完全不落盘", async () => {
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel4-"));
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  const prevFlag = process.env.DSH_SRC_TELEMETRY;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  process.env.DSH_SRC_TELEMETRY = "off";
+  try {
+    const h = harness();
+    const parent = h.exec("tel-off");
+    await h.run("src_add_goal", { target: "https://example.test", objective: "off" }, parent);
+    await h.run("src_add_intent", { title: "方向", detail: "d", goalId: "goal-1" }, parent);
+    const rows = await readTelemetryRows(telDir);
+    assert.equal(rows.length, 0, "off 时零行");
+  } finally {
+    if (prevDir === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevDir;
+    if (prevFlag === undefined) delete process.env.DSH_SRC_TELEMETRY; else process.env.DSH_SRC_TELEMETRY = prevFlag;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
 });

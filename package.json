@@ -1,7 +1,7 @@
 {
   "name": "@lihua_dis/dsh-src",
   "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-  "version": "0.1.0-local.69",
+  "version": "0.1.0-local.70",
   "publishConfig": {
     "access": "public"
   },
@@ -64,7 +64,13 @@
     "ui-src:build": "cd src/dsh-client-ui-src && tsdown && cp dist/index.js ../../lib/ui-src.client.js"
   },
   "devDependencies": {
-    "js-yaml": "4.3.1"
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-session": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-storage": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-storage-domain": "0.1.0-rc.8",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
+    "js-yaml": "^4.3.2",
+    "zod": "4.4.3"
   },
   "repository": {
     "type": "git",
