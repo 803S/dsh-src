@@ -134,5 +134,91 @@ if (lessonsTotal > 20000) {
 	console.error(`::error file=preset/src-hunter/lessons/::内置 lessons 合计 ${lessonsTotal} 字符超 20k 预算（local.68 轮 2 防再膨胀）——先做减法再加约束`);
 	violations += 1;
 }
+
+/* [Phase 0.5] 参数对象重复键静态检查：JS 对象字面量后键覆盖前键（b410890 事故：src_add_finding
+ * victimImpact 重复定义，模型看到的是旧描述）。字符串/注释感知的括号深度扫描，同一括号深度下
+ * 重复属性键报 error。只扫工具 schema 对象（lib/src/tools/index.js）——其他文件的对象字面量
+ * 大量模板插值，误报风险高，超出本检查的范围。 */
+function findDuplicateKeys(source) {
+	const lineOf = (pos) => source.slice(0, pos).split("\n").length;
+	/* 预建行首偏移表，避免 O(n²) 切片 */
+	const lineStarts = [0];
+	for (let i = 0; i < source.length; i++) if (source[i] === "\n") lineStarts.push(i + 1);
+	const lineAt = (pos) => { let lo = 0, hi = lineStarts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (lineStarts[mid] <= pos) lo = mid; else hi = mid - 1; } return lo + 1; };
+	let depth = 0, inString = null, escaped = false;
+	let lastCodeChar = ""; /* 正则字面量二义性判断用（除法 vs 正则）：取前一个非空白代码字符 */
+	/* keyStack 每层一个 Map：key -> 首次出现行号 */
+	const keyStack = [new Map()];
+	const duplicates = [];
+	/* pendingKey：刚扫到的标识符（潜在属性键），遇到 ':' 落锤 */
+	let pendingKey = null, pendingPos = -1, pendingDepth = -1;
+	const flushKey = () => { pendingKey = null; };
+	for (let i = 0; i < source.length; i++) {
+		const ch = source[i];
+		if (inString !== null) {
+			if (escaped) { escaped = false; continue; }
+			if (ch === "\\") { escaped = true; continue; }
+			if (inString === "`" && ch === "$") { /* 模板插值：跳过 ${...} 内容（brace 初始 0，内层字符串跳过） */
+				let brace = 0, j = i + 1;
+				while (j < source.length && brace > 0) { const c = source[j]; if (c === "{") brace += 1; else if (c === "}") brace -= 1; else if (c === "\"" || c === "'" || c === "`") { const q = c; j += 1; while (j < source.length && source[j] !== q) { if (source[j] === "\\") j += 1; j += 1; } } j += 1; }
+				j += 1;
+				i = j; continue;
+			}
+			if (ch === inString) inString = null;
+			continue;
+		}
+		if (ch === "\"" || ch === "'" || ch === "`") { inString = ch; escaped = false; flushKey(); lastCodeChar = ch; continue; }
+		if (ch === "/" && source[i + 1] === "/") { while (i < source.length && source[i] !== "\n") i += 1; continue; }
+		if (ch === "/" && source[i + 1] === "*") { i += 2; while (i < source.length && !(source[i] === "*" && source[i + 1] === "/")) i += 1; i += 1; continue; }
+		if (ch === "/") {
+			/* 正则字面量（启发式）：前一个代码字符是表达式位置起始符时视为正则；否则是除法（当普通代码）。
+			   字符类 [...] 内的 / 不收尾；正则内的 {} 不会失衡括号计数。误判代价=漏检（好过误报）。 */
+			const exprStart = "(,=:[!&|?{;>+-*%^~".includes(lastCodeChar) || lastCodeChar === "" || lastCodeChar === "}" || lastCodeChar === "]" && false;
+			if (exprStart) {
+				let j = i + 1, inClass = false, e = false;
+				while (j < source.length) {
+					const c = source[j];
+					if (e) { e = false; }
+					else if (c === "\\") e = true;
+					else if (c === "[") inClass = true;
+					else if (c === "]") inClass = false;
+					else if (c === "/" && !inClass) break;
+					else if (c === "\n") { j = i; break; } /* 行内未闭合——回退当除法处理 */
+					j += 1;
+				}
+				if (j > i && j < source.length) { i = j + 1; flushKey(); continue; } /* 跳过正则及 flags */
+			}
+			lastCodeChar = "/"; flushKey(); continue;
+		}
+		if (ch === "{" ) { depth += 1; keyStack.push(new Map()); flushKey(); lastCodeChar = ch; continue; }
+		if (ch === "}") { if (depth > 0) { depth -= 1; keyStack.pop(); } flushKey(); lastCodeChar = ch; continue; }
+		if (/[A-Za-z_$]/.test(ch) && pendingKey === null) {
+			let j = i; while (j < source.length && /[A-Za-z0-9_$]/.test(source[j])) j += 1;
+			pendingKey = source.slice(i, j); pendingPos = i; pendingDepth = depth; i = j - 1; continue;
+		}
+		if (ch === ":" && pendingKey !== null) {
+			/* 属性键落锤：同一层重复即报（三元/函数体里的标签等场景在此文件 schema 区不出现） */
+			if (pendingDepth === depth) {
+				const map = keyStack[keyStack.length - 1];
+				if (map.has(pendingKey)) duplicates.push({ key: pendingKey, firstLine: map.get(pendingKey), dupLine: lineAt(pendingPos) });
+				else map.set(pendingKey, lineAt(pendingPos));
+			}
+			flushKey();
+			lastCodeChar = ch;
+			continue;
+		}
+		if (!/[A-Za-z0-9_$]/.test(ch) && ch !== ".") { flushKey(); if (!/\s/.test(ch)) lastCodeChar = ch; }
+	}
+	return duplicates;
+}
+{
+	const toolsSource = readFileSync(join(root, "lib/src/tools/index.js"), "utf8");
+	const dups = findDuplicateKeys(toolsSource);
+	for (const d of dups.slice(0, 20)) {
+		console.error(`::error file=lib/src/tools/index.js::L${d.dupLine} 属性键 "${d.key}" 重复定义（首次 L${d.firstLine}）——后键覆盖前键，删除旧键（Phase 0.5 防复发闸）`);
+	}
+	if (dups.length > 20) console.error(`::error file=lib/src/tools/index.js::另有 ${dups.length - 20} 处重复键未列出`);
+	if (dups.length > 0) violations += dups.length;
+}
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
 console.log(`check-preset-consistency: lessons 预算 OK（内置 ${Object.keys(LESSON_BUDGETS).length + extraLessons.length} 篇合计 ${lessonsTotal} ≤ 20000）`);

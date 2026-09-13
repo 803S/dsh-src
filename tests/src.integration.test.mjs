@@ -1532,6 +1532,31 @@ test("[local.25→67 #11b] finding 准入闸：low 未授权可达+PoC 即入库
   await assert.rejects(() => h.run("src_update_finding", { findingId: finding.id, severity: "info" }, parent), /invalid arguments|info/);
 });
 
+test("[Phase 0.5] 子代理路径：src_submit 提交三要素全缺的 low finding 入库（#11b 语义贯通）", async () => {
+  const h = harness();
+  const parent = h.exec("p05");
+  const child = h.exec("c05", "p05");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "Phase 0.5 子代理路径回归", authorization: "SRC" }, parent);
+  const intent = await h.run("src_add_intent", { title: "未授权探测", detail: "d", goalId: "goal-1" }, parent);
+  const result = await h.run("src_submit", {
+    intentId: intent.id, stage: "completed", summary: "未授权可达",
+    facts: [], assets: [],
+    findings: [{
+      title: "用户查询接口未授权可达",
+      severity: "low",
+      impact: "攻击者无需认证直接 GET /api/users/query 即可分页批量枚举全体用户手机号与姓名，可被用于精准诈骗与撞库，覆盖全量注册用户",
+      affectedScope: "/api/users/query",
+      remediation: "接口补会话鉴权",
+      pocEvidence: ["GET /api/users/query -> 200 用户列表"],
+      reproducibleSteps: ["GET /api/users/query"]
+    }]
+  }, child);
+  assert.ok(result, "子代理 low finding（victimImpact/concreteLossEvidence 均缺）通过 src_submit 入库");
+  const state = await h.run("src_state", {}, parent);
+  const f = state.findings.find((row) => row.title === "用户查询接口未授权可达");
+  assert.ok(f, "finding 落到父会话状态");
+});
+
 test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；缺失时给占位提示；finalize 缺 victimImpact 警告", async () => {
   process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
