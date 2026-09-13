@@ -149,7 +149,8 @@ if (jsonMode) {
 		http: { requests: httpRows.length, replays: httpRows.filter((r) => payloadOf(r).replay === true).length, byStatus: Object.fromEntries([...statusMap.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))), topHosts: [...hostMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([h, c]) => ({ host: h, count: c })), responseBytes: httpBytes },
 		volume: { payloadChars, tokenEstimate },
 		duplicates: duplicates.map(([key, n]) => ({ key, count: n })),
-		recoveries
+		recoveries,
+		orchestrator: { suggestions: suggestions.length, byKind: Object.fromEntries([...suggestionByKind.entries()].sort()), comparison }
 	}, null, 2));
 	process.exit(0);
 }
@@ -184,3 +185,9 @@ if (duplicates.length === 0) console.log(`  无`);
 for (const [key, n] of duplicates) console.log(`  ×${n}  ${key}`);
 console.log(`-- orphan 恢复（intent.recovered）--`);
 console.log(`  ${recoveries.length === 0 ? "无" : recoveries.join(", ")}`);
+console.log(`-- orchestrator shadow：建议 vs 实际（[Phase 3]）--`);
+if (suggestions.length === 0) console.log(`  无建议事件（DSH_SRC_ORCHESTRATOR=off 或尚无 src_state 观测点）`);
+else {
+  console.log(`  建议合计 ${suggestions.length}（${[...suggestionByKind.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}:${n}`).join(", ")}）`);
+  for (const c of comparison) console.log(`  ${c.intentId}: 建议[${c.suggested.join(",") || "-"}] vs 实际[${c.actual.join(",") || "-"}]`);
+}

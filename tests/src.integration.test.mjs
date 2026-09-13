@@ -4987,3 +4987,97 @@ test("[opt Phase 1] telemetry：DSH_SRC_TELEMETRY=off 完全不落盘", async ()
     await fsPromises.rm(telDir, { recursive: true, force: true });
   }
 });
+
+/* ==================== [opt Phase 3] Orchestrator shadow（优化手册 2026-09-12 §6） ==================== */
+/* 范围：纯函数迁移校验 + src_state 观测点建议事件（旁路），不执行任何状态写入（on 模式属
+   基线「明确不做」）。验收：①状态机表外迁移拒绝 ②幂等键去重 ③五类建议可产出 ④off 零
+   开销且工具返回值不变 ⑤shadow 建议事件可写 JSONL 并进对比报表。 */
+
+test("[opt Phase 3] transitions 状态机：表外迁移拒绝、终态零出边、非法输入拒绝", async () => {
+  const t = await import("../lib/src/orchestrator/transitions.js");
+  assert.equal(t.canTransition("planned", "queued"), true);
+  assert.equal(t.canTransition("running", "waiting-approval"), true);
+  assert.equal(t.canTransition("orphaned", "recovered"), true);
+  assert.equal(t.canTransition("recovered", "queued"), true);
+  assert.equal(t.canTransition("completed", "running"), false, "终态零出边");
+  assert.equal(t.canTransition("planned", "running"), false, "跳过 queued 不可达");
+  assert.equal(t.canTransition("bogus", "queued"), false, "未知 from 拒绝");
+  assert.equal(t.canTransition("planned", "bogus"), false, "未知 to 拒绝");
+  assert.match(String(t.transitionViolation("planned", "bogus")), /unknown to-status/);
+  assert.match(String(t.transitionViolation("planned", "planned")), /self-transition/);
+});
+
+test("[opt Phase 3] scheduler/recovery 纯函数：五类建议、幂等去重、orphan 30min 规则", async () => {
+  const { computeSuggestions } = await import("../lib/src/orchestrator/scheduler.js");
+  const rec = await import("../lib/src/orchestrator/recovery.js");
+  const now = 1_700_000_000_000;
+  const plan = computeSuggestions({
+    intents: [
+      { id: "intent-1", status: "running", childSessionId: "c1" },
+      { id: "intent-2", status: "planned" },
+      { id: "intent-3", status: "running" }
+    ],
+    checkpoints: [{ id: "cp-1", intentId: "intent-1", childSessionId: "c1", stage: "progress", createdAt: now - rec.ORPHAN_PROGRESS_MAX_AGE_MS - 1 }],
+    pendingApprovals: [{ id: "approval-1", status: "pending", intentId: "intent-3" }],
+    userTodos: [{ id: "userTodo-1", status: "pending", intentId: "intent-3" }],
+    now
+  });
+  // intent-1: running+stale checkpoint→orphan(stale)；intent-2: planned→enqueue；
+  // intent-3: running 无 checkpoint→orphan(no-checkpoint) + approval-wait + user-todo
+  assert.ok(plan.suggestions.some((s) => s.kind === "enqueue" && s.intentId === "intent-2"), "planned→enqueue");
+  assert.ok(plan.suggestions.some((s) => s.kind === "approval-wait" && s.intentId === "intent-3"), "pending 审批→waiting-approval");
+  assert.ok(plan.suggestions.some((s) => s.kind === "user-todo" && s.intentId === "intent-3"), "pending 待办→blocked");
+  const orphans = plan.suggestions.filter((s) => s.kind === "orphan-recover");
+  assert.equal(orphans.length, 2, "intent-1 stale + intent-3 no-checkpoint 各一条 orphan 建议");
+  assert.ok(orphans.some((s) => s.intentId === "intent-1" && s.reason.includes("stale-progress")), "stale checkpoint 规则命中");
+  assert.ok(orphans.some((s) => s.intentId === "intent-3" && s.reason === "no-checkpoint"), "无 checkpoint running 直接候选");
+  assert.ok(plan.suggestions.every((s) => s.id.startsWith("sugg-")), "建议 id 用 sugg- 前缀（不冒充可执行 job）");
+  assert.ok(!plan.suggestions.some((s) => s.kind === "finalize"), "仍有 open intent/审批/待办时不产 finalize");
+  // 全部终态 → finalize
+  const plan2 = computeSuggestions({ intents: [{ id: "intent-1", status: "completed" }], checkpoints: [], pendingApprovals: [], userTodos: [], now });
+  assert.ok(plan2.suggestions.some((s) => s.kind === "finalize"), "全终态且无 pending → finalize 建议");
+  // 幂等：同 kind+intent 重复输入只留一条（dedupeKey）
+  const plan3 = computeSuggestions({ intents: [{ id: "intent-1", status: "planned" }, { id: "intent-1", status: "planned" }], checkpoints: [], pendingApprovals: [], userTodos: [], now });
+  assert.equal(plan3.suggestions.filter((s) => s.kind === "enqueue").length, 1, "同键建议幂等去重");
+  // orphan：无 checkpoint 的 running 直接候选（沿用 src_recover_child 语义）
+  const cands = rec.detectOrphanCandidates({ intents: [{ id: "i9", status: "running" }], checkpoints: [], now });
+  assert.deepEqual(cands.map((c) => c.reason), ["no-checkpoint"]);
+});
+
+test("[opt Phase 3] src_state 观测点：shadow 发建议事件 + orchestration 视图附 shadowSuggestions；off 零开销", async () => {
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-orch1-"));
+  const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;
+  const prevOrch = process.env.DSH_SRC_ORCHESTRATOR;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  process.env.DSH_SRC_ORCHESTRATOR = "shadow";
+  try {
+    const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+    __resetSharedDomainOpensForTests();
+    const h = harness();
+    const parent = h.exec("orch1");
+    await h.run("src_add_goal", { target: "https://example.test", objective: "Phase 3 shadow 回归", authorization: "授权测试" }, parent);
+    await h.run("src_add_intent", { title: "方向甲", detail: "d", goalId: "goal-1" }, parent);
+    await h.run("src_add_intent", { title: "方向乙", detail: "d", goalId: "goal-1" }, parent);
+    // 观测点：src_state 触发 shadow 建议
+    const st = await h.run("src_state", { detail: "orchestration" }, parent);
+    assert.ok(Array.isArray(st.shadowSuggestions) && st.shadowSuggestions.length >= 2, "orchestration 视图附 shadowSuggestions");
+    assert.ok(st.shadowSuggestions.every((s) => s.kind === "enqueue" && s.from === "planned" && s.to === "queued"), "planned intent 全部产 enqueue 建议");
+    // 旁路事件落 JSONL（同一 dedupeKey 在多次观测点重复发射，报表侧按 key 去重）
+    const sugRows = await readTelemetryRows(telDir, "orchestrator.suggestion");
+    assert.ok(sugRows.length >= 2, "shadow 模式下建议事件旁路落盘");
+    assert.ok(sugRows.every((r) => typeof r.payload.dedupeKey === "string" && r.payload.dedupeKey.includes("enqueue")), "建议行带幂等键");
+    // v2 summary 视图不带 shadowSuggestions（决策最小）
+    const sum = await h.run("src_state", { detail: "summary" }, parent);
+    assert.equal(sum.shadowSuggestions, undefined, "summary 视图不附建议（决策最小）");
+    // 工具返回值行为不变：off 模式下 orchestration 视图无 shadowSuggestions 字段
+    process.env.DSH_SRC_ORCHESTRATOR = "off";
+    const stOff = await h.run("src_state", { detail: "orchestration" }, parent);
+    assert.equal(stOff.shadowSuggestions, undefined, "off 模式零开销（无该字段）");
+    const legacy = await h.run("src_state", {}, parent);
+    assert.equal(legacy.version, undefined, "off 模式 legacy 视图与 local.72 完全一致");
+  } finally {
+    if (prevOrch === undefined) delete process.env.DSH_SRC_ORCHESTRATOR; else process.env.DSH_SRC_ORCHESTRATOR = prevOrch;
+    delete process.env.DSH_SRC_TELEMETRY_DIR;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
+});
