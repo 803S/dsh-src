@@ -1557,6 +1557,71 @@ test("[Phase 0.5] 子代理路径：src_submit 提交三要素全缺的 low find
   assert.ok(f, "finding 落到父会话状态");
 });
 
+test("[Phase 2] src_state v2 结构化视图 + src_get_evidence：索引化省 token，finding 证据永不裁剪", async () => {
+  process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("p2");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "Phase 2 结构化视图回归", authorization: "授权测试" }, parent);
+  const intent = await h.run("src_add_intent", { title: "接口未授权", detail: "d", goalId: "goal-1" }, parent);
+  // 最早的证据 fact（会被 recent 12 挤出，被 finding 引用 → 永不裁剪）
+  const factOld = await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: "最早的证据 fact（会被 recent 12 挤出）" }, parent);
+  for (let i = 0; i < 30; i += 1) await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: `GET /api/p${i} 未授权可达返回 200 用户列表片段证据${i}` }, parent);
+  const finding = await h.run("src_add_finding", { intentId: intent.id, title: "未授权枚举", severity: "low", impact: "攻击者可批量枚举用户。", affectedScope: "/api", remediation: "加鉴权", pocEvidence: [factOld.id], reproducibleSteps: ["curl /api"] }, parent);
+  // ① 默认（无 flag）→ v1 legacy：无 version 字段，facts 数组在场
+  const legacy = await h.run("src_state", {}, parent);
+  assert.ok(legacy.version === undefined && Array.isArray(legacy.facts), "默认仍输出 v1 legacy 视图");
+  // ② 非法 detail 值 → schema 闸直接拒（enum 校验）
+  await assert.rejects(
+    () => h.run("src_state", { detail: "bogus" }, parent),
+    /detail/,
+  );
+  // ③ summary：索引化，≤12 条 recent，omitted 计数，finding 证据指针全量在场
+  const summary = await h.run("src_state", { detail: "summary" }, parent);
+  assert.equal(summary.version, 2);
+  assert.equal(summary.view, "summary");
+  assert.ok(summary.evidenceIndex.recent.length <= 12, "recent ≤ 12");
+  assert.ok(!summary.evidenceIndex.recent.includes(factOld.id), "最早证据已被 recent 挤出（保证下一条断言有意义）");
+  assert.ok(summary.evidenceIndex.byIntent[intent.id].count === 31, "byIntent 全量计数");
+  assert.equal(summary.evidenceIndex.omitted, 31 - summary.evidenceIndex.recent.length, "omitted 计数正确");
+  assert.ok(summary.findings.some((row) => row.id === finding.id && row.evidence.includes(factOld.id)), "finding 证据指针永不裁剪");
+  assert.ok(summary.nextActions.some((row) => row.id === intent.id), "open intent 进 nextActions");
+  // ④ token 省略 ≥60%：summary 体积 < legacy 40%
+  const legacyChars = JSON.stringify(legacy).length;
+  const summaryChars = JSON.stringify(summary).length;
+  assert.ok(summaryChars < legacyChars * 0.4, `summary ${summaryChars} chars < legacy ${legacyChars} chars × 0.4`);
+  // ⑤ evidence / orchestration 视图
+  const evidence = await h.run("src_state", { detail: "evidence" }, parent);
+  assert.equal(evidence.view, "evidence");
+  assert.ok(evidence.recentFacts.length <= 12 && evidence.recentFacts.every((row) => typeof row.detail === "string"), "evidence 视图带事实全文");
+  const orchestration = await h.run("src_state", { detail: "orchestration" }, parent);
+  assert.equal(orchestration.view, "orchestration");
+  assert.ok(Array.isArray(orchestration.delegationState) && Array.isArray(orchestration.userTodos), "orchestration 视图带委托/待办");
+  // ⑥ src_get_evidence：混合 id + 未找到
+  const got = await h.run("src_get_evidence", { ids: [factOld.id, finding.id, "fact-999"] }, parent);
+  assert.equal(got.items.length, 3);
+  assert.ok(got.items[0].found && got.items[0].content.includes("最早的证据"), "fact 正文可拉取");
+  assert.ok(got.items[1].found && got.items[1].content.includes("未授权枚举"), "finding 正文可拉取");
+  assert.equal(got.items[2].found, false, "未知 id found:false");
+  // ⑦ 大 fact 截断：默认 4KB，full 放宽
+  const bigFact = await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: "X".repeat(9000) }, parent);
+  const trimmed = await h.run("src_get_evidence", { ids: [bigFact.id] }, parent);
+  assert.ok(trimmed.items[0].truncated === true && trimmed.items[0].content.length < 9000, "默认 4KB 截断");
+  const fullGot = await h.run("src_get_evidence", { ids: [bigFact.id], full: true }, parent);
+  assert.ok(fullGot.items[0].truncated === false && fullGot.items[0].content.length > 9000, "full:true 放宽");
+  // ⑧ DSH_SRC_STATE_VERSION=2 → 默认切 summary
+  const prevFlag = process.env.DSH_SRC_STATE_VERSION;
+  try {
+    process.env.DSH_SRC_STATE_VERSION = "2";
+    const byFlag = await h.run("src_state", {}, parent);
+    assert.equal(byFlag.version, 2, "flag=2 时默认输出 summary");
+  } finally {
+    if (prevFlag === undefined) delete process.env.DSH_SRC_STATE_VERSION;
+    else process.env.DSH_SRC_STATE_VERSION = prevFlag;
+  }
+});
+
 test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；缺失时给占位提示；finalize 缺 victimImpact 警告", async () => {
   process.env.DSH_SRC_LESSONS_DIR = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
@@ -3985,7 +4050,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 		"src_test_capability", "src_read_capability", "src_run_capability", "src_fetch_policy", "src_set_infra",
 		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
 		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
-		"src_add_finding", "src_add_asset", "src_state", "src_graph", "src_finalize_engagement", "src_report",
+		"src_add_finding", "src_add_asset", "src_state", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",
 		"src_update_finding", "src_reject_finding", "src_resolve_approval", "src_request_asset_confirm",
 		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve"
 	], "拆包前必须冻结当前工具名称和注册顺序");
