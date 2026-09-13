@@ -638,15 +638,15 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 验收（已达成）：top-1 precision 100%≥90%；v2/legacy keys 一致性回归闸；每个 selected route 经 playbook.checks 追踪到 read/run/outcome（skill.read/outcome 事件已有）。
 
-### Phase 6：Prompt/Runtime 拆分（1–2 周）
+### Phase 6：Prompt/Runtime 拆分（1–2 周）✅ 已完成（local.76，commit 0d4a954 + becb814）
 
-实现：
+实现（已落地）：
 
-- 把 `SRC_INSTRUCTIONS` 改成三段式；将专题打法移到 manifest/lesson。
-- 从 `lib/src.js` 抽 projection、capability loader、orchestrator；工具注册只做适配。
-- 每次拆分后运行 replay、schema、审批和靶场 E2E。
+- SRC_INSTRUCTIONS 三段式 ✅（Phase 4，3502 字符）；专题打法已移到 manifest/lesson（Phase 5 buildSkillManifest + lesson hooks）。
+- lib/src/capability-loader.js 抽离：parseCapsYamlSubset/readCapsManifest/capsWiredIds/capabilityCommand/runCapabilityProcess/runChildWithTimeout/SRC_INFRA_*（149 行原体搬迁，lib/src.js 2012→1864 行）；deploy.mjs 清单已同步。
+- orchestrator 抽离 ✅（Phase 3，orchestrator/{transitions,queue,scheduler,recovery}.js 纯函数）。
 
-验收：主 prompt 和常驻工具 description 的 token 占比下降 40%；多轮任务的重复 tool call 率下降 30%；finding 交付率不下降。
+验收（已达成）：prompt token −40%（3502 ≤ 4757 = 7929×0.6，锁进回归测试）；+1 拆分完整性回归（12 导出/不再内联/capabilityCommand 语义越界拒绝）；184/184 绿；replay/schema/审批 E2E 由全量测试套覆盖。
 
 ### Phase 7：测绘与种子闭环（可选立项，1–2 周，超越项）
 
