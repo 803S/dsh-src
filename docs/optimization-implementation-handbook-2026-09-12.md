@@ -534,6 +534,8 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 ## 10. Store、事件和 Projection 收敛
 
+> ✅ **已完成（local.77）**：src_events 表（srcDomainSpec version 12→13，zod schema id/sessionId/eventType/eventId/payload/createdAt）+ 5 条写路径插桩（addNode/edges/updateIntent/addCheckpoint/resolvePendingApproval，均先 appendEvent 再 put 快照）+ 幂等键 aggregateId:aggregateVersion:eventType + 纯 reducer 双折叠（replaySrcEvents/reducerStateHash FNV-1a/doubleFold）+ 五条一致性断言（assertStoreProjectionConsistency，src_state 观测点 shadow 发 projection.divergence，永不阻塞）+ DSH_SRC_EVENT_STORE off|shadow|on 开关（默认 off，零新增写入；修复 enabled() 真值判断 bug——"off" 是 truthy，改显式 `=== "off"`）。新模块 lib/src/event-store.js，lib/src.js 只留接线。4 条新增测试；188/188 全绿 + check-preset-consistency OK。
+
 ### 10.1 迁移策略
 
 不直接重写 `lib/src.js` 的 projection。分四步：
