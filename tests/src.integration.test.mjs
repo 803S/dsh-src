@@ -5207,3 +5207,29 @@ test("[local.75 Phase 5] route shadow evaluator：人工标注集 precision/reca
     await fsPromises.rm(telDir, { recursive: true, force: true });
   }
 });
+
+/* ==================== [local.76 Phase 6] Prompt/Runtime 拆分验收 ==================== */
+test("[local.76 Phase 6] capability-loader 拆分完整导出 + prompt token 占比 −40% 验收", async () => {
+  // 拆分模块导出完整（capability loader + infra defaults 从 lib/src.js 抽出）
+  const loader = await import("../lib/src/capability-loader.js");
+  for (const name of ["SRC_INFRA_DEFAULTS", "SRC_INFRA_KEYS", "SRC_INFRA_LABELS", "dshHomeOf", "readCapsManifest", "capsWiredIds", "capabilityCommand", "runCapabilityProcess", "runChildWithTimeout", "parseCapsYamlSubset", "parseInlineYamlArray", "stripYamlScalar"]) {
+    assert.ok(typeof loader[name] !== "undefined", `capability-loader 导出 ${name}`);
+  }
+  // lib/src.js 不再内联定义（拆分彻底）
+  const { readFileSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+  const srcJs = readFileSync(resolve(root, "lib/src.js"), "utf8");
+  assert.ok(!srcJs.includes("function runCapabilityProcess"), "runCapabilityProcess 已抽离 lib/src.js");
+  assert.ok(!srcJs.includes("const SRC_INFRA_DEFAULTS"), "SRC_INFRA_DEFAULTS 已抽离 lib/src.js");
+  // orchestrator 拆分（Phase 3）同样不内联
+  assert.ok(!srcJs.includes("function computeSuggestions"), "computeSuggestions 已抽离 lib/src.js");
+  // prompt token 占比验收：SRC_INSTRUCTIONS ≤ 原始 7929 的 60%（−40%）
+  const pStart = srcJs.indexOf("const SRC_INSTRUCTIONS = `\\") + "const SRC_INSTRUCTIONS = `\\".length;
+  const proto = srcJs.slice(pStart, srcJs.indexOf("`;", pStart));
+  assert.ok(proto.length <= 7929 * 0.6, `SRC_INSTRUCTIONS ${proto.length} 字符未达 −40% 验收（≤4757）`);
+  // capabilityCommand 语义回归（拆分后行为不变）
+  assert.deepEqual(loader.capabilityCommand("/tmp/caps", "x.js"), { command: process.execPath, args: ["/tmp/caps/x.js"] });
+  assert.ok(loader.capabilityCommand("/tmp/caps", "../etc/passwd").error, "路径越界仍拒绝");
+  assert.ok(loader.capabilityCommand("/tmp/caps", "x.exe").error, "未知扩展名仍拒绝");
+});
