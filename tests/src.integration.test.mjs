@@ -733,6 +733,8 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_add_goal", { target: "https://app.example.test", objective: "通过", authorization: "SRC" }, p2);
   await h.run("src_add_intent", { title: "越权", goalId: "goal-1" }, p2);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, p2);
+  /* [local.79] 闸一 fixture 修复：completed intent 须有 completed checkpoint（child 经 src_submit 回流） */
+  await h.run("src_submit", { intentId: "intent-1", stage: "completed", summary: "越权验证完成", facts: [], assets: [], findings: [] }, h.exec("child79full", "full"));
   const factEvidence3 = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET /resume?id=2 -> 200 {\"id\":2,\"name\":\"他人\"}", confidence: 0.9 }, p2)).id;
   await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}", victimImpact: "任意学生的简历隐私数据被陌生人读取，存在被诈骗与骚扰风险且无从察觉", attackPrerequisites: "攻击者仅需普通账号并遍历简历 ID，无管理权限", concreteLossEvidence: [factEvidence3] }, p2);
   await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p2);
@@ -1964,6 +1966,8 @@ test("[local.20/68] finalize remainingDirections 必填：缺失抛错、非空�
   await h.run("src_add_goal", { target: "example.test", objective: "方向闸", authorization: "t" }, parent);
   await h.run("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
   await h.run("src_update_intent", { intentId: "intent-1", status: "completed" }, parent);
+  /* [local.79] 闸一 fixture 修复：补 completed checkpoint */
+  await h.run("src_submit", { intentId: "intent-1", stage: "completed", summary: "recon 完成", facts: [], assets: [], findings: [] }, h.exec("child79g20b", "g20b"));
   await assert.rejects(() => h.run("src_finalize_engagement", {}, parent), /remainingDirections/);
   const listed = await h.run("src_finalize_engagement", { remainingDirections: ["深挖 /api/admin 越权", "GraphQL schema 复核"], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   /* [local.68 #6] 非空方向从拒绝降为逐条警告；无其他 blocker 时应直接 ready。 */
@@ -4678,6 +4682,8 @@ test("[local.68 #19 尾款] 靶场端到端产出：未授权可达端点探测�
     /* ② 端到端入库：intent→fact→finding（#11b：low 未授权可达+PoC 即入库） */
     const intent = await h.run("src_add_intent", { title: "未授权访问验证", goalId: "goal-1" }, parent);
     await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
+    /* [local.79] 闸一 fixture 修复：补 completed checkpoint（child 经 src_submit 回流） */
+    await h.run("src_submit", { intentId: intent.id, stage: "completed", summary: "未授权访问验证完成", facts: [], assets: [], findings: [] }, h.exec("child79l68", "l68e2e"));
     const fact = await h.run("src_add_fact", { intentId: intent.id, kind: "http", detail: `无认证 GET ${range.url}/api/v1/users/query -> 200 敏感数据（无任何鉴权头）`, confidence: 0.95 }, parent);
     const f1 = await h.run("src_add_finding", {
       intentId: intent.id,
@@ -5408,4 +5414,69 @@ test("[local.78 接口对账] endpointsTotal/Tested 入库 + finalize 对账闸�
   const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   const overclaim = fin3.blockers.find((b) => b.includes("对不上") && b.includes("dom-xhr"));
   assert.ok(overclaim, `虚报 tested 应触发 blocker（got: ${fin3.blockers.join(" | ")}）`);
+});
+
+/* ===================== [local.79] 覆盖硬闸三件套 ===================== */
+
+test("[local.79] finalize 闸一：completed intent 无 completed checkpoint 为 blocker；src_submit 补后消失", async () => {
+  const h = harness();
+  const parent = h.exec("p79a");
+  const child = h.exec("child79a", "p79a");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "checkpoint completeness gate" }, parent);
+  const intent = await h.run("src_add_intent", { title: "前端 JS bundle 解析与 API 端点测绘", goalId: "goal-1" }, parent);
+  /* 模拟 a3c0672c 会话：intent 标 completed 但委派结果从未回流（零 checkpoint） */
+  await h.run("src_update_intent", { intentId: intent.id, status: "completed" }, parent);
+  const blocked = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  assert.equal(blocked.ready, false, "completed 无 checkpoint 应阻断 finalize");
+  assert.ok(blocked.blockers.some((b) => b.includes(intent.id) && /checkpoint/.test(b)), `blocker 应含 intent id 与 checkpoint 文本（got: ${blocked.blockers.join(" | ")}）`);
+  /* 经 src_submit(stage=completed) 补委派回流（child 会话写库唯一路径），blocker 消失 */
+  await h.run("src_submit", { intentId: intent.id, stage: "completed", summary: "bundle 解析完成，测绘出 12 个端点", facts: [], assets: [], findings: [] }, child);
+  const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  assert.ok(!ok.blockers.some((b) => b.includes(intent.id) && /checkpoint/.test(b)), "补 completed checkpoint 后 blocker 消失");
+});
+
+test("[local.79] finalize 闸二B：goal 域外 candidate 主机型资产无范围待办 → warning；建扩范围待办后消失", async () => {
+  const h = harness();
+  const parent = h.exec("p79b");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "external candidate escalation" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "hkhub-attend.neighbour.test", source: "crt.sh", method: "passive", confidence: 0.8, status: "candidate" }, parent);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "范围外资产待用户拍板" }, parent);
+  assert.ok(fin.warnings.some((w) => /范围决策待办/.test(w) && /neighbour\.test/.test(w)), `范围外候选应出 warning（got: ${fin.warnings.join(" | ")}）`);
+  /* 建 pending 范围决策待办后 warning 消失 */
+  await h.run("src_user_todo", { title: "扩范围：neighbour.test 是否纳入授权", kind: "decision", detail: "请拍板是否扩大授权范围覆盖 neighbour.test" }, parent);
+  const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "范围外资产待用户拍板" }, parent);
+  assert.ok(!fin2.warnings.some((w) => /范围决策待办/.test(w)), "有范围待办后 warning 消失");
+  /* goal 同域 candidate 不触发（守范围不误伤；范围待办保持 pending 即可豁免） */
+  await h.run("src_add_asset", { type: "subdomain", value: "api.example.test", source: "DNS", method: "passive", confidence: 0.9, status: "candidate" }, parent);
+  const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "同域收尾" }, parent);
+  assert.ok(!fin3.warnings.some((w) => /范围决策待办/.test(w)), "goal 同域 candidate 不触发范围警告");
+});
+
+test("[local.79] finalize 闸二A：confirmed 资产零 coverage 零提及 → warning；补含 host 的 fact 后消失", async () => {
+  const h = harness();
+  const parent = h.exec("p79c");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "confirmed asset reconciliation" }, parent);
+  const intent = await h.run("src_add_intent", { title: "单域测绘", goalId: "goal-1" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "cas.example.test", source: "crt.sh", method: "passive", confidence: 1, status: "confirmed" }, parent);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "资产对账待确认" }, parent);
+  assert.ok(fin.warnings.some((w) => /已 confirmed 但没有任何 coverage 行绑定/.test(w) && /cas\.example\.test/.test(w)), `confirmed 零覆盖应出 warning（got: ${fin.warnings.join(" | ")}）`);
+  /* 补一条 detail 含该 host 的 fact（弱文本关联即视为已提及） */
+  await h.run("src_add_fact", { intentId: intent.id, kind: "http", target: "https://cas.example.test/cas/login", detail: "cas.example.test 登录页存在 CAS 反射问题候选" }, parent);
+  const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "资产对账待确认" }, parent);
+  assert.ok(!fin2.warnings.some((w) => /已 confirmed 但没有任何 coverage 行绑定/.test(w) && /cas\.example\.test/.test(w)), "fact 文本提及 host 后 warning 消失");
+});
+
+test("[local.79] finalize 闸三：coverage 有对账数字但 observations 稀疏 → 通道收归 warning", async () => {
+  const h = harness();
+  const parent = h.exec("p79d");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "observation sparsity warning" }, parent);
+  await h.run("src_add_intent", { title: "接口探测", goalId: "goal-1" }, parent);
+  await h.run("src_record_coverage", { phase: "web", category: "http-authz-surface", status: "completed", endpointsTotal: 30, endpointsTested: 30, endpointsSkipped: [] }, parent);
+  await h.run("src_record_observation", { intentId: "intent-1", path: "/checkLogin", httpStatus: 200, source: "manual" }, parent);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "遥测稀疏收尾" }, parent);
+  assert.ok(fin.warnings.some((w) => /绕过 src_http/.test(w)), `observations 稀疏应出通道收归 warning（got: ${fin.warnings.join(" | ")}）`);
+  /* 补足 observations 到 ≥5 后 warning 消失 */
+  for (let i = 0; i < 5; i++) await h.run("src_record_observation", { intentId: "intent-1", method: "POST", path: `/api/replay/${i}`, httpStatus: 200, source: "manual" }, parent);
+  const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "遥测补足收尾" }, parent);
+  assert.ok(!fin2.warnings.some((w) => /绕过 src_http/.test(w)), "observations ≥5 后通道收归 warning 消失");
 });
