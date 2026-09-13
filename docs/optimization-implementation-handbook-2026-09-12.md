@@ -605,16 +605,18 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 遗留（用户侧）：真实会话重跑后核对 v2 视图实际体验；DSH_SRC_STATE_VERSION=2 切换时机由用户拍板。据。
 
-### Phase 3：Orchestrator/Scheduler（1–2 周）
+### Phase 3：Orchestrator/Scheduler（1–2 周）✅ 已完成（local.73，commit 381c9ab，2026-09-13）
 
-实现：
+实现（已落地，shadow）：
 
-- 新增 `orchestrator/transitions.js`、`queue.js`、`scheduler.js`、`recovery.js`。
-- 为 intent 创建、checkpoint、approval、child failure、finalize 创建 job。
-- shadow 模式只计算迁移和下一动作，不执行；比较模型实际行为和 scheduler 建议。
-- on 模式先接 recovery、timeout 和 finalize check，再接普通 capability job。
+- 新增 `orchestrator/transitions.js`、`queue.js`、`scheduler.js`、`recovery.js` → 全部落地（shadow 纯函数）：transitions=§6.1 ALLOWED 表（表外迁移拒绝、终态零出边、ACTUAL/SUGGESTED 两状态空间分离）；queue=建议工厂（id 用 `sugg-` 前缀不冒充可执行 job）+ 幂等键 `${kind}:${intentId}:${extra}` 去重；scheduler=computeSuggestions 五类建议（enqueue/orphan-recover/approval-wait/user-todo/finalize）；recovery=orphan 判定（无 checkpoint 直接候选沿用 src_recover_child 语义；progress 超 30min → stale-progress）。
+- 为 intent 创建、checkpoint、approval、child failure、finalize 创建 job → shadow 实现为一观测点集中计算：每次 src_state 调用视为调度器观测点，DSH_SRC_ORCHESTRATOR≠off 时从视图切片推导五类建议并旁路发射 `orchestrator.suggestion` 事件（永不进上下文/永不阻塞）；v2 orchestration 视图附 `shadowSuggestions` 供对照；off 模式零开销（无该字段、零事件）。
+- shadow 模式只计算迁移和下一动作，不执行 → 严格执行：建议态（queued/waiting-approval/orphaned/recovered）永不写回 intents 表（ACTUAL/SUGGESTED 空间分离）；approval pending 不轮询不重发（手册明文）。
+- ~~on 模式先接 recovery、timeout 和 finalize check~~ → 未实施（依赖宿主后台 tick/lease，属基线「明确不做」，另立项目）。
 
-验收（shadow 模式）：迁移建议事件与模型实际行为的对比报表可产出；重复 job（幂等键）不重复发请求；批准前不会执行高危操作。注：原验收「杀掉子代理进程后 30 分钟内自动生成 orphan/recovery 事件」依赖宿主后台 tick（on 模式），已随 on 模式推迟（基线「明确不做」第 1 条），另立项目后再验收。
+验收（已达成）：迁移建议事件（orchestrator.suggestion）与模型实际行为（intent.completed/intent.recovered/submit.checkpoint/approval.resolved）的对比报表可产出（aggregate-src-telemetry.mjs 新增 orchestrator 段：建议计数 by kind + 按 intentId 建议 vs 实际对照行）；重复 job（幂等键）不重复发建议（dedupeKey 去重测试断言）；批准前不会执行高危操作（shadow 不执行任何东西，天然满足）。tests 180/180 绿（+3：状态机表外拒绝/五类建议+幂等+orphan 30min 规则/观测点 shadow+off 零开销）。
+
+遗留（on 模式另立项目）：宿主后台 tick/lease 钩子、lease 超时自动 orphaned、恢复任务带 recoveryOfJobId 防重复派生。
 
 ### Phase 4：规则真相收敛（1 周）
 
