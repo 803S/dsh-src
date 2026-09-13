@@ -5081,3 +5081,56 @@ test("[opt Phase 3] src_state 观测点：shadow 发建议事件 + orchestration
     await fsPromises.rm(telDir, { recursive: true, force: true });
   }
 });
+
+/* ==================== [local.73 Phase 4] 规则真相收敛：四类冲突场景 contract test ==================== */
+test("[local.73 Phase 4] contract test：finding/approval/finalize/scope 四类冲突服务端 gate 优先（不依赖 prompt 文本）", async () => {
+  // 规则目录存在且每条 enforcedBy 规则都有标注（Phase 4 交付物）
+  const { readFileSync } = await import("node:fs");
+  const { resolve, dirname } = await import("node:path");
+  const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
+  const catalog = readFileSync(resolve(root, "docs/rules-catalog.md"), "utf8");
+  for (const rule of ["finding 准入", "HTTP 授权闸", "finalize 硬拦", "资产清单即许可"]) {
+    assert.ok(catalog.includes(rule), `规则目录含「${rule}」`);
+  }
+  assert.ok(catalog.includes("enforcedBy") && catalog.includes("historicalSource"), "目录标注 enforcedBy/historicalSource");
+
+  const h = harness();
+  const parent = h.exec("contract-parent");
+  const prevHome = process.env.DSH_HOME;
+  await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-contract-")).then((d) => { process.env.DSH_HOME = d; });
+  try {
+    await h.run("src_add_goal", { target: "https://contract.test", objective: "gate 优先验证", authorization: "SRC" }, parent);
+    const intent = await h.run("src_add_intent", { title: "越权面", hypothesis: "越权" }, parent);
+    // ① finding：medium 缺三要素 → 服务端拒绝（与 prompt/Skill 文本无关）
+    await assert.rejects(
+      () => h.run("src_add_finding", { intentId: intent.id, title: "CORS 缺三要素", severity: "medium", impact: "配置不安全", affectedScope: "全站", remediation: "收紧", pocEvidence: ["e"], reproducibleSteps: ["GET /"] }, parent),
+      /victimImpact|concreteLossEvidence|attackPrerequisites/,
+      "medium 缺三要素服务端 gate 拒绝"
+    );
+    // ② scope：主域外未登记 host → 探测被服务端范围校验拒绝
+    await assert.rejects(
+      () => h.run("src_collect_dorks", { intentId: intent.id, domain: "contract-elsewhere.com" }, parent),
+      /outside the authorized goal host/,
+      "范围外探测服务端拒绝"
+    );
+    // ③ finalize：pending 待办未处理 → 服务端硬拦 = ready:false + blockers（不是 reject；「收益递减」不能替代枚举）
+    await h.run("src_user_todo", { title: "需要登录态", detail: "登录 contract.test 提供 cookie", kind: "auth-session", intentId: intent.id }, parent);
+    const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [] }, parent);
+    assert.equal(fin.ready, false, "pending 待办未处理 finalize 硬拦（ready:false）");
+    assert.ok(fin.blockers.some((b) => /待办/.test(b)), "blockers 含未完成待办项");
+    // ③' allowIncomplete 无 reason → 服务端拒绝（受限声明硬错误）
+    await assert.rejects(
+      () => h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [], allowIncomplete: true }, parent),
+      /allowIncompleteReason/,
+      "allowIncomplete 缺 reason 服务端拒绝"
+    );
+    // ④ approval：主 agent 自身 HTTP 挂起闸行为不变（approval 判据在 src_http，见 4131 号测试族回归）
+    const srcJs = readFileSync(resolve(root, "lib/src.js"), "utf8");
+    const pStart = srcJs.indexOf("const SRC_INSTRUCTIONS = `\\") + "const SRC_INSTRUCTIONS = `\\".length;
+    const proto = srcJs.slice(pStart, srcJs.indexOf("`;", pStart));
+    assert.ok(proto.includes("禁止绕行") && proto.includes("资产清单即许可"), "收敛后 prompt 仍保留四类不可编码原则的索引句");
+    assert.ok(proto.length <= 5000, "SRC_INSTRUCTIONS 收敛后 ≤5k（Phase 4 目标区间）");
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+  }
+});
