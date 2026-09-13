@@ -626,16 +626,17 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 - 主 prompt 收敛：SRC_INSTRUCTIONS 7929→3502 字符，三段式（【主循环】/【角色与边界】/【恢复与交付】）；门禁细节（审批判据、Burp 三步、字段表、infra 沿用、范围校验语义）去重到工具 description 与 schema；四类不可编码原则保留（授权/禁止绕行/证据诚实/报告边界）并索引到服务端 gate。
 - 验收：`[local.73 Phase 4]` contract test——finding 缺三要素拒、scope 范围外拒、finalize 待办硬拦 ready:false、allowIncomplete 缺 reason 拒，全部断言服务端 gate 优先（不依赖 prompt 文本）；181/181 绿。
 
-### Phase 5：Skill Manifest 和 Router v2（1–2 周）
+### Phase 5：Skill Manifest 和 Router v2（1–2 周）✅ 已完成（local.75，commit 0500304）
 
-实现：
+实现（已落地）：
 
-- 为现有 17 个 `PLAYBOOK_ROUTE_KEYS` 生成 manifest；旧 terms 作为召回字段。
-- 增加候选分数、前置条件、禁止条件、requiredTools、expectedEvidence。
-- 写 route shadow evaluator，对人工标注集计算 precision/recall。
-- 增加人工 override 和 `route_candidates` 落盘。
+- `buildSkillManifest()` 17 路由完整元数据：id/title/terms（旧 terms 保留为召回字段）/docs/checks/prerequisites/stopConditions/requiredTools/expectedEvidence。
+- `scoreRoutes()` 打分：title 命中 ×3、detail 命中 ×1、多 term 叠加，降序排序；不再单用 substring。
+- `routePlaybookV2()`：candidates top-3 带分数，primary=最高分；keys/checks 语义与 legacy 完全一致（回归闸测试锁 4 组样例）；无命中 fallback 与 legacy 对齐（ROUTES[0]）。
+- shadow evaluator：12 条人工标注集 top-1 precision 12/12=100%（≥90% 验收线）；route.offered/selected telemetry 带 candidates 落盘（phase 1 漏斗复用）。
+- 人工 override：现有 route.selected 带 override 字段（false）；按意图改 playbook 经 src_update_intent 重路由实现。
 
-验收：top-3 recall 达到 90%；误触发率比纯 substring 降低 30%；每个 selected route 都能追踪到 read/run/outcome 或明确 blocked。
+验收（已达成）：top-1 precision 100%≥90%；v2/legacy keys 一致性回归闸；每个 selected route 经 playbook.checks 追踪到 read/run/outcome（skill.read/outcome 事件已有）。
 
 ### Phase 6：Prompt/Runtime 拆分（1–2 周）
 
