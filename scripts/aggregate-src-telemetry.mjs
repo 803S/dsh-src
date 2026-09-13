@@ -139,6 +139,21 @@ const recoveries = rows.filter((r) => r.event === "intent.recovered").map((r) =>
 const times = rows.map((r) => Number(r.occurredAt ?? 0)).filter((n) => n > 0);
 const window = times.length > 0 ? `${new Date(Math.min(...times)).toISOString()} → ${new Date(Math.max(...times)).toISOString()}` : "n/a";
 
+/* ---- orchestrator shadow 建议聚合（json/文本两模式共用；必须在 jsonMode 块前声明防 TDZ）----
+   [local.78 修复] 原 L153/L189 引用未定义变量必崩（ReferenceError），orchestrator 段无论何种模式都报表炸。 */
+const suggestions = rows.filter((r) => r.event === "orchestrator.suggestion");
+const suggestionByKind = new Map();
+for (const row of suggestions) { const k = r0(payloadOf(row).kind); suggestionByKind.set(k, (suggestionByKind.get(k) ?? 0) + 1); }
+const selectedBySession = new Map();
+for (const row of rows.filter((r) => r.event === "route.selected")) {
+	if (!selectedBySession.has(row.sessionId)) selectedBySession.set(row.sessionId, []);
+	selectedBySession.get(row.sessionId).push(r0(payloadOf(row).primary));
+}
+const suggestionComparison = [...new Set(suggestions.map((r) => r0(payloadOf(r).intentId)))].slice(0, 8).map((intentId) => {
+	const suggested = [...new Set(suggestions.filter((r) => r0(payloadOf(r).intentId) === intentId).map((r) => r0(payloadOf(r).to)))];
+	return { intentId, suggested, actual: selectedBySession.get(intentId) ?? [] };
+});
+
 if (jsonMode) {
 	console.log(JSON.stringify({
 		dir: telemetryDir, files, rows: rows.length, window,
@@ -150,7 +165,7 @@ if (jsonMode) {
 		volume: { payloadChars, tokenEstimate },
 		duplicates: duplicates.map(([key, n]) => ({ key, count: n })),
 		recoveries,
-		orchestrator: { suggestions: suggestions.length, byKind: Object.fromEntries([...suggestionByKind.entries()].sort()), comparison }
+		orchestrator: { suggestions: suggestions.length, byKind: Object.fromEntries([...suggestionByKind.entries()].sort()), comparison: suggestionComparison }
 	}, null, 2));
 	process.exit(0);
 }
@@ -189,5 +204,5 @@ console.log(`-- orchestrator shadow：建议 vs 实际（[Phase 3]）--`);
 if (suggestions.length === 0) console.log(`  无建议事件（DSH_SRC_ORCHESTRATOR=off 或尚无 src_state 观测点）`);
 else {
   console.log(`  建议合计 ${suggestions.length}（${[...suggestionByKind.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}:${n}`).join(", ")}）`);
-  for (const c of comparison) console.log(`  ${c.intentId}: 建议[${c.suggested.join(",") || "-"}] vs 实际[${c.actual.join(",") || "-"}]`);
+  for (const c of suggestionComparison) console.log(`  ${c.intentId}: 建议[${c.suggested.join(",") || "-"}] vs 实际[${c.actual.join(",") || "-"}]`);
 }
