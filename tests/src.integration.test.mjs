@@ -5381,3 +5381,31 @@ test("[local.77 §10] src_state 观测点 shadow 发 projection.divergence + 工
   }
   flags.resetFlagsForTests();
 });
+
+test("[local.78 接口对账] endpointsTotal/Tested 入库 + finalize 对账闸（声明与 observations 对不上即 blocker）", async () => {
+  const h = harness();
+  const parent = h.exec("p78");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "endpoint audit reconciliation" }, parent);
+  /* 1) 带对账数字的 coverage 行入库 */
+  const cov = await h.run("src_record_coverage", { phase: "web", category: "http-authz-surface", status: "completed", endpointsTotal: 30, endpointsTested: 6, endpointsSkipped: ["/a/b", "/c/d"] }, parent);
+  assert.ok(cov.id, "coverage 带 endpoints 数字入库");
+  const st = await h.run("src_state", {}, parent);
+  const row = st.coverage.find((c) => c.category === "http-authz-surface");
+  assert.equal(row.endpointsTotal, 30, "endpointsTotal 持久化");
+  assert.equal(row.endpointsTested, 6, "endpointsTested 持久化");
+  assert.deepEqual(row.endpointsSkipped, ["/a/b", "/c/d"], "endpointsSkipped 持久化");
+  /* 2) finalize 对账：tested=6 < total=30 且 skipped 只有 2 → 对账缺口 blocker */
+  await h.run("src_add_intent", { title: "Surface audit", detail: "recon scope" }, parent);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  const gapBlocker = fin.blockers.find((b) => b.includes("对账缺口"));
+  assert.ok(gapBlocker, `对账缺口应触发 blocker（got: ${fin.blockers.join(" | ")}）`);
+  /* 3) 补齐 skipped 后缺口消失 */
+  await h.run("src_record_coverage", { phase: "web", category: "http-authz-surface", status: "blocked", endpointsTotal: 30, endpointsTested: 6, endpointsSkipped: Array.from({ length: 24 }, (_, i) => `/ep/${i}`) }, parent);
+  const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  assert.ok(!fin2.blockers.some((b) => b.includes("对账缺口")), "补齐 skipped 后缺口消失");
+  /* 4) claimed > observations 去重数 → 虚报 blocker（无 observations 时 tested>0 即触发） */
+  await h.run("src_record_coverage", { phase: "web", category: "dom-xhr", status: "completed", endpointsTotal: 10, endpointsTested: 8, endpointsSkipped: ["/x"] }, parent);
+  const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
+  const overclaim = fin3.blockers.find((b) => b.includes("对不上") && b.includes("dom-xhr"));
+  assert.ok(overclaim, `虚报 tested 应触发 blocker（got: ${fin3.blockers.join(" | ")}）`);
+});
