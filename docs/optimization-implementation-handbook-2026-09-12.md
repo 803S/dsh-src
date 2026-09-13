@@ -618,15 +618,13 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 遗留（on 模式另立项目）：宿主后台 tick/lease 钩子、lease 超时自动 orphaned、恢复任务带 recoveryOfJobId 防重复派生。
 
-### Phase 4：规则真相收敛（1 周）
+### Phase 4：规则真相收敛（1 周）✅ 已完成（local.74，commit 0d90cf3 + docs b6ad9e4）
 
-实现：
+实现（已落地）：
 
-- 建规则目录清单，给每条规则标 `enforcedBy`、`explainedBy`、`historicalSource`。
-- 删除主 prompt 和 Skill 中重复的 schema 门禁；把工具 description 改为参数/错误修复指引。
-- 保留授权、禁止绕行、证据诚实和报告边界四类不可编码行为原则。
-
-验收：对 finding、approval、finalize、scope 四类冲突场景做 contract test；修改 store 门禁后无需同步多份同义文本。
+- 规则目录清单 `docs/rules-catalog.md`：服务端强制/工具层/经验库三层，逐条标 `enforcedBy`/`explainedBy`/`historicalSource`。
+- 主 prompt 收敛：SRC_INSTRUCTIONS 7929→3502 字符，三段式（【主循环】/【角色与边界】/【恢复与交付】）；门禁细节（审批判据、Burp 三步、字段表、infra 沿用、范围校验语义）去重到工具 description 与 schema；四类不可编码原则保留（授权/禁止绕行/证据诚实/报告边界）并索引到服务端 gate。
+- 验收：`[local.73 Phase 4]` contract test——finding 缺三要素拒、scope 范围外拒、finalize 待办硬拦 ready:false、allowIncomplete 缺 reason 拒，全部断言服务端 gate 优先（不依赖 prompt 文本）；181/181 绿。
 
 ### Phase 5：Skill Manifest 和 Router v2（1–2 周）
 
