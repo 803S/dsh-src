@@ -5233,3 +5233,151 @@ test("[local.76 Phase 6] capability-loader 拆分完整导出 + prompt token 占
   assert.ok(loader.capabilityCommand("/tmp/caps", "../etc/passwd").error, "路径越界仍拒绝");
   assert.ok(loader.capabilityCommand("/tmp/caps", "x.exe").error, "未知扩展名仍拒绝");
 });
+
+/* ==================== [local.77 §10] Store/事件/Projection 收敛 ==================== */
+test("[local.77 §10] 事件落盘先 append 后快照 + 幂等键去重 + off 零新增写入", async () => {
+  const eventStore = await import("../lib/src/event-store.js");
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  /* --- off 模式（默认）：零新增表写入 --- */
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+  assert.equal(flags.srcEventStoreFlag(), "off", "event store 默认 off");
+  const h = harness();
+  const parent = h.exec("parent");
+  const child = h.exec("child", "parent");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment", authorization: "ticket-42" }, parent);
+  await h.run("src_add_intent", { title: "Map public endpoints", detail: "passive and low impact", goalId: "goal-1" }, parent);
+  await h.run("src_submit", { intentId: "intent-1", stage: "progress", summary: "初批", facts: [{ kind: "http", target: "https://example.test", detail: "GET /health returns 200", confidence: "95%" }] }, child);
+  assert.equal(h.domain.table("src_events").entries().next().done, true, "off 模式零新增 src_events 写入");
+  /* --- shadow 模式：先 append 后快照，幂等键去重 --- */
+  process.env.DSH_SRC_EVENT_STORE = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_EVENT_STORE = "shadow";
+  __resetSharedDomainOpensForTests();
+  const h2 = harness();
+  const parent2 = h2.exec("parent");
+  const child2 = h2.exec("child", "parent");
+  await h2.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment", authorization: "ticket-42" }, parent2);
+  await h2.run("src_add_intent", { title: "Map public endpoints", detail: "passive and low impact", goalId: "goal-1" }, parent2);
+  const factWrite = await h2.run("src_submit", { intentId: "intent-1", stage: "progress", summary: "初批", facts: [{ kind: "http", target: "https://example.test", detail: "GET /health returns 200", confidence: "95%" }] }, child2);
+  assert.ok(factWrite.facts === 1, "src_submit 落 1 条 fact");
+  const eventRows = [...h2.domain.table("src_events").entries()].map(([, row]) => row);
+  /* sessionId 从 payload 内（领域记录自带）落库（事件 schema 要求非空 id）。 */
+  assert.ok(eventRows.length >= 3, `shadow 模式事件已落盘（${eventRows.length} 行）`);
+  /* 每行结构：eventId/aggregateId/aggregateVersion/eventType/payload/createdAt（§10.1 步骤 1） */
+  for (const row of eventRows) {
+    assert.ok(typeof row.eventId === "string" && row.eventId !== "", "事件行含 eventId");
+    assert.ok(typeof row.aggregateId === "string" && row.aggregateId !== "", "事件行含 aggregateId");
+    assert.ok(Number.isInteger(row.aggregateVersion) && row.aggregateVersion >= 1, "事件行含 aggregateVersion≥1");
+    assert.ok(typeof row.eventType === "string" && row.eventType.includes("."), "事件行含 eventType（kind.action）");
+    assert.ok(row.payload !== void 0 && typeof row.payload === "object", "事件行含 payload");
+    assert.ok(typeof row.payload?.sessionId === "string" && row.payload.sessionId !== "", "事件 payload 含非空 sessionId");
+    assert.ok(Number.isInteger(row.createdAt), "事件行含 createdAt");
+  }
+  /* 快照与事件 payload 一致（先 append 后快照 → payload=最终记录） */
+  const factEvent = eventRows.find((row) => row.eventType === "fact.appended");
+  assert.ok(factEvent !== void 0, "fact.appended 事件存在");
+  assert.equal(factEvent.payload.detail, "GET /health returns 200", "事件 payload 与快照一致");
+  assert.equal(factEvent.payload.id, "fact-1", "事件 payload id 与写入返回一致");
+  /* 幂等键去重：同 (aggregateId, aggregateVersion, eventType) 只落一次 */
+  const append = eventStore.createSrcEventRecorder(h2.domain);
+  const first = await append.appendEvent(h2.domain, { aggregateId: "intent-1", aggregateVersion: 2, eventType: "intent.upserted", payload: { id: "intent-1", sessionId: "s1", status: "planned" } });
+  assert.equal(first.appended, true, "首次 append 落盘");
+  const second = await append.appendEvent(h2.domain, { aggregateId: "intent-1", aggregateVersion: 2, eventType: "intent.upserted", payload: { id: "intent-1", sessionId: "s1", status: "running" } });
+  assert.equal(second.appended, false, "同幂等键不重复追加");
+  assert.equal(second.duplicate, true, "返回 duplicate（§10.2）");
+  /* 事件行数与快照行数对应：重放 id 集合与 store 表 id 集合一致 */
+  const factIds = [...h2.domain.table("facts").entries()].map(([, row]) => row.id).sort();
+  const factEventIds = eventRows.filter((row) => row.eventType === "fact.appended").map((row) => row.payload.id).sort();
+  assert.deepEqual(factEventIds, factIds, "事件与快照 id 集合一致");
+  flags.resetFlagsForTests();
+});
+
+test("[local.77 §10] reducer 纯函数：同序列 fold 两次 hash 相同 + duplicate eventId 不重复追加（§10.2）", async () => {
+  const eventStore = await import("../lib/src/event-store.js");
+  const events = [
+    { eventId: "e1", aggregateId: "intent-1", aggregateVersion: 1, eventType: "intent.upserted", payload: { id: "intent-1", sessionId: "s1", status: "planned", title: "t" }, createdAt: 1 },
+    { eventId: "e2", aggregateId: "fact-1", aggregateVersion: 1, eventType: "fact.appended", payload: { id: "fact-1", sessionId: "s1", intentId: "intent-1", detail: "d" }, createdAt: 2 },
+    { eventId: "e3", aggregateId: "intent-1", aggregateVersion: 2, eventType: "intent.upserted", payload: { id: "intent-1", sessionId: "s1", status: "running", title: "t" }, createdAt: 3 },
+    { eventId: "e4", aggregateId: "finding-1", aggregateVersion: 1, eventType: "finding.upserted", payload: { id: "finding-1", sessionId: "s1", title: "f", status: "active" }, createdAt: 4 },
+    { eventId: "e5", aggregateId: "checkpoint-1", aggregateVersion: 1, eventType: "checkpoint.appended", payload: { id: "checkpoint-1", sessionId: "s1", intentId: "intent-1", stage: "completed" }, createdAt: 5 },
+    { eventId: "e6", aggregateId: "approval-1", aggregateVersion: 1, eventType: "approval.resolved", payload: { id: "approval-1", sessionId: "s1", status: "approved" }, createdAt: 6 }
+  ];
+  const first = eventStore.replaySrcEvents(eventStore.createEmptyReducerState(), events);
+  const second = eventStore.replaySrcEvents(eventStore.createEmptyReducerState(), events);
+  assert.equal(eventStore.reducerStateHash(first.state), eventStore.reducerStateHash(second.state), "同序列 fold 两次 hash 相同（纯函数）");
+  /* duplicate eventId 不重复追加 */
+  const dup = eventStore.replaySrcEvents(eventStore.createEmptyReducerState(), [...events, events[0]]);
+  assert.equal(dup.duplicates, 1, "重复 eventId 计为 duplicate");
+  assert.equal(eventStore.reducerStateHash(dup.state), eventStore.reducerStateHash(first.state), "duplicate 不改变状态（不重复追加）");
+  /* doubleFold 端到端：identical=true */
+  const rec = eventStore.createSrcEventRecorder(undefined);
+  const fakeDomain = { table: () => ({ get: () => void 0, put: async () => {}, entries: function* () { for (const e of events) yield ["k", e]; } }) };
+  const df = await rec.doubleFold(fakeDomain);
+  assert.equal(df.identical, true, "doubleFold 两遍 hash 相同");
+  assert.equal(df.duplicates, 0, "无 duplicate");
+  /* 未知 eventType 前向兼容：登记幂等但不动状态 */
+  const withUnknown = eventStore.replaySrcEvents(eventStore.createEmptyReducerState(), [...events, { eventId: "e7", aggregateId: "x-9", aggregateVersion: 1, eventType: "future.kind", payload: {} }]);
+  assert.equal(eventStore.reducerStateHash(withUnknown.state), eventStore.reducerStateHash(first.state), "未知 eventType 不动领域状态");
+});
+
+test("[local.77 §10] 五条一致性断言（§10.3）：active finding/pending approval/completed intent/evidence link/projection id", async () => {
+  const { assertStoreProjectionConsistency } = await import("../lib/src/event-store.js");
+  /* 一致状态：零 divergence */
+  const consistent = assertStoreProjectionConsistency({
+    intents: [{ id: "intent-1", status: "planned" }, { id: "intent-2", status: "completed" }],
+    findings: [{ id: "finding-1", status: "active" }],
+    checkpoints: [{ id: "checkpoint-1", intentId: "intent-2", stage: "completed" }],
+    pendingApprovals: [{ id: "approval-1", status: "pending" }],
+    allRows: [{ id: "intent-1", sessionId: "s1" }, { id: "intent-2", sessionId: "s1" }, { id: "finding-1", sessionId: "s1" }, { id: "approval-1", sessionId: "s1" }]
+  }, {
+    findings: [{ id: "finding-1" }],
+    blockedReasons: ["approval-1 blocked"],
+    evidenceLinks: [{ sourceId: "intent-1", targetId: "finding-1" }],
+    allRows: [{ id: "intent-1" }, { id: "intent-2" }, { id: "finding-1" }, { id: "approval-1" }]
+  });
+  assert.deepEqual(consistent, [], "一致状态零 divergence");
+  /* 违例逐条：active finding 缺席 / pending approval 不在 blockedReasons / completed intent 无 checkpoint / 跨会话无标记 / projection 多出 id */
+  const violated = assertStoreProjectionConsistency({
+    intents: [{ id: "intent-1", status: "completed" }, { id: "intent-2", status: "completed", systemMigration: true }],
+    findings: [{ id: "finding-1", status: "active" }],
+    checkpoints: [],
+    pendingApprovals: [{ id: "approval-1", status: "pending" }],
+    allRows: [{ id: "finding-1", sessionId: "s1" }, { id: "approval-1", sessionId: "s2" }, { id: "intent-1", sessionId: "s1" }]
+  }, {
+    findings: [],
+    blockedReasons: ["别的阻塞原因"],
+    evidenceLinks: [{ sourceId: "finding-1", targetId: "approval-1" }],
+    allRows: [{ id: "finding-1" }, { id: "approval-1" }, { id: "intent-1" }, { id: "ghost-1" }]
+  });
+  const rules = violated.map((v) => v.rule).sort();
+  assert.deepEqual(rules, ["active-finding-in-projection", "completed-intent-has-completed-checkpoint", "evidence-link-same-engagement", "pending-approval-in-blockedReasons", "projection-id-exists-in-store"].sort(), `五条违例各触发一次（got: ${rules.join(",")}）`);
+  /* 系统迁移产生的 completed intent 豁免（§10.3-③ 除外条款） */
+  assert.ok(!violated.some((v) => v.detail.includes("intent-2")), "systemMigration=true 豁免");
+});
+
+test("[local.77 §10] src_state 观测点 shadow 发 projection.divergence + 工作流端到端五断言零违例", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { mkTelemetryDir } = await import("../lib/src/telemetry/events.js").catch(() => ({ mkTelemetryDir: void 0 }));
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_EVENT_STORE = "shadow";
+  const h = harness();
+  const parentEvents = [];
+  h.sessions.set("parent", { append(type, data) { parentEvents.push({ type, data }); } });
+  const parent = h.exec("parent");
+  const child = h.exec("child", "parent");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment", authorization: "ticket-42" }, parent);
+  await h.run("src_add_intent", { title: "Map public endpoints", detail: "passive and low impact", goalId: "goal-1" }, parent);
+  await h.run("src_submit", { intentId: "intent-1", stage: "completed", summary: "done", facts: [], assets: [], findings: [{ title: "Public diagnostic endpoint", severity: "low", description: "Exposes build metadata", impact: "Leaks deployment information", affectedScope: "Unauthenticated visitors to the health endpoint", remediation: "Remove build metadata from the response", pocEvidence: ["GET /health -> 200"], reproducibleSteps: ["GET /health"], victimImpact: "Unauthenticated visitors have deployment internals exposed and can be fingerprinted for targeted exploitation without awareness", attackPrerequisites: "Attacker needs only network access to the health endpoint; no authentication or user interaction required", concreteLossEvidence: [] }] }, child);
+  const state = await h.run("src_state", {}, parent);
+  assert.equal(state.intents[0].status, "completed", "工作流端到端正常");
+  /* 事件先 append 后快照：事件 id 集合与 store 表 id 集合对应（intent/finding） */
+  const rows = [...h.domain.table("src_events").entries()].map(([, row]) => row);
+  for (const kind of ["intent", "finding"]) {
+    const tableIds = [...h.domain.table(kind === "intent" ? "intents" : "findings").entries()].map(([, row]) => row.id).sort();
+    const eventIds = rows.filter((row) => row.eventType === `${kind}.appended` || row.eventType === `${kind}.upserted`).map((row) => row.payload.id).sort();
+    assert.deepEqual(eventIds, tableIds, `${kind} 事件与快照 id 集合一致`);
+  }
+  flags.resetFlagsForTests();
+});
