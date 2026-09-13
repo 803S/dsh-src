@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
 import { flushDefaultTelemetry } from "../lib/src/telemetry/events.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
-import { routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
+import { routePlaybookV2 as routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
 import { isJsonValue } from "@deepseek-ai/dsh-session";
 /* [local.54] 凭证库隔离：全测试默认指向临时 DSH_HOME，防止 src_add_test_account / src_http 自动入库
    把测试凭据写进真实 ~/.dsh/storages/src-credentials/。需要真实路径的测试自行覆盖后恢复。 */
@@ -5132,5 +5132,78 @@ test("[local.73 Phase 4] contract test：finding/approval/finalize/scope 四类�
     assert.ok(proto.length <= 5000, "SRC_INSTRUCTIONS 收敛后 ≤5k（Phase 4 目标区间）");
   } finally {
     if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+  }
+});
+
+/* ==================== [local.75 Phase 5] Skill Manifest + Router v2 ==================== */
+test("[local.75 Phase 5] manifest 17 路由完整元数据 + score 打分 + v2 与 legacy keys 一致", async () => {
+  const { buildSkillManifest, scoreRoutes, routePlaybookV2, routePlaybook, PLAYBOOK_ROUTE_KEYS } = await import("../lib/src/playbooks.js");
+  const manifest = buildSkillManifest();
+  assert.equal(manifest.length, 17, "manifest 覆盖全部 17 路由");
+  assert.deepEqual(manifest.map((m) => m.id), [...PLAYBOOK_ROUTE_KEYS], "manifest id 序 = ROUTES 定义序");
+  for (const m of manifest) {
+    assert.ok(m.title && m.terms.length > 0 && m.docs.length > 0, `${m.id} 带 title/terms/docs`);
+    assert.ok(Array.isArray(m.prerequisites) && Array.isArray(m.stopConditions) && Array.isArray(m.requiredTools) && Array.isArray(m.expectedEvidence), `${m.id} 四元数据齐全`);
+  }
+  // score：title 命中 > detail 命中
+  const scored = scoreRoutes("越权读取简历", "水平越权");
+  assert.equal(scored[0].key, "authorization", "title 命中排第一");
+  const byDetail = scoreRoutes("整理报告", "ssrf 回源探测");
+  assert.ok(byDetail.find((c) => c.key === "ssrf").score > 0, "detail 命中得正分");
+  // v2 与 legacy keys 一致（回归闸：playbook.attach 语义不变）
+  for (const [t, d] of [["越权读取简历", "水平越权"], ["上传文件绕过", ""], ["graphql introspection", "api 网关"], ["完全不相关", ""]]) {
+    assert.deepEqual(routePlaybookV2(t, d).keys, routePlaybook(t, d).keys, `「${t}」v2 keys 与 legacy 一致`);
+  }
+  // v2 candidates 带分数
+  const v2 = routePlaybookV2("ssrf 回源 webhook", "url 请求代理");
+  assert.ok(v2.candidates.length >= 1 && typeof v2.candidates[0].score === "number", "v2 candidates 带分数");
+  assert.equal(v2.keys[0], v2.candidates[0].id, "primary=最高分候选");
+});
+
+test("[local.75 Phase 5] route shadow evaluator：人工标注集 precision/recall + telemetry candidates 落盘", async () => {
+  const { routePlaybookV2 } = await import("../lib/src/playbooks.js");
+  /* 人工标注集（12 条典型意图，标注 = 应命中的 primary 路由）：shadow 评估 top-1 precision。 */
+  const labeled = [
+    ["子域名枚举与端口扫描", "", "recon"],
+    ["webpack bundle 混淆签名还原", "js 逆向提取接口", "js-reverse"],
+    ["水平越权遍历简历 id", "idor 换 id", "authorization"],
+    ["jwt 弱密钥与重置流程", "oauth 回调", "authentication"],
+    ["搜索框 sqli 时间盲注", "sql 注入差分", "injection"],
+    ["url 预览功能回源内网", "webhook ssrf", "ssrf"],
+    ["评论富文本存储 xss", "跨站脚本", "xss"],
+    ["转账接口无 token 校验", "跨站写", "csrf"],
+    ["cdn 缓存键欺骗", "cache poisoning", "cache-and-redirect"],
+    ["java 反序列化 rce", "命令执行", "execution-and-deserialization"],
+    ["上传头像 getshell 路径", "文件上传 bucket", "file-and-storage"],
+    ["优惠券金额篡改竞态", "业务逻辑支付", "business-logic"]
+  ];
+  let hit = 0;
+  for (const [title, detail, expected] of labeled) {
+    const r = routePlaybookV2(title, detail);
+    if (r.keys[0] === expected) hit += 1;
+  }
+  const precision = hit / labeled.length;
+  assert.ok(precision >= 0.9, `top-1 precision ${precision} (=${hit}/${labeled.length}) 达 90% 验收线`);
+  // telemetry：offered/selected 行带 candidates（v2 分数结构落盘）
+  const { mkdtemp } = await import("node:fs/promises");
+  const nodeOs = (await import("node:os")).default;
+  const telDir = await mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-tel-p5-"));
+  const prevTel = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_SRC_TELEMETRY_DIR = telDir;
+  const prevOrch = process.env.DSH_SRC_ORCHESTRATOR;
+  try {
+    const h = harness();
+    const parent = h.exec("p5-parent");
+    await h.run("src_add_goal", { target: "https://p5.test", objective: "路由验收", authorization: "SRC" }, parent);
+    await h.run("src_add_intent", { title: "水平越权遍历简历 id", detail: "idor 换 id", goalId: "goal-1" }, parent);
+    const offered = await readTelemetryRows(telDir, "route.offered");
+    assert.ok(offered.length >= 1, "route.offered 落盘");
+    assert.ok(Array.isArray(offered[0].payload.candidates), "offered.candidates 数组");
+    const selected = await readTelemetryRows(telDir, "route.selected");
+    assert.ok(selected.length >= 1 && selected[0].payload.skillId === "authorization", "selected.skillId=最高分路由");
+  } finally {
+    if (prevTel === undefined) delete process.env.DSH_SRC_TELEMETRY_DIR; else process.env.DSH_SRC_TELEMETRY_DIR = prevTel;
+    if (prevOrch === undefined) delete process.env.DSH_SRC_ORCHESTRATOR; else process.env.DSH_SRC_ORCHESTRATOR = prevOrch;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
   }
 });
