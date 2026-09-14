@@ -143,7 +143,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
   const report = await h.run("src_report", {}, parent);
-  assert.match(report.markdown, /子 Agent 检查点/);
+  assert.match(report.markdown, /## 漏洞发现/);
 });
 
 test("goal records scope details in objective", async () => {
@@ -193,8 +193,7 @@ test("asset observations, research matrix, and coverage survive state and report
   assert.equal(state.research[0].id, research.id);
   assert.equal(state.coverage[0].id, coverage.id);
   const report = await h.run("src_report", {}, parent);
-  assert.match(report.markdown, /资产与测试覆盖率/);
-  assert.match(report.markdown, /漏洞研究矩阵/);
+  assert.match(report.markdown, /## 测试范围与限制/);
   await h.run("src_add_asset", { type: "subdomain", value: "API.EXAMPLE.TEST", source: "DNS", method: "low-impact", confidence: 1, status: "confirmed" }, parent);
   const updated = await h.run("src_state", {}, parent);
   assert.equal(updated.assets.length, 1);
@@ -273,8 +272,7 @@ test("src_collect_passive records passive hints and coverage", async () => {
     assert.equal(state.facts.some((f) => /interface hint \/graphql/.test(f.detail)), true);
     assert.equal(state.assets.some((a) => a.value === "api.example.test"), true);
     const report = await h.run("src_report", {}, parent);
-    assert.match(report.markdown, /## API 发现摘要/);
-    assert.match(report.markdown, /API\/html-js-hint/);
+    assert.match(report.markdown, /## 测试范围与限制/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -519,8 +517,7 @@ test("full SRC engagement end-to-end: scope → passive → research → coverag
     const report = await h.run("src_report", {}, parent);
     assert.match(report.markdown, /受限完成声明/);
     assert.match(report.markdown, /e2e 演练停止/);
-    assert.match(report.markdown, /## API 发现摘要/);
-    assert.match(report.markdown, /## 漏洞研究矩阵/);
+    assert.match(report.markdown, /## 测试范围与限制/);
 
     // 6) state summary reflects the whole engagement
     const state = await h.run("src_state", {}, parent);
@@ -1933,7 +1930,7 @@ test("[capability] parseCapsYamlSubset 容错与折叠块", async () => {
   }
 });
 
-test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联豁免 + 报告尾节「等你的事」", async () => {
+test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联豁免 + 报告不含待办（local.82 瘦身后）", async () => {
   /* [local.65] 待办闸自身语义：仅由 agent 主动挂的待办触发。 */
   const h = harness();
   const parent = h.exec("g20");
@@ -1953,11 +1950,12 @@ test("[local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联�
   // allowIncomplete 越过两闸
   const allowed = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "用户指示暂停" }, parent);
   assert.equal(allowed.ready, true);
-  // 报告尾节：pending 待办 + blocked intent 都进「⏸ 等你的事」
+  // [local.82] 待办/挂起不再进报告（todos tab 职责）；报告只剩漏洞发现+范围限制
   const report = await h.run("src_report", {}, parent);
-  assert.match(report.markdown, /⏸ 等你的事/);
-  assert.match(report.markdown, /登录 shop\.example\.test 提供商家会话/);
-  assert.match(report.markdown, /intent-1\/登录态越权面/);
+  assert.doesNotMatch(report.markdown, /⏸ 等你的事/);
+  assert.match(report.markdown, /## 测试范围与限制/);
+  const st = await h.run("src_state", {}, parent);
+  assert.equal(st.userTodos.length, 1);
 });
 
 test("[local.20/68] finalize remainingDirections 必填：缺失抛错、非空逐条警告（#6 折中后不拦截）、空数组零噪音", async () => {
@@ -2041,7 +2039,7 @@ test("[local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派�
   ], allowIncomplete: true, allowIncompleteReason: "演示停止" }, parent);
   assert.equal(allowed.ready, true);
   const report = await h.run("src_report", {}, parent);
-  assert.match(report.markdown, /覆盖维度声明/);
+  assert.match(report.markdown, /## 测试范围与限制/);
   assert.match(report.markdown, /http-authz-surface: 已覆盖/);
   assert.match(report.markdown, /websocket: 未覆盖/);
   assert.match(report.markdown, /无 ws 客户端能力/);
@@ -3003,10 +3001,10 @@ test("[local.26] src_reject_finding 置 status=rejected + 备注；相似 title 
   assert.equal(st2.findings[0].status, "rejected");
   /* 相似 title 二次提交被闸拒绝 */
   await assert.rejects(() => h.run("src_add_finding", { intentId: intent.id, title: "账号删除漏洞", severity: "high", impact: "攻击者可删任意账号造成用户无法登录", victimImpact: "用户被删账号无法登录且无法察觉", attackPrerequisites: "需登录态且可指定 userId 遍历", concreteLossEvidence: [fe], affectedScope: "全量用户", remediation: "鉴权", pocEvidence: ["e"], reproducibleSteps: ["s"] }, parent), /已打回/);
-  /* 报告含「已打回」节 + 打回备注 */
+  /* [local.82] 报告瘦身：已打回节撤出（打回详情在 findings tab/state；二次提交闸仍生效） */
   const report = await h.run("src_report", {}, parent);
-  assert.ok(report.markdown.includes("## 已打回"), "报告含已打回节");
-  assert.ok(report.markdown.includes("没看懂，能梳理下攻击链吗？"), "报告含打回备注");
+  assert.doesNotMatch(report.markdown, /## 已打回/, "报告不再含已打回节（交付物瘦身）");
+  assert.ok(!report.markdown.includes("没看懂，能梳理下攻击链吗？"), "打回备注不进交付物");
   /* [local.27] 回归：打回后主漏洞清单不再含该 finding 的标题行（用户 bug：报告里还有） */
   const findingsSection = report.markdown.split("## 漏洞发现")[1].split("## ")[0];
   assert.ok(!findingsSection.includes("### finding-1"), "打回后主漏洞清单不含已打回 finding");
@@ -4547,7 +4545,7 @@ test("[local.67 #12] src_state 事实分级：只出最近 24 条与 P≥8 意�
   const graph = await h.run("src_graph", {}, parent);
   assert.equal(graph.graph.facts.length, 31, "src_graph 全量不受预算影响");
 });
-test("[local.67 #12] src_report 探索链路节同样分级：省略行带计数与 src_graph 指引；少图零变化", async () => {
+test("[local.82] src_report 交付物瘦身：事实 dump 不进报告（探索链路节已撤，#12 预算分级随之作废）", async () => {
   const h = harness();
   const parent = h.exec("g67budget2");
   await h.run("src_add_goal", { target: "xiaomi.test", objective: "#12 报告预算" }, parent);
@@ -4555,18 +4553,12 @@ test("[local.67 #12] src_report 探索链路节同样分级：省略行带计数
   for (let i = 1; i <= 30; i++) await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: `事实-${i}` }, parent);
   const report = await h.run("src_report", {}, parent);
   assert.doesNotMatch(report.markdown, /事实-1（?!）/);
-  assert.doesNotMatch(report.markdown, /\(fact fact-1\)/, "最老事实不进报告链路");
-  assert.match(report.markdown, /事实共 30 条/, "省略行带总数");
-  assert.match(report.markdown, /其余 6 条用 src_graph 查全量/, "src_graph 指引");
-  /* 少图（≤24 条）零变化：无省略行。 */
-  const h2 = harness();
-  const parent2 = h2.exec("g67budget3");
-  await h2.run("src_add_goal", { target: "xiaomi.test", objective: "少图" }, parent2);
-  const intent2 = await h2.run("src_add_intent", { title: "小图", hypothesis: "面" }, parent2);
-  await h2.run("src_add_fact", { intentId: intent2.id, kind: "info", detail: "唯一事实" }, parent2);
-  const report2 = await h2.run("src_report", {}, parent2);
-  assert.doesNotMatch(report2.markdown, /src_graph 查全量/, "少图无省略行");
-  assert.match(report2.markdown, /唯一事实/);
+  assert.doesNotMatch(report.markdown, /\(fact fact-\d+\)/, "事实链路行不进报告（交付物）");
+  assert.match(report.markdown, /## 漏洞发现/);
+  assert.match(report.markdown, /## 测试范围与限制/);
+  /* 全量数据仍可从 src_graph 取（运营面）。 */
+  const graph = await h.run("src_graph", {}, parent);
+  assert.ok(JSON.stringify(graph).includes("事实-30"), "全量事实在 src_graph 可取");
 });
 
 /* ==================== [local.67 #10] 防再膨胀预算闸（CI 检查同步进测试套） ==================== */
