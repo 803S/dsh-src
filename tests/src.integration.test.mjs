@@ -5480,3 +5480,164 @@ test("[local.79] finalize 闸三：coverage 有对账数字但 observations 稀�
   const fin2 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "遥测补足收尾" }, parent);
   assert.ok(!fin2.warnings.some((w) => /绕过 src_http/.test(w)), "observations ≥5 后通道收归 warning 消失");
 });
+
+/* ===================== [local.81] Phase 7 测绘种子闭环 ===================== */
+
+test("[local.81] T1 注册闸：flag off 无 src_survey_seed；shadow 后新 harness 有该工具", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+  assert.equal(flags.srcSurveyFlag(), "off", "survey 默认 off");
+  const offHarness = harness();
+  assert.equal(offHarness.tools.has("src_survey_seed"), false, "off 时工具不注册");
+  /* set→reset→再 set（resetFlagsForTests 会删 env，local.77 教训）。 */
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  assert.equal(flags.srcSurveyFlag(), "shadow", "shadow 生效");
+  const onHarness = harness();
+  assert.equal(onHarness.tools.has("src_survey_seed"), true, "shadow 时工具注册");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.81] T2 生命周期：add 去重 → next 弹 active → complete → done；list 计数", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("s81a");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "种子生命周期" }, parent);
+  const first = await h.run("src_survey_seed", { action: "add", value: "alpha.example.com" }, parent);
+  assert.equal(first.duplicate, false, "首次入队非重复");
+  const second = await h.run("src_survey_seed", { action: "add", value: "alpha.example.com" }, parent);
+  assert.equal(second.duplicate, true, "同 value 二次入队去重");
+  assert.equal(second.id, first.id, "去重返回同一 id");
+  const list1 = await h.run("src_survey_seed", { action: "list" }, parent);
+  assert.equal(list1.counts.pending, 1, "list pending 计数");
+  const next = await h.run("src_survey_seed", { action: "next" }, parent);
+  assert.equal(next.id, first.id, "next 弹出最早 pending");
+  const list2 = await h.run("src_survey_seed", { action: "list" }, parent);
+  assert.equal(list2.counts.active, 1, "next 后置 active");
+  assert.equal(list2.counts.pending, 0, "pending 清零");
+  const done = await h.run("src_survey_seed", { action: "complete", seedId: first.id, outcome: "exhausted" }, parent);
+  assert.equal(done.status, "done", "complete(exhausted) → done");
+  const list3 = await h.run("src_survey_seed", { action: "list" }, parent);
+  assert.equal(list3.counts.done, 1, "list done 计数");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.81] T3 一种子闭环闸：active 未处置活面时 next 拒绝；补 coverage 后放行", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("s81b");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "一种子闭环" }, parent);
+  await h.run("src_survey_seed", { action: "add", value: "example.com" }, parent);
+  await h.run("src_survey_seed", { action: "next" }, parent);
+  const asset = await h.run("src_add_asset", { type: "subdomain", value: "sub.example.com", source: "crt.sh", method: "passive", confidence: .5, status: "confirmed" }, parent);
+  const blocked = await h.run("src_survey_seed", { action: "add", value: "beta.example.com" }, parent);
+  assert.equal(blocked.duplicate, false, "新种子入队不受 active 未闭环影响");
+  let throw1 = void 0;
+  try { await h.run("src_survey_seed", { action: "next" }, parent); } catch (error) { throw1 = error; }
+  assert.ok(throw1 !== void 0, "未闭环时 next 应拒绝");
+  assert.ok(/剩 1/.test(String(throw1.message)), `拒绝消息含剩余活面数（got: ${throw1?.message}）`);
+  await h.run("src_record_coverage", { assetId: asset.id, phase: "recon", category: "subdomain-enum", status: "completed", evidence: ["已测"] }, parent);
+  const next = await h.run("src_survey_seed", { action: "next" }, parent);
+  assert.equal(next.id, blocked.id, "闭环后弹下一 pending");
+  const seed3 = await h.run("src_survey_seed", { action: "add", value: "gamma.example.com" }, parent);
+  await h.run("src_survey_seed", { action: "complete", seedId: next.id, outcome: "exhausted" }, parent);
+  const next3 = await h.run("src_survey_seed", { action: "next" }, parent);
+  assert.equal(next3.id, seed3.id, "无对应资产的种子自然闭环，next 放行");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.81] T4 存活分类（纯函数）：401/403/登录页 alive；停车页 parked；超时 dead", async () => {
+  const mod = await import("../lib/src/survey.js");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 401 }), "alive", "401 判存活");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 403 }), "alive", "403 判存活");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 200, bodySnippet: "<html>请登录后访问</html>" }), "alive", "登录页判存活");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 200, bodySnippet: "本域名正在停放" }), "parked", "停车页判 parked");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 200, bodySnippet: "Buy this domain" }), "parked", "英文停车关键词");
+  assert.equal(mod.classifyProbeResponse({ ok: false, status: 0 }), "dead", "超时判 dead");
+  assert.equal(mod.classifyProbeResponse({ ok: true, status: 200, bodySnippet: "<html>欢迎访问正常业务站点</html>" }), "alive", "正常业务判存活");
+});
+
+test("[local.81] T5 FOFA 降级：无 key fofa action 降级不 throw；锁面模式拒绝", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  const mod = await import("../lib/src/survey.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  /* 模式判定（纯函数）：具体 host → locked；含「集团|公司|全体|所有」→ free。 */
+  assert.equal(mod.surveyModeOf("https://example.com").mode, "locked", "具体 host 判锁面");
+  assert.equal(mod.surveyModeOf("example.com").mode, "locked", "点分域名判锁面");
+  assert.equal(mod.surveyModeOf("某集团公司").mode, "free", "含「公司」判自由跳");
+  assert.equal(mod.surveyModeOf("OPPO集团").mode, "free", "含「集团」判自由跳");
+  /* FOFA provider 无 key 全降级：直接调纯函数（不接 fetchImpl，也不 throw）。 */
+  const degraded = await mod.fofaSearch({ value: "example.com" }, { key: "" });
+  assert.equal(degraded.degraded, true, "无 key 时 fofaSearch 降级");
+  assert.ok(/DSH_SRC_FOFA_KEY/.test(degraded.note), "降级提示含 key 名");
+  assert.equal(degraded.hosts.length, 0, "降级时零 host，不 throw");
+  /* 工具层：锁面 goal（具体 host）下 fofa action 直接拒绝。 */
+  const h = harness();
+  const parent = h.exec("s81c");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "FOFA 锁面拒绝" }, parent);
+  const seed = await h.run("src_survey_seed", { action: "add", value: "example.com" }, parent);
+  let lockedThrow = void 0;
+  try { await h.run("src_survey_seed", { action: "fofa", seedId: seed.id }, parent); } catch (error) { lockedThrow = error; }
+  assert.ok(lockedThrow !== void 0 && /锁面/.test(String(lockedThrow.message)), `锁面 fofa 应拒绝（got: ${lockedThrow?.message}）`);
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.81] T6 零污染：flag off 全程 survey_seeds 表零写入", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("s81d");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "零污染" }, parent);
+  await h.run("src_add_asset", { type: "subdomain", value: "a.example.com", source: "crt.sh" }, parent);
+  assert.equal(h.tools.has("src_survey_seed"), false, "off 时无工具");
+  const table = h.domain.table("survey_seeds");
+  assert.equal([...table.entries()].length, 0, "off 全程 survey_seeds 零写入");
+});
+
+test("[local.81] T7 开盘往返：survey seed 行通过 srcDomainSpec 开盘 schema", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { srcDomainSpec, __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  assert.equal(srcDomainSpec.tables.survey_seeds.valueSchema !== void 0, true, "survey_seeds 表已注册");
+  const h = harness();
+  const parent = h.exec("s81e");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "开盘往返" }, parent);
+  await h.run("src_survey_seed", { action: "add", value: "example.com", source: "user-list", note: "手列" }, parent);
+  const domain = await h.ctx.storageDomain.open();
+  let checked = 0;
+  for (const [key, value] of domain.table("survey_seeds").rows) {
+    const r = srcDomainSpec.tables.survey_seeds.valueSchema.safeParse(value);
+    if (!r.success) throw new Error(`[roundtrip] survey_seeds:${key} 开盘会拒绝：${JSON.stringify(r.error.issues.map((x) => ({ p: x.path.join("."), m: x.message })))}`);
+    checked++;
+  }
+  assert.equal(checked, 1, "1 条种子过开盘校验");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
