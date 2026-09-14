@@ -9,6 +9,15 @@
 - `node scripts/check-preset-consistency.mjs`：通过；工具级 description 合计 **13,106**（≤15,000），
   协议（SRC_INSTRUCTIONS）**7,929**（≤8,000），内置 lessons 合计 **14,081**（≤20,000）。
 
+## 基线推进记录
+
+| 版本 | commit | 测试 | description | lessons | 说明 |
+|---|---|---|---|---|---|---|
+| local.69 | e4d5082 | 168/168 | 13,106 | 14,081 | Phase 0 基线 |
+| local.79 | 2387145 | 193/193 | 13,263 | 14,081 | 覆盖硬闸三件套 |
+| local.80 | 010ba7b | 193/193 | 13,263 | 14,081 | UI 对账列（零预算增长） |
+| **local.81** | **a53f434** | **200/200** | **13,665** | **14,081** | Phase 7 测绘种子闭环（+402，新工具 src_survey_seed） |
+
 ## 特性开关默认值（lib/src/flags.js，全部惰性求值）
 
 | 开关 | 默认 | 取值 | 说明 |
@@ -17,6 +26,8 @@
 | `DSH_SRC_STATE_VERSION` | `1` | 1/2 | 1=legacy 输出（现状）；2=v2 决策视图 |
 | `DSH_SRC_ORCHESTRATOR` | `off` | off/shadow/on | 本轮仅 shadow（纯函数建议）；on 未实施 |
 | `DSH_SRC_ROUTE_V2` | `off` | off/shadow/on | off=substring 召回；shadow=仅记录候选；on=v2 接管选择 |
+| `DSH_SRC_SURVEY` | `off` | off/shadow/on | off=src_survey_seed 工具不注册（行为与 local.80 完全一致）；shadow/on 注册 |
+| `DSH_SRC_FOFA_KEY` | 空 | 任意字符串 | FOFA provider key（惰性读）；空=provider 降级跳过，种子闭环不依赖 |
 
 非法值一律回落默认；关闭全部开关时行为与 local.69 完全一致。
 
