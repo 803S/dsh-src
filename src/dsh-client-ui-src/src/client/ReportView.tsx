@@ -86,8 +86,12 @@ function coverageTableLines(src: SrcProjection, t: ReportViewProps['t']): string
   const rows = (src.coverage ?? []).filter((row) => row.phase !== 'blind-spot')
   if (rows.length === 0) return [t('report.none')]
   return mdTable(
-    [t('report.colId'), t('report.colStatus'), t('report.colPhase'), t('report.colCategory'), t('report.colAsset'), t('report.colLimitation'), t('report.colEvidence')],
-    rows.map((row) => [row.id, coverageStatusLabel(t, row.status), row.phase, row.category, row.assetId ?? '—', row.limitation === '' ? '—' : row.limitation, row.evidence.length === 0 ? '—' : row.evidence.join('; ')]),
+    [t('report.colId'), t('report.colStatus'), t('report.colPhase'), t('report.colCategory'), t('report.colAsset'), t('report.colEndpoints'), t('report.colLimitation'), t('report.colEvidence')],
+    rows.map((row) => {
+      const skippd = row.endpointsSkipped ?? []
+      const endpoints = row.endpointsTotal === undefined ? '—' : `${row.endpointsTested ?? 0}/${row.endpointsTotal}${skippd.length > 0 ? `（跳过${skippd.length}）` : ''}`
+      return [row.id, coverageStatusLabel(t, row.status), row.phase, row.category, row.assetId ?? '—', endpoints, row.limitation === '' ? '—' : row.limitation, row.evidence.length === 0 ? '—' : row.evidence.join('; ')]
+    }),
   )
 }
 

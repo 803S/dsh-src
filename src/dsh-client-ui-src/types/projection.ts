@@ -165,6 +165,10 @@ export interface SrcProjectionCoverageRow {
   readonly status: 'planned' | 'running' | 'completed' | 'blocked' | 'not-applicable'
   readonly evidence: readonly string[]
   readonly limitation: string
+  /* [local.80] 对账数字（由 src_record_coverage 写入，后端零改动透传）。 */
+  readonly endpointsTotal: number | undefined
+  readonly endpointsTested: number | undefined
+  readonly endpointsSkipped: readonly string[] | undefined
   readonly updatedAt: number
 }
 
