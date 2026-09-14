@@ -652,7 +652,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 ### Phase 7：测绘与种子闭环（可选立项，1–2 周，超越项）
 
-> **状态：已完成（local.81，commit a53f434）。** 测试 200/200 绿（193+7）；工具级 description 合计 13665/15000（新增 src_survey_seed 402 字符，基线 13263→13665）；lessons 14081 不变。落地范围：`survey_seeds` 独立表（srcDomainSpec v13→v14）+`src_survey_seed` 七动作工具（add/list/next/complete/backfill/probe/fofa）+一种子闭环服务端闸（`next` 拒未闭环 active 种子）+存活分类纯函数（401/403/登录墙/挑战页判 alive）+FOFA 可选 provider（无 key 惰性降级，key 不进返回）+`DSH_SRC_SURVEY=off` 默认工具不注册（行为与 local.80 完全一致）+三个 subagent persona deny 追加 + `lib/src/survey.js` 进 deploy 清单。
+> **状态：已完成（local.81，commit 311caee）。** 测试 200/200 绿（193+7）；工具级 description 合计 13665/15000（新增 src_survey_seed 402 字符，基线 13263→13665）；lessons 14081 不变。落地范围：`survey_seeds` 独立表（srcDomainSpec v13→v14）+`src_survey_seed` 七动作工具（add/list/next/complete/backfill/probe/fofa）+一种子闭环服务端闸（`next` 拒未闭环 active 种子）+存活分类纯函数（401/403/登录墙/挑战页判 alive）+FOFA 可选 provider（无 key 惰性降级，key 不进返回）+`DSH_SRC_SURVEY=off` 默认工具不注册（行为与 local.80 完全一致）+三个 subagent persona deny 追加 + `lib/src/survey.js` 进 deploy 清单。
 
 动机（2026-09-12 能力评审实测）：现有工具面解决「给了目标怎么测」，不解决「目标从哪来、怎么穷尽」。对照报告 16 条 finding 中 9 条来自资产测绘面（同域多后端、相邻系统）；clown-src-6k-skill 的产出广度主要来自测绘引擎（种子无上限+一种子闭环+优质根域回灌）。这是 Phase 0–6 均未覆盖的缺口。
 
