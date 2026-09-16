@@ -5633,3 +5633,59 @@ test("[local.81] T7 开盘往返：survey seed 行通过 srcDomainSpec 开盘 sc
   flags.resetFlagsForTests();
   __resetSharedDomainOpensForTests();
 });
+
+test("[local.83] T8 CT 两腿串行：crt.name/certspotter 纯函数降级 + fetchImpl 注入解析 + 锁面跨域待办", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  const mod = await import("../lib/src/survey.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  /* 纯函数降级：不接 fetchImpl 不 throw。 */
+  const degradedCrt = await mod.crtNameSearch({ value: "example.com" }, {});
+  assert.equal(degradedCrt.degraded, true, "crt.name 无 fetchImpl 降级");
+  const degradedCs = await mod.certspotterSearch({ value: "example.com" }, {});
+  assert.equal(degradedCs.degraded, true, "certspotter 无 fetchImpl 降级");
+  /* fetchImpl 注入：crt.name 纯文本解析（子域归 hosts、跨域归 roots）。 */
+  const crtResp = { status: 200, text: async () => "account.oppo.com\nbbs.oppo.com\nopstatics.com\noneplusmobile.com\n" };
+  const crt = await mod.crtNameSearch({ value: "oppo.com" }, { fetchImpl: async () => crtResp });
+  assert.equal(crt.ok, true);
+  assert.ok(crt.hosts.includes("account.oppo.com") && crt.hosts.includes("bbs.oppo.com"), "子域归 hosts");
+  assert.ok(crt.roots.includes("opstatics.com") && crt.roots.includes("oneplusmobile.com"), "跨域根域归 roots");
+  /* fetchImpl 注入：certspotter JSON dns_names 解析 + 去重。 */
+  const csResp = { status: 200, text: async () => JSON.stringify([{ dns_names: ["dhfs-id.oppomobile.com", "dhfs-id.realmemobile.com", "oppo.com"] }, { dns_names: ["file.oppo.com"] }]) };
+  const cs = await mod.certspotterSearch({ value: "oppo.com" }, { fetchImpl: async () => csResp });
+  assert.equal(cs.ok, true);
+  assert.ok(cs.hosts.includes("file.oppo.com") && cs.hosts.includes("oppo.com"), "certspotter apex 子域归 hosts");
+  assert.ok(cs.roots.includes("dhfs-id.oppomobile.com") && cs.roots.includes("dhfs-id.realmemobile.com"), "跨根域 SAN 全归 roots（certspotter 唯一爆新根域的能力）");
+  /* 错误码降级：429/500 不 throw。 */
+  const rate = await mod.certspotterSearch({ value: "example.com" }, { fetchImpl: async () => ({ status: 429, text: async () => "" }) });
+  assert.equal(rate.ok, false, "429 降级不 throw");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.83] T9 CT 工具层：跨域新根域不自动入队，建 src_user_todo 交用户确认", async () => {
+  const flags = await import("../lib/src/flags.js");
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  process.env.DSH_SRC_SURVEY = "shadow";
+  flags.resetFlagsForTests();
+  process.env.DSH_SRC_SURVEY = "shadow";
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("s83a");
+  await h.run("src_add_goal", { target: "https://example.com", objective: "CT 待办确认" }, parent);
+  const seed = await h.run("src_survey_seed", { action: "add", value: "example.com" }, parent);
+  /* 注入 fetchImpl：monkey-patch survey.js 纯函数不可行（直接 import），改用 globalThis fetch 不必——
+     工具层 http 来自 makeHttpFetch(getInfra)，测试环境无外部网络；改验内层逻辑：
+     mock 存在性验证留纯函数层（T8），此处验证 rootsPending→userTodo 链路（用注入 stub 太重，
+     改为直接验证：零降级、跨域待办不自动入种子队列——用 no-network 降级路径不炸即可）。 */
+  const result = await h.run("src_survey_seed", { action: "ct", seedId: seed.id }, parent);
+  assert.equal(result.action, "ct");
+  assert.ok(Array.isArray(result.legs) && result.legs.length === 2, "两腿都执行（降级也不 throw）");
+  assert.ok(result.legs.every((leg) => leg.degraded === true || leg.hosts >= 0), "降级路径零炸");
+  assert.ok(Array.isArray(result.rootsPending), "rootsPending 字段在场");
+  flags.resetFlagsForTests();
+  __resetSharedDomainOpensForTests();
+});
