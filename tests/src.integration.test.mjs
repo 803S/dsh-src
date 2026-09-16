@@ -4054,7 +4054,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
 		"src_add_finding", "src_add_asset", "src_state", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",
 		"src_update_finding", "src_reject_finding", "src_resolve_approval", "src_request_asset_confirm",
-		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve"
+		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve", "src_survey_seed"
 	], "拆包前必须冻结当前工具名称和注册顺序");
 });
 
@@ -5482,7 +5482,8 @@ test("[local.81] T1 注册闸：flag off 无 src_survey_seed；shadow 后新 har
   __resetSharedDomainOpensForTests();
   assert.equal(flags.srcSurveyFlag(), "off", "survey 默认 off");
   const offHarness = harness();
-  assert.equal(offHarness.tools.has("src_survey_seed"), false, "off 时工具不注册");
+  /* [local.83 修] 工具无条件注册（preset deny 列表引用本工具名，未注册时 restrict throw）；off 语义在 execute 软降级。 */
+  assert.equal(offHarness.tools.has("src_survey_seed"), true, "off 时工具仍注册（execute 软降级）");
   /* set→reset→再 set（resetFlagsForTests 会删 env，local.77 教训）。 */
   process.env.DSH_SRC_SURVEY = "shadow";
   flags.resetFlagsForTests();
@@ -5605,7 +5606,9 @@ test("[local.81] T6 零污染：flag off 全程 survey_seeds 表零写入", asyn
   const parent = h.exec("s81d");
   await h.run("src_add_goal", { target: "https://example.com", objective: "零污染" }, parent);
   await h.run("src_add_asset", { type: "subdomain", value: "a.example.com", source: "crt.sh" }, parent);
-  assert.equal(h.tools.has("src_survey_seed"), false, "off 时无工具");
+  assert.equal(h.tools.has("src_survey_seed"), true, "off 时工具仍注册（local.83 修）");
+  const degraded = await h.run("src_survey_seed", { action: "list" }, parent);
+  assert.equal(degraded.degraded, true, "off 时 execute 软降级");
   const table = h.domain.table("survey_seeds");
   assert.equal([...table.entries()].length, 0, "off 全程 survey_seeds 零写入");
 });
