@@ -113,7 +113,8 @@ console.log(`check-preset-consistency: persona×toolFilter 一致性 OK；防再
 const LESSON_BUDGETS = {
 	"submission-quality": 2600, "token-lifecycle": 2000, "ai-abuse": 2500, "cors": 2000,
 	"csrf": 1500, "sms-bomb": 1500, "channel-divergence": 3200, "scope-confirmation": 1600,
-	"burp-mcp": 1800, "nday-framework": 1300, "unauth-write-chain": 1200
+	"burp-mcp": 1800, "nday-framework": 1300, "unauth-write-chain": 1200,
+	"signature-wall-audit": 2000
 };
 const lessonsDir = join(root, "preset/src-hunter/lessons");
 let lessonsTotal = 0;

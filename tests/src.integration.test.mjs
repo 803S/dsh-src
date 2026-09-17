@@ -138,7 +138,7 @@ test("SRC workflow persists, deduplicates checkpoints", async () => {
   assert.equal(parentEvents.length, eventsBeforeRepeat, "duplicate checkpoints must not append another projection event");
 
   const state = await h.run("src_state", {}, parent);
-  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 0, research: 0, checkpoints: 2, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 }); /* [local.65] goal 创建零机械待办 */
+  assert.deepEqual(state.counts, { intents: 1, facts: 1, findings: 1, assets: 1, coverage: 1, research: 0, checkpoints: 2, observations: 0, userTodos: 0, pendingApprovals: 0, testAccounts: 0, domainNotes: 0 }); /* [local.85] intent 收尾自动落一条 coverage 行（completed） */
   assert.equal(state.intents[0].status, "completed");
   assert.equal(state.checkpoints.length, 2);
   assert.equal(state.counts.checkpoints, 2);
@@ -5040,6 +5040,30 @@ test("[opt Phase 3] scheduler/recovery 纯函数：五类建议、幂等去重�
   // orphan：无 checkpoint 的 running 直接候选（沿用 src_recover_child 语义）
   const cands = rec.detectOrphanCandidates({ intents: [{ id: "i9", status: "running" }], checkpoints: [], now });
   assert.deepEqual(cands.map((c) => c.reason), ["no-checkpoint"]);
+  // [local.85] wall-audit：blocked intent 且 coverage 无对应 completed intent 行 → 建议；有 completed 覆盖行则不产
+  const planW = computeSuggestions({
+    intents: [{ id: "intent-7", status: "blocked" }, { id: "intent-6", status: "blocked" }],
+    checkpoints: [], pendingApprovals: [], userTodos: [],
+    coverageRows: [{ id: "coverage-1", phase: "intent", category: "intent-6 验证", status: "completed", evidence: ["intent-6"] }],
+    now
+  });
+  const wallAudits = planW.suggestions.filter((s) => s.kind === "wall-audit");
+  assert.equal(wallAudits.length, 1, "blocked 且未回审计的 intent 产一条 wall-audit");
+  assert.equal(wallAudits[0].intentId, "intent-7", "wall-audit 指向未覆盖的 intent-7");
+  assert.match(wallAudits[0].reason, /signature-wall-audit/, "建议指向签名墙审计 lesson");
+});
+
+test("[local.85] intent 收尾自动落 coverage 行 + 审批批准后自动建推进待办", async () => {
+  const h = harness();
+  const parent = h.exec("p-parent");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "authorized SRC assessment", authorization: "ticket-85" }, parent);
+  const intent = await h.run("src_add_intent", { title: "sig audit", detail: "d", goalId: goal.id }, parent);
+  await h.run("src_add_fact", { intentId: intent.id, detail: "baseline" }, parent);
+  await h.run("src_update_intent", { intentId: intent.id, status: "blocked" }, parent);
+  const state = await h.run("src_state", {}, parent);
+  const covRow = (state.coverage ?? []).find((row) => row.phase === "intent" && (row.evidence ?? []).includes(intent.id));
+  assert.ok(covRow, "intent blocked 收尾自动落一条 phase=intent coverage 行");
+  assert.equal(covRow.status, "blocked", "coverage 行状态同步为 blocked");
 });
 
 test("[opt Phase 3] src_state 观测点：shadow 发建议事件 + orchestration 视图附 shadowSuggestions；off 零开销", async () => {
