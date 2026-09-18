@@ -5066,6 +5066,36 @@ test("[local.85] intent 收尾自动落 coverage 行 + 审批批准后自动建�
   assert.equal(covRow.status, "blocked", "coverage 行状态同步为 blocked");
 });
 
+test("[local.86] B1 悬空项回注：先前会话 pending/abandoned 待办+planned intent 进 priorContext.pendingItems 且封顶≤10", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests(); /* 全量跑时 sharedDomainOpens 缓存先前测试的 MemoryDomain（sessionIds tel-bad/tel-off 污染），重置后本测试用全新 harness 域 */
+  const h = harness();
+  const prior = h.exec("p-prior");
+  const parent = h.exec("p-parent");
+  // 先前会话：建 goal + 2 planned intents + 1 pending 待办 + 1 abandoned 待办
+  await h.run("src_add_goal", { target: "https://example.test", objective: "prior round", authorization: "ticket-86" }, prior);
+  await h.run("src_add_intent", { title: "上轮未收尾方向甲", detail: "d", goalId: "goal-1" }, prior);
+  await h.run("src_add_intent", { title: "上轮未收尾方向乙", detail: "d", goalId: "goal-1" }, prior);
+  await h.run("src_user_todo", { kind: "auth-session", title: "提供测试账号", detail: "需要 SIT 账号" }, prior);
+  await h.run("src_user_todo", { kind: "asset-provide", title: "提供 App 包名", detail: "x" }, prior);
+  const todos = await h.run("src_state", {}, prior);
+  const t1 = (todos.userTodos ?? [])[0];
+  await h.run("src_user_todo", { userTodoId: t1.id, status: "abandoned" }, prior);
+  // 新会话同目标开局：pendingItems 应含 2 planned intents + 2 待办（pending/abandoned）
+  const fresh = h.exec("p-fresh");
+  const goal2 = await h.run("src_add_goal", { target: "https://example.test", objective: "resume round", authorization: "ticket-86" }, fresh);
+  assert.ok(goal2.priorContext, "同目标开局带 priorContext");
+  const pi = goal2.priorContext.pendingItems ?? [];
+  assert.equal(pi.length, 4, "悬空项含 2 intents + 2 todos");
+  assert.ok(pi.some((p) => p.kind === "intent" && p.status === "planned"), "planned intent 在悬空项中");
+  assert.ok(pi.some((p) => p.status === "abandoned" && p.kind !== "intent"), "abandoned 待办在悬空项中");
+  assert.ok(pi.every((p) => p.sourceSessionId === "p-prior"), "悬空项标来源会话");
+  // 本会话自己的悬空项不算（excludeSessionId）：fresh 会话的 planned intent 不出现在自己开局的 priorContext 里
+  const fresh2 = h.exec("p-fresh2");
+  const goal3 = await h.run("src_add_goal", { target: "https://example.test", objective: "check exclude", authorization: "ticket-86" }, fresh2);
+  assert.ok(!(goal3.priorContext?.pendingItems ?? []).some((p) => p.sourceSessionId === "p-fresh2"), "excludeSessionId 排除本会话悬空项");
+});
+
 test("[opt Phase 3] src_state 观测点：shadow 发建议事件 + orchestration 视图附 shadowSuggestions；off 零开销", async () => {
   const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-orch1-"));
   const prevDir = process.env.DSH_SRC_TELEMETRY_DIR;

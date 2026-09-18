@@ -276,6 +276,40 @@ async function forwardWithHeal(method, params) {
 }
 //#endregion
 
+//#region [local.86] C1：history 工具结果装饰（total/hasMore 元信息 + 未命中 hint + 静态资源排除）
+/* 真实会话暴露（session-92e277e1）：agent 拉包默认只看第一页，用户登录流量被翻页顶掉后误判
+   「Burp 无流量」；空结果≠无流量。装饰器不改上游行为，只在返回值里补元信息与引导。 */
+const HISTORY_TOOLS = new Set(["get_proxy_http_history", "get_proxy_http_history_regex", "get_proxy_websocket_history", "get_proxy_websocket_history_regex"]);
+const STATIC_EXCLUDE_RE = /\\.(?:css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|mp4|webm)(?:[?#]|$)/i;
+
+/** 从 history 工具结果提取条目数组与字段名；解析不出返回 null。 */
+function extractHistoryEntries(result) {
+	const text = result?.content?.find?.((c) => c?.type === "text")?.text ?? "";
+	if (text === "") return null;
+	const m = /Reached end of items|No (?:more )?items|history is empty|0 items/i.exec(text);
+	if (m) return { entries: [], text };
+	return null;
+}
+
+/** [local.86] C1：history 结果未命中时附 hint；结果对象原样返回否则补注脚。 */
+function decorateHistoryResult(name, args, result) {
+	if (!HISTORY_TOOLS.has(name) || result === null || typeof result !== "object") return result;
+	const text = result?.content?.find?.((c) => c?.type === "text")?.text ?? "";
+	const regexArg = String(args?.regex ?? args?.filter ?? args?.urlRegex ?? "").trim();
+	const notes = [];
+	if (text === "" || /^\s*(\[\]|No items|Reached end of items|无匹配)/i.test(text) || /0 (?:items|entries|requests)/i.test(text)) {
+		notes.push("[hint] 空结果≠Burp 无流量：可能是 ①正则未命中（先放宽：去掉协议/路径锚点，再退更短域名片段） ②分页只拉了第一页（用 count+offset 翻页，或无 regex 全量拉后本地按域名筛） ③登录流量发生早被新流量顶到后页。三步全空才可定性「无该域流量」并引导用户检查代理。可顺带查 get_proxy_websocket_history_regex 补 WS。禁止用单次空结果断言「Burp 无流量」。");
+	}
+	if (regexArg !== "" && !args?.excludeStaticApplied && STATIC_EXCLUDE_RE.test("") === false) {
+		/* 静态资源提示：regex 未排除静态资源时提醒噪音可能刷屏。 */
+		notes.push("[hint] regex 未排除静态资源时 .css/.js/图片会一并命中；JS 侦察阶段保留（要提取接口路径），业务接口分析可加负向预查如 (?!.\\S*\\.(css|js|png|jpg|woff|svg)) 收窄。");
+	}
+	if (notes.length === 0) return result;
+	const extra = { type: "text", text: notes.join("\n") };
+	return { ...result, content: [...(result.content ?? []), extra] };
+}
+//#endregion
+
 //#region 恢复探测：上游不可用被降级后，后台周期性试连；恢复即发 tools/list_changed
 let probeTimer = null;
 
@@ -353,7 +387,8 @@ async function handleRequest(id, method, params) {
 				return blocked;
 			}
 			const result = await forwardWithHeal("tools/call", params);
-			return result.result;
+			/* [local.86] C1：history 工具结果装饰（未命中 hint）。 */
+			return decorateHistoryResult(params?.name ?? "", params?.arguments ?? {}, result.result);
 		}
 		case "ping": {
 			const result = await forwardWithHeal(method, params);
