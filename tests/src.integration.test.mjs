@@ -5746,3 +5746,40 @@ test("[local.83] T9 CT 工具层：跨域新根域不自动入队，建 src_user
   flags.resetFlagsForTests();
   __resetSharedDomainOpensForTests();
 });
+
+/* ==================== [local.87] artifacts 约定：scaffold + 默认落盘路径 ==================== */
+test("[local.87] artifacts：src_add_goal 起手建齐五子夹+README（幂等）；artifactsDir 返回且隔离 DSH_HOME", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const { ensureArtifactsScaffold, artifactsRoot, engagementDirName, SUBDIR_GUIDE } = await import("../lib/src/artifacts.js");
+  const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-art-"));
+  const prevHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = telDir;
+  try {
+    // engagementDirName：session-uuid → session-<前8位>；脏输入清洗
+    assert.equal(engagementDirName("session-92e277e1-132a-47d0-8497-11a5d8249994"), "session-92e277e1");
+    assert.equal(engagementDirName("session-f64ff5b1-e05e-4f86-8f41-52e835b15177"), "session-f64ff5b1");
+    assert.equal(engagementDirName("../evil/path"), "evilpath");
+    // scaffold：建齐五子夹 + README
+    const created = await ensureArtifactsScaffold("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "hkhub-attend.sit.sf-express.com", goalId: "goal-1" });
+    assert.ok(created.length > 0, "首次 scaffold 创建目录");
+    const root = artifactsRoot("session-92e277e1-132a-47d0-8497-11a5d8249994");
+    assert.ok(existsSync(root), "artifacts 根目录存在");
+    for (const [dir] of SUBDIR_GUIDE) assert.ok(existsSync(nodePath.join(root, dir)), `子夹 ${dir} 存在`);
+    const readme = await fsPromises.readFile(nodePath.join(root, "README.md"), "utf8");
+    assert.ok(readme.includes("hkhub-attend.sit.sf-express.com"), "README 带目标");
+    assert.ok(readme.includes("session-92e277e1"), "README 带会话 id");
+    // 幂等：再次 scaffold 不新建
+    const again = await ensureArtifactsScaffold("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "x" });
+    assert.equal(again.length, 0, "已存在时幂等跳过");
+    // src_add_goal 返回 artifactsDir 且 output schema 声明（additionalProperties:false 闸）
+    const h = harness();
+    const parent = h.exec("art-parent");
+    const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "artifacts 默认路径验收", authorization: "ticket-87" }, parent);
+    assert.ok(typeof goal.artifactsDir === "string" && goal.artifactsDir.includes("artifacts"), "src_add_goal 返回 artifactsDir");
+    assert.ok(existsSync(goal.artifactsDir), "artifactsDir 目录真实创建");
+  } finally {
+    if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;
+    await fsPromises.rm(telDir, { recursive: true, force: true });
+  }
+});
