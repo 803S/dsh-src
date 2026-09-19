@@ -5691,7 +5691,7 @@ test("[local.81] T7 开盘往返：survey seed 行通过 srcDomainSpec 开盘 sc
   __resetSharedDomainOpensForTests();
 });
 
-test("[local.83] T8 CT 两腿串行：crt.name/certspotter 纯函数降级 + fetchImpl 注入解析 + 锁面跨域待办", async () => {
+test("[local.83] T8 CT 两腿串行：agniops/certspotter 纯函数降级 + fetchImpl 注入解析 + 锁面跨域待办", async () => {
   const flags = await import("../lib/src/flags.js");
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   const mod = await import("../lib/src/survey.js");
@@ -5700,16 +5700,20 @@ test("[local.83] T8 CT 两腿串行：crt.name/certspotter 纯函数降级 + fet
   process.env.DSH_SRC_SURVEY = "shadow";
   __resetSharedDomainOpensForTests();
   /* 纯函数降级：不接 fetchImpl 不 throw。 */
-  const degradedCrt = await mod.crtNameSearch({ value: "example.com" }, {});
-  assert.equal(degradedCrt.degraded, true, "crt.name 无 fetchImpl 降级");
+  const degradedAg = await mod.agniopsSearch({ value: "example.com" }, {});
+  assert.equal(degradedAg.degraded, true, "agniops 无 fetchImpl 降级");
   const degradedCs = await mod.certspotterSearch({ value: "example.com" }, {});
   assert.equal(degradedCs.degraded, true, "certspotter 无 fetchImpl 降级");
-  /* fetchImpl 注入：crt.name 纯文本解析（子域归 hosts、跨域归 roots）。 */
-  const crtResp = { status: 200, text: async () => "account.oppo.com\nbbs.oppo.com\nopstatics.com\noneplusmobile.com\n" };
-  const crt = await mod.crtNameSearch({ value: "oppo.com" }, { fetchImpl: async () => crtResp });
-  assert.equal(crt.ok, true);
-  assert.ok(crt.hosts.includes("account.oppo.com") && crt.hosts.includes("bbs.oppo.com"), "子域归 hosts");
-  assert.ok(crt.roots.includes("opstatics.com") && crt.roots.includes("oneplusmobile.com"), "跨域根域归 roots");
+  /* fetchImpl 注入：agniops 纯文本解析（子域归 hosts；agniops 不出跨域，恒空 roots——跨根域由 certspotter 腿承担）。 */
+  const agResp = { status: 200, text: async () => "account.oppo.com\nbbs.oppo.com\n10.0.0.1\n" };
+  const ag = await mod.agniopsSearch({ value: "oppo.com" }, { fetchImpl: async () => agResp });
+  assert.equal(ag.ok, true);
+  assert.ok(ag.hosts.includes("account.oppo.com") && ag.hosts.includes("bbs.oppo.com"), "子域归 hosts");
+  assert.ok(!ag.hosts.includes("10.0.0.1"), "IP 不误收进 hosts");
+  assert.equal(ag.roots.length, 0, "agniops 无跨域能力，恒空 roots");
+  /* 429 限流降级（agniops 60/min）。 */
+  const agRate = await mod.agniopsSearch({ value: "example.com" }, { fetchImpl: async () => ({ status: 429, text: async () => "" }) });
+  assert.equal(agRate.ok, false, "agniops 429 降级不 throw");
   /* fetchImpl 注入：certspotter JSON dns_names 解析 + 去重。 */
   const csResp = { status: 200, text: async () => JSON.stringify([{ dns_names: ["dhfs-id.oppomobile.com", "dhfs-id.realmemobile.com", "oppo.com"] }, { dns_names: ["file.oppo.com"] }]) };
   const cs = await mod.certspotterSearch({ value: "oppo.com" }, { fetchImpl: async () => csResp });
