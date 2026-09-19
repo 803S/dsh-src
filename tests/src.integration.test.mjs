@@ -5755,7 +5755,7 @@ test("[local.83] T9 CT 工具层：跨域新根域不自动入队，建 src_user
 test("[local.87] artifacts：src_add_goal 起手建齐五子夹+README（幂等）；artifactsDir 返回且隔离 DSH_HOME", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   __resetSharedDomainOpensForTests();
-  const { ensureArtifactsScaffold, artifactsRoot, engagementDirName, SUBDIR_GUIDE } = await import("../lib/src/artifacts.js");
+  const { ensureArtifactsScaffold, artifactsRoot, artifactsHome, engagementDirName, targetDomainDir, SUBDIR_GUIDE } = await import("../lib/src/artifacts.js");
   const telDir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-art-"));
   const prevHome = process.env.DSH_HOME;
   process.env.DSH_HOME = telDir;
@@ -5764,17 +5764,36 @@ test("[local.87] artifacts：src_add_goal 起手建齐五子夹+README（幂等�
     assert.equal(engagementDirName("session-92e277e1-132a-47d0-8497-11a5d8249994"), "session-92e277e1");
     assert.equal(engagementDirName("session-f64ff5b1-e05e-4f86-8f41-52e835b15177"), "session-f64ff5b1");
     assert.equal(engagementDirName("../evil/path"), "evilpath");
-    // scaffold：建齐五子夹 + README
+    // [local.89] targetDomainDir：主域夹名 = eTLD+1 近似；URL/host/端口/脏输入
+    assert.equal(targetDomainDir("https://hkhub-attend.sit.sf-express.com/login"), "sf-express.com");
+    assert.equal(targetDomainDir("oppo.com"), "oppo.com");
+    assert.equal(targetDomainDir("shop.example.co.uk/"), "example.co.uk", "两级后缀取三段");
+    assert.equal(targetDomainDir("https://Join.API.Example.com:8443/x"), "example.com", "大小写/端口清洗");
+    assert.equal(targetDomainDir(""), "unknown");
+    assert.equal(targetDomainDir("!!!"), "unknown");
+    // scaffold：主域/会话 两级结构，建齐五子夹 + README
     const created = await ensureArtifactsScaffold("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "hkhub-attend.sit.sf-express.com", goalId: "goal-1" });
     assert.ok(created.length > 0, "首次 scaffold 创建目录");
-    const root = artifactsRoot("session-92e277e1-132a-47d0-8497-11a5d8249994");
+    const root = artifactsRoot("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "hkhub-attend.sit.sf-express.com" });
+    assert.ok(root.includes("sf-express.com") && root.includes("session-92e277e1"), "[local.89] 主域/会话 两级路径");
     assert.ok(existsSync(root), "artifacts 根目录存在");
     for (const [dir] of SUBDIR_GUIDE) assert.ok(existsSync(nodePath.join(root, dir)), `子夹 ${dir} 存在`);
+    // [local.89] 同域新会话归拢到同一主域夹
+    const rootB = artifactsRoot("session-f64ff5b1-e05e-4f86-8f41-52e835b15177", { target: "api.sf-express.com" });
+    assert.equal(nodePath.dirname(rootB), nodePath.dirname(root), "同主域不同会话同主域夹");
+    // [local.89] 旧扁平会话夹自动迁移到主域夹下
+    const legacyHome = artifactsHome();
+    const legacyDir = nodePath.join(legacyHome, "session-legacy01");
+    await fsPromises.mkdir(nodePath.join(legacyDir, "recon"), { recursive: true });
+    await fsPromises.writeFile(nodePath.join(legacyDir, "recon", "old.txt"), "x");
+    await ensureArtifactsScaffold("session-legacy01", { target: "oppo.com" });
+    assert.ok(!existsSync(legacyDir), "旧扁平夹已迁移走");
+    assert.ok(existsSync(nodePath.join(legacyHome, "oppo.com", "session-legacy01", "recon", "old.txt")), "旧内容随夹迁移");
     const readme = await fsPromises.readFile(nodePath.join(root, "README.md"), "utf8");
     assert.ok(readme.includes("hkhub-attend.sit.sf-express.com"), "README 带目标");
     assert.ok(readme.includes("session-92e277e1"), "README 带会话 id");
     // 幂等：再次 scaffold 不新建
-    const again = await ensureArtifactsScaffold("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "x" });
+    const again = await ensureArtifactsScaffold("session-92e277e1-132a-47d0-8497-11a5d8249994", { target: "hkhub-attend.sit.sf-express.com" });
     assert.equal(again.length, 0, "已存在时幂等跳过");
     // src_add_goal 返回 artifactsDir 且 output schema 声明（additionalProperties:false 闸）
     const h = harness();
