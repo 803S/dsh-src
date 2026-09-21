@@ -16,7 +16,7 @@
 | local.69 | e4d5082 | 168/168 | 13,106 | 14,081 | Phase 0 基线 |
 | local.79 | 2387145 | 193/193 | 13,263 | 14,081 | 覆盖硬闸三件套 |
 | local.80 | 010ba7b | 193/193 | 13,263 | 14,081 | UI 对账列（零预算增长） |
-| **local.81** | **311caee** | **200/200** | **13,665** | **14,081** | Phase 7 测绘种子闭环（+402，新工具 src_survey_seed） |
+| **local.90** | **（待提交）** | **205/205** | **13,986** | **14,081** | Laya 自动审批闸（flag off，shadow 模式可用） |
 
 ## 特性开关默认值（lib/src/flags.js，全部惰性求值）
 
@@ -27,6 +27,7 @@
 | `DSH_SRC_ORCHESTRATOR` | `off` | off/shadow/on | 本轮仅 shadow（纯函数建议）；on 未实施 |
 | `DSH_SRC_ROUTE_V2` | `off` | off/shadow/on | off=substring 召回；shadow=仅记录候选；on=v2 接管选择 |
 | `DSH_SRC_SURVEY` | `off` | off/shadow/on | off=src_survey_seed 工具不注册（行为与 local.80 完全一致）；shadow/on 注册 |
+| `DSH_SRC_LAYA_DECISION` | `off` | off/shadow/on | Laya 自动审批闸：shadow=只记录不干预；on=置信度≥0.85 自动放行/拦截，否则继续原有分类流程 |
 | `DSH_SRC_FOFA_KEY` | 空 | 任意字符串 | FOFA provider key（惰性读）；空=provider 降级跳过，种子闭环不依赖 |
 
 非法值一律回落默认；关闭全部开关时行为与 local.69 完全一致。

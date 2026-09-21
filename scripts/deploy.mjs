@@ -29,7 +29,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 /* [local.48] scripts/caps-sync.mjs 一并部署：src_add_capability 动态 import 它的纯函数，
  * 且接线时 spawn 的是【部署副本】里的这份脚本。 [local.60] 补 lib/src/approval-locks.js（审批锁）、
  * lib/ui-src.client.js（UI 产物——此前漏部署靠手动拷，md5 恰好一致）、tools/burp-mcp-bridge.mjs（桥）。 */
-const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/flags.js", "lib/src/approval-locks.js", "lib/src/http-output.js", "lib/src/telemetry/events.js", "lib/src/telemetry/sink.js", "lib/src/telemetry/budget.js", "lib/src/orchestrator/transitions.js", "lib/src/orchestrator/queue.js", "lib/src/orchestrator/scheduler.js", "lib/src/orchestrator/recovery.js", "lib/src/tools/index.js", "lib/src/capability-loader.js", "lib/src/event-store.js", "lib/src/survey.js", "lib/src/artifacts.js", "lib/ui-src.client.js", "package.json", "scripts/caps-sync.mjs", "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/preset.yml"];
+const files = ["lib/src.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/flags.js", "lib/src/decision/laya-client.js", "lib/src/approval-locks.js", "lib/src/http-output.js", "lib/src/telemetry/events.js", "lib/src/telemetry/sink.js", "lib/src/telemetry/budget.js", "lib/src/orchestrator/transitions.js", "lib/src/orchestrator/queue.js", "lib/src/orchestrator/scheduler.js", "lib/src/orchestrator/recovery.js", "lib/src/tools/index.js", "lib/src/capability-loader.js", "lib/src/event-store.js", "lib/src/survey.js", "lib/src/artifacts.js", "lib/ui-src.client.js", "package.json", "scripts/caps-sync.mjs", "scripts/laya-decision-daemon.py", "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/preset.yml"];
 /* [local.62] 内置经验文件（preset/src-hunter/lessons）：触发器元数据在文件尾部 lesson-meta 里，
  * 改后必须随部署同步——此前不在清单里，部署副本是首装 rsync 的遗留（后续内置经验更新全部丢丢）。 */
 const presetLessonDir = "preset/src-hunter/lessons";
@@ -119,4 +119,25 @@ for (const f of [...files, ...presetLessons]) {
 }
 
 if (failed) process.exit(1);
+
+/* [local.90] Laya 决策守护进程：如果 flag 开启且脚本存在，自动拉起 */
+try {
+  const {srcLayaDecisionFlag} = await import(join(repo, "lib/src/flags.js"));
+  const flag = srcLayaDecisionFlag();
+  if (flag === "on" || flag === "shadow") {
+    const {existsSync} = await import("node:fs");
+    const {spawn} = await import("node:child_process");
+    const pyPath = join(repo, "scripts/laya-decision-daemon.py");
+    if (existsSync(pyPath)) {
+      const daemon = spawn("python3", [pyPath], { detached: true, stdio: "ignore" });
+      daemon.unref();
+      console.log(`[deploy] Laya 决策守护进程已拉起（PID=${daemon.pid}）`);
+    } else {
+      console.warn("[deploy] Laya 决策守护进程脚本不存在：", pyPath);
+    }
+  }
+} catch (e) {
+  console.warn("[deploy] Laya 决策守护进程启动失败（fail-open）：", e.message);
+}
+
 console.log("完成。记得重启 dsh web / headless 进程使新代码生效。");
