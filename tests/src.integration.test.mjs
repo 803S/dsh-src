@@ -1576,6 +1576,13 @@ test("[Phase 2] src_state v2 结构化视图 + src_get_evidence：索引化省 t
     () => h.run("src_state", { detail: "bogus" }, parent),
     /detail/,
   );
+  // ⑦ [local.90] 空态回归：未建 goal 时 v2 视图 goal=null（schema nullable），不再报 must be an object
+  const flagsEmpty = await import("../lib/src/flags.js");
+  const h0 = harness();
+  const p0 = h0.exec("empty-parent");
+  const emptyState = await h0.run("src_state", { detail: "summary" }, p0);
+  assert.equal(emptyState.initialized, false, "空会话 initialized=false");
+  assert.equal(emptyState.goal, null, "未建 goal 时 v2 goal=null（schema 已 nullable）");
   // ③ summary：索引化，≤12 条 recent，omitted 计数，finding 证据指针全量在场
   const summary = await h.run("src_state", { detail: "summary" }, parent);
   assert.equal(summary.version, 2);
