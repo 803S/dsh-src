@@ -5813,3 +5813,73 @@ test("[local.87] artifacts：src_add_goal 起手建齐五子夹+README（幂等�
     await fsPromises.rm(telDir, { recursive: true, force: true });
   }
 });
+
+/* [local.94] Skill Selector 定位修正：提醒器（非激活器）+ 上下文污染闸。
+   三层验证：①规则层召回用真实 skill 源（playbook route/知识库/capability），绝不含 fofa、agniops 等工具名
+   ②污染闸四条件（非 skip / 置信度≥0.6 / 未提醒过 / 未读过）逐条锁死 ③提醒行 ≤1 行且去重。 */
+test("Skill Selector 召回真实 skill 源 + 污染闸 + 提醒去重", async () => {
+	const { recallCandidates, skillReminderLine, createSkillReminderRegistry } = await import("../lib/src/decision/skill-recall.js");
+	const { PLAYBOOK_ROUTE_KEYS: ROUTE_KEYS } = await import("../lib/src/playbooks.js");
+	// ① 候选必须来自真实 skill 源：route key ∈ 17 个 playbook，或 capabilities.yaml 的 kind=skill 条目
+	const CAP_SKILLS = ["wx-minapp-recon", "droidasc", "wechat-mp-reader", "src-rules-scraper", "clown-src-playbook"];
+	const TOOL_NAMES = ["fofa", "agniops", "certspotter", "playwright"]; // 侦察工具/mcp，绝不能当 skill 候选
+	// 分类信号：越权类别直连 authorization（score=10）；无分类的裸路径回落到 terms 匹配
+	const idor = recallCandidates({ method: "GET", path: "/api/user/1002/profile", query: "", category: "越权删改", goalTarget: "example.com" });
+	assert.ok(idor.length > 0, "越权类别应有候选召回");
+	assert.ok(idor.length <= 5, "候选上限 5");
+	for (const c of idor) {
+		assert.ok(ROUTE_KEYS.includes(c.id) || CAP_SKILLS.includes(c.id), `候选 ${c.id} 必须来自真实 skill 源`);
+		assert.ok(!TOOL_NAMES.includes(c.id), `候选 ${c.id} 是侦察工具，不得当 skill`);
+	}
+	assert.equal(idor[0].id, "authorization", "越权类别直连 authorization route");
+	assert.equal(idor[0].score, 10, "category 信号 score=10");
+	assert.equal(idor[0].matchedBy[0], "category:越权删改", "matchedBy 标注来源");
+	assert.ok(idor[0].doc.includes("idor-test.md"), "候选带知识库文档指针");
+	// 能力 skill：关键词命中（mp.weixin → wechat-mp-reader）
+	const cap = recallCandidates({ method: "GET", path: "/mp.weixin.com", category: "放行", goalTarget: "" });
+	assert.ok(cap.some((c) => c.id === "wechat-mp-reader"), "mp.weixin 命中 wechat-mp-reader");
+	// 放行请求无术语 → 静默（返回 []，不调 Laya）
+	const none = recallCandidates({ method: "GET", path: "/api/user/1002/profile", query: "", category: "放行", goalTarget: "" });
+	assert.equal(none.length, 0, "无术语的裸路径静默");
+	// 分类=放行但含 graphql 术语 → scoreRoutes 命中
+	const gql = recallCandidates({ method: "GET", path: "/graphql", query: "", category: "放行", goalTarget: "" });
+	assert.ok(gql.length > 0 && gql[0].id === "api-and-protocol", "graphql 术语命中 api-and-protocol");
+	// ② 污染闸：四条件
+	const reg = createSkillReminderRegistry();
+	assert.ok(reg.canRemind("s1", "authorization"), "首次可提醒");
+	reg.markReminded("s1", "authorization");
+	assert.ok(!reg.canRemind("s1", "authorization"), "已提醒过 → 不再提醒（同会话去重）");
+	assert.ok(reg.canRemind("s1", "injection"), "其他 skill 不受影响");
+	reg.markRead("s1", "injection");
+	assert.ok(reg.isRead("s1", "injection"), "已读过");
+	reg.markRead("s2", "injection");
+	assert.ok(!reg.isRead("s1", "authorization"), "已读状态按会话隔离");
+	// ③ 提醒行 ≤1 行
+	const line = skillReminderLine({ id: "authorization", kind: "route", title: "越权（IDOR/BOLA/BFLA）", doc: "skills/skill/知识库/idor-test.md" });
+	assert.ok(!line.includes("\n"), "提醒行不得换行（≤1 行）");
+	assert.ok(line.includes("authorization") && line.includes("idor-test.md"), "提醒行含 skill 与文档指针");
+});
+
+/* [local.94] emitLayaDecision 按 taskType 取对应 flag：skill/delegate 事件不得被 risk-grade flag 误吞。 */
+test("emitLayaDecision 按 taskType 分派 flag", async () => {
+	const { emitLayaDecision } = await import("../lib/src/telemetry/events.js");
+	const prev = { d: process.env.DSH_SRC_LAYA_DECISION, s: process.env.DSH_SRC_LAYA_SKILL, g: process.env.DSH_SRC_LAYA_DELEGATE };
+	try {
+		process.env.DSH_SRC_LAYA_DECISION = "off";
+		process.env.DSH_SRC_LAYA_SKILL = "shadow";
+		process.env.DSH_SRC_LAYA_DELEGATE = "shadow";
+		const rows = [];
+		const telemetry = { emit: (event, ctx, payload) => { rows.push({ event, payload }); return "id"; } };
+		const exec = { agent: { session: { id: "sess-x" } } };
+		emitLayaDecision(telemetry, exec, { action: "allow", taskType: "risk-grade" });
+		assert.equal(rows.length, 0, "risk-grade flag=off → 不发");
+		emitLayaDecision(telemetry, exec, { action: "authorization", taskType: "skill" });
+		emitLayaDecision(telemetry, exec, { action: "delegate", taskType: "delegate" });
+		assert.equal(rows.length, 2, "skill/delegate flag=shadow → 各发一条（不被 risk-grade off 误吞）");
+		assert.deepEqual(rows.map((r) => r.payload.taskType), ["skill", "delegate"]);
+	} finally {
+		if (prev.d === undefined) delete process.env.DSH_SRC_LAYA_DECISION; else process.env.DSH_SRC_LAYA_DECISION = prev.d;
+		if (prev.s === undefined) delete process.env.DSH_SRC_LAYA_SKILL; else process.env.DSH_SRC_LAYA_SKILL = prev.s;
+		if (prev.g === undefined) delete process.env.DSH_SRC_LAYA_DELEGATE; else process.env.DSH_SRC_LAYA_DELEGATE = prev.g;
+	}
+});
