@@ -1,32 +1,60 @@
-# Laya 主决策循环精简改造计划
+# Laya 主决策循环精简改造计划（实施交接版）
 
 日期：2026-09-24  
-状态：设计纠偏，尚未实施  
-仓库：`/Users/lihua-dis/Software/dsh-src`
+状态：**可以开始落地，但只能按 Phase 0 → Phase 1 的窄范围实施**  
+仓库：`/Users/lihua-dis/Software/dsh-src`  
+最近提交：`c628e22 local.95：统一 Laya 响应解析并补响应分类与 Skill 部署`
 
-## 0. 核心判断
+> 本文是交给其他 AI/开发者的实施边界，不是继续扩张项目的方案。任何不符合本文“暂不做”的改动，先停下来确认。
 
-接入 Laya 的正确结果不是让项目增加一套 orchestrator、prompt、状态机和浏览器执行器，而是：
+---
+
+## 1. 最新结论
+
+### 已经确认
+
+1. Laya daemon 可用：`http://127.0.0.1:3166`。
+2. `/decide` 实际返回 `{ answers: {...} }`，local.95 已统一 parser，兼容缺少 `type` 的 answer。
+3. Laya 实测延迟并不恒定：
+
+   ```text
+   risk：p50 约 17ms，p95 约 35ms，偶发约 250ms 以上
+   skill：p50 约 10ms，p95 约 30ms
+   browser：p50 约 9ms，p95 约 12ms
+   ```
+
+4. Playwright MCP 可以被 MCP client 启动并注册，当前能看到约 25 个 `browser_*` 工具。
+5. Playwright MCP 的 snapshot 调用约 2–3ms；MCP 启动和首次 navigate 不是每步延迟，不能混进 action p50。
+6. **尚未确认 dsh 宿主内部存在可复用的 browser before/after action hook。** MCP 工具注册不等于 dsh-src 已有 browser executor 接口。
+7. Laya 直接从自然语言 observation 选择 `click/type/wait/done` 的准确率不足；固定样例只有 `5/8`，不能直接接管真实浏览器动作。
+
+### 因此修改后的总判断
+
+当前不能直接落地：
 
 ```text
-原本由 agent 慢速思考的“下一步做什么”
-→ 改为 Laya 快速选择
-
-原本散落在 prompt / tool description / Skill 文档里的流程决策
-→ 删除或压缩
-
-原本必须由 agent 记住的工具和 Skill
-→ 由代码提供真实候选，Laya 主动选择
-
-原本由 Playwright/现有浏览器执行器完成的动作
-→ 仍由原执行器完成，Laya 只负责快速选 operation + target
+统一 next-action orchestrator
+HTTP + browser + delegate + Skill + research 全部接管
 ```
 
-因此本计划的第一目标不是增加能力，而是**减少 agent 思考轮次、减少重复提示词、减少错误动作和减少决策代码重复**。
+当前只落地一个可测的窄闭环：
 
-## 1. 必须保留的边界
+```text
+现有 browser observation
+→ 代码生成合法候选
+→ Laya 选择一个候选 index
+→ Hard guard 校验
+→ 现有 Playwright/MCP 工具执行
+→ 重新 observation
+```
 
-Laya 可以决定合法候选中的下一步，但以下内容不能交给 Laya 或 prompt：
+如果事实核查后发现宿主没有可复用 browser seam，则先补**一个最小 host hook**，仍然不能新建第二套 browser/context/page 生命周期。
+
+---
+
+## 2. 不变的硬边界
+
+Laya 只允许在代码提供的合法候选中选择，不能生成或决定：
 
 ```text
 scope / host 归属
@@ -36,362 +64,470 @@ approval / 凭据 / 写入与外部副作用
 证据保存、审计、恢复
 ```
 
-这些是 dsh-src 的执行内核，不是“限制 Laya 的提示词”。
-
-除此之外，不应继续堆叠静态流程说明来替代 Laya 决策。
-
-## 2. 当前实现的真实问题
-
-### 2.1 当前 Laya 仍是旁路调用
-
-`src_http` 目前可能依次触发：
+Laya 不得直接输出并执行：
 
 ```text
-risk-grade → delegate → skill → HTTP → response-classify
+任意 tool name
+任意 selector
+任意坐标
+任意 URL
+JavaScript
+shell 命令
+任意 payload
 ```
 
-但这些决策没有形成一个“下一步行动包”，仍然主要由 agent 自己决定后续动作。因此当前 Laya 增加了调用，却没有替代 agent 的决策轮次。
+Laya 返回 `DONE` 也不代表完成。dsh 必须独立验证 URL、页面状态、scope、证据和副作用。
 
-### 2.2 Skill 接入位置太晚
-
-当前 Skill 主要在 `src_http` 即将执行时才提醒：
+新增代码原则上只允许三类：
 
 ```text
-agent 已经决定调用 src_http
-→ Laya 才提醒 Skill
+Decision adapter：已有 observation/state → Laya schema
+Action adapter：Laya 选择 → 既有 executor/tool
+Hard guard：执行前检查 scope/approval/stale/evidence
 ```
 
-这无法解决 agent 根本没有想到以下动作的问题：
+若一个改动同时新增新 prompt、新 flag、新状态表、新执行器、新 recovery，默认判定为过度设计。
+
+---
+
+## 3. 当前代码状态
+
+### 已完成，不要重复实现
+
+- `lib/src/decision/laya-client.js`
+  - 统一解析 `answers`。
+  - 支持 `action / confidence / probabilities / source / fallback / latency`。
+  - Laya 不可达时 fail-open。
+- `lib/src/decision/skill-recall.js`
+  - 真实 playbook/capability 候选召回。
+  - 不使用 `fofa`、`agniops` 等虚假 Skill 名称。
+- `scripts/deploy.mjs`
+  - 已包含 `lib/src/decision/skill-recall.js`。
+- `src_http` 当前仍保留 risk/delegate/skill/response-classify shadow 路径。
+- 完整集成测试当前为 `207/207` 通过。
+
+### 当前仍不能宣称完成
+
+- 当前 Laya 还不是主循环。
+- 当前 Skill Selector 仍主要是 `src_http` 前的提醒/排序，不是全局主动记忆。
+- 当前没有已证明的 dsh browser action loop。
+- 当前不能删除现有 prompt、tool description、Skill 提醒和 fallback。
+- 当前不能把相关 flag 切到高风险 `on`。
+
+---
+
+## 4. Phase 0：事实核查与协议基线（local.95 已基本完成）
+
+### 目标
+
+确认“Laya 正确决定能被可靠接收”，并确认 browser action 的真实宿主入口。
+
+### 已完成项
+
+- parser 修复和独立 smoke test。
+- daemon health、risk、skill、browser latency 基线。
+- Playwright MCP 独立启动、工具列表同步、snapshot 调用验证。
+
+### 仍需补齐的事实核查
+
+在开始写 browser adapter 前，必须回答并记录：
 
 ```text
-读取 capability、读取 lesson、使用浏览器、调用 Burp、获取认证流量、创建验证 intent、委派子任务
+1. Playwright MCP 工具由哪个 profile/plugin 注册？
+2. dsh agent 调用 MCP 工具时，最终是否经过 ctx.tools.execute？
+3. browser_navigate/browser_snapshot/browser_click 的 exec.agent/session 是否可取得？
+4. browser context/page 生命周期由谁管理？
+5. observation 在哪里产生，格式是什么？
+6. 是否存在 browser action 前后的稳定 hook？
+7. 工具失败、页面变化、连接断开如何返回？
+8. 如何把 action 绑定到 SRC session/engagement？
 ```
 
-Skill/tool recall 必须位于“下一行动决策”之前，而不是只附加在某个工具返回值后面。
-
-### 2.3 当前仓库没有确认的 browser action loop
-
-dsh-src 当前明确拥有 `src_http`、intent、telemetry、Laya client 等 SRC 能力，但仓库内没有一个已确认的 `src_browser`/Playwright action loop 可直接替换。
-
-所以不能直接在 dsh-src 内新建第二套 browser/context/page 生命周期。第一步必须找到现有 browser executor 的真实入口，然后只接一个 adapter：
+调查方式优先使用：
 
 ```text
-现有 browser observation
-→ Laya decision
-→ 现有 Playwright/MCP action executor
+代码定位 + 运行时最小 trace + 一个低风险 data: 页面
 ```
 
-如果宿主没有 before/after action hook，必须先补一个最小 hook；不能用“新增几个 browser 文件”假装已经接入主循环。
+不要用一次大范围 `find/rg` 就断言“仓库没有 executor”。宿主包、profile patch、MCP client 和 dsh-src 必须分开查。
 
-### 2.4 `laya-client.js` 需要先成为可靠协议适配器
+### Phase 0 验收
 
-当前 risk 路径和通用 `layaRequest()` 对 daemon response 的解析假设不完全一致。若 choice answer 没有预期的 `type` 字段，delegate、skill、response-classify 可能错误 fallback。
+- parser 回归测试通过。
+- Laya timeout/fallback 可观测且不阻塞原流程。
+- 明确 browser seam 的代码位置和生命周期所有者。
+- 未确认 seam 前，不新建 `lib/src/browser/*`。
 
-在接入主循环前必须统一：
+---
 
-```text
-请求 schema
-→ response parser
-→ action / target / confidence / probabilities
-→ fallback
-→ latency / adopted telemetry
+## 5. Phase 1：最小 Browser Action Loop（当前唯一主线）
+
+### 5.1 候选必须由代码生成
+
+不要把完整页面自然语言直接交给 Laya，让它自由产生 `click + target` 两个字段。第一版使用**编号候选**，避免 operation 和 target 组合错误：
+
+```js
+[
+  {
+    index: 0,
+    operation: "click",
+    targetRef: "e2",
+    label: "Continue",
+    allowed: true,
+    guard: { page: "same-fingerprint" }
+  },
+  {
+    index: 1,
+    operation: "type",
+    targetRef: "e3",
+    valueRef: "approved-input-1",
+    label: "Name",
+    allowed: true,
+    guard: { page: "same-fingerprint" }
+  },
+  {
+    index: 2,
+    operation: "wait",
+    targetRef: null,
+    allowed: true
+  }
+]
 ```
 
-否则 Laya 的正确决定可能被 adapter 丢掉，agent 仍然回到慢思考。
+候选中的 `valueRef` 必须引用代码侧已经批准的值，不能让 Laya 生成任意敏感值或凭据。
 
-## 3. 最小目标架构
+### 5.2 Laya 只选择 index
 
-不建设完整 orchestrator。只建设一个薄的 `next-action` 适配层：
-
-```text
-当前 observation/state
-  → 代码生成真实候选
-  → 一次 Laya decide
-  → 返回 next-action
-  → 既有工具/浏览器执行
-  → 执行结果进入下一轮
-```
-
-最小输出：
+建议 schema：
 
 ```js
 {
-  actionId: "src_http|src_read_capability|src_read_lesson|browser.click|delegate|ask_user",
-  targetRef: "已有候选 ID 或浏览器编号元素",
-  skillId: "已有 skill，可为空",
-  args: {},
-  confidence: 0,
-  source: "laya|rules|fallback"
+  index: {
+    type: "choice",
+    instructions: "只选择一个候选 index；不要输出候选之外的值",
+    criteria: ["0", "1", "2"]
+  }
 }
 ```
 
-这里的 `actionId` 必须来自代码提供的候选，不允许 Laya 生成任意工具名、selector、坐标、URL、JavaScript 或 shell 命令。
-
-## 4. 减法原则
-
-接入 `next-action` 后，应删除或压缩以下重复内容：
-
-- 主 prompt 中“下一步应该调用什么工具”的长流程规则；
-- tool description 中重复解释所有 Skill 选择逻辑的文字；
-- 每个模块各自维护的 self/delegate/skill/next-step 判断；
-- `src_http` 中无条件串行触发 risk、delegate、skill 的多头 hook；
-- 为弥补 agent 遗忘而堆叠的静态能力提醒。
-
-保留：
-
-- 工具参数、返回结构和错误修复说明；
-- 安全硬闸、审批和 scope 说明；
-- 能力/Skill 的真实 manifest；
-- 证据、审计和恢复约束。
-
-验收不是“新增了多少 Laya 代码”，而是：
+prompt 中明确提供：
 
 ```text
-tool description 字符数下降
-主 prompt 流程决策文字下降
-重复 skill 提醒下降
-agent 为下一步产生的 turn 下降
-有效动作耗时下降
+goal
+observation fingerprint
+编号候选
+完成判据
+禁止选择 done 的条件
 ```
 
-## 5. 实施阶段
+第一版不让 Laya 同时独立选择：
 
-### Phase 0：基线和协议修复
+```text
+operation + target + value + done
+```
 
-目标：先确保 Laya 决策可被可靠使用。
+因为当前实测表明自由组合会出现错误的 `done` 和错误 target 选择。
 
-只做：
+### 5.3 Hard guard 必须在执行前
 
-1. 固定当前 repo/profile/process 版本校验。
-2. 测量 daemon `/decide` 的实际延迟：空请求、risk、skill、browser observation 分开测。
-3. 统一 `laya-client.js` 的 response parser，兼容 daemon 实际返回，不依赖偶然的 `type` 字段。
-4. 保留统一最低公共字段：
+代码侧必须校验：
+
+```text
+index 是否存在
+candidate.allowed 是否为 true
+operation 是否为白名单
+targetRef 是否仍存在
+observation fingerprint 是否仍匹配
+当前 URL/host 是否仍在 scope
+写入/提交/外部副作用是否需要 approval
+速率/并发/重试限制是否满足
+```
+
+任一失败：
+
+```text
+不执行动作
+重新 observation 或走 fallback
+记录 guard_denied
+```
+
+不得让 Laya 通过返回一个新 selector 来绕过 stale guard。
+
+### 5.4 DONE 的特殊规则
+
+第一版可以不提供 `done` 候选。若必须提供：
+
+```text
+done 只能由代码在独立验证成功后注入候选
+Laya 不能仅凭“看起来完成”选择 done
+```
+
+完成验证至少包括：
+
+```text
+URL/页面状态符合目标
+必要元素或结果存在
+scope 未变化
+动作副作用已确认
+证据已保存或明确记录为未保存
+```
+
+### 5.5 第一个测试页面
+
+使用本地、无副作用页面，不使用真实目标：
+
+```html
+<button id="continue">Continue</button>
+<input aria-label="Name">
+<div id="state">idle</div>
+```
+
+测试动作只允许：
+
+```text
+click
+ type
+wait
+```
+
+禁止第一版接入：
+
+```text
+登录
+支付
+删除
+提交外部数据
+任意真实 SRC 目标
+```
+
+### 5.6 Phase 1 telemetry
+
+不新增状态表，只追加 telemetry 字段：
+
+```text
+browser.decision
+browser.action
+browser.guard
+browser.observation
+```
+
+至少记录：
+
+```text
+sessionId
+engagementId
+observationFingerprint
+candidateCount
+chosenIndex
+operation
+targetRef
+confidence
+probabilities
+latency
+source=laya|fallback|rules
+fallback
+adopted
+replacedAgentTurn
+executed
+success
+failureCode
+guardCode
+```
+
+telemetry 必须 fire-and-forget，失败不能阻塞浏览器动作。
+
+### 5.7 Phase 1 验收
+
+必须同时满足：
+
+1. 真实调用链经过现有 Playwright/MCP executor。
+2. 没有新增第二套 browser/context/page 生命周期。
+3. 至少一个本地页面完成：
 
    ```text
-   action / targetRef / confidence / probabilities / source / fallback / latency
+   observation → Laya index → guard → click/type/wait → observation
    ```
 
-5. telemetry 只记录：候选、选择、延迟、fallback、是否被执行；不新增业务状态表。
+4. stale target 不会执行。
+5. Laya timeout/非法 index 会 fallback，不会阻塞或执行任意动作。
+6. `done` 不会绕过独立完成校验。
+7. 能统计 adopted、fallback、guard denied、action success/failure。
+8. 与 agent 原流程有可比较的 planning turn 和有效动作耗时基线。
 
-验收：
+在这些条件满足前，不能扩展到 HTTP、delegate、research 或全局 next-action。
 
-- Laya 正确返回的 choice 不会被错误 fallback；
-- daemon 超时仍能回退现有路径；
-- 得到真实 p50/p95 后再决定不同任务预算；
-- 不新增 prompt 或 orchestrator。
+---
 
-### Phase 1：Next-action 主决策包
+## 6. Phase 2：才考虑统一 Next-action
 
-目标：让 Laya 真正替代 agent 的下一步思考。
+只有 Phase 1 证明 Laya 能稳定替代一个真实 browser planning turn 后，才把候选范围从 browser action 扩展到已有工具/Skill。
 
-候选来自现有注册表和状态：
-
-```text
-现有 dsh tools
-现有 capabilities
-现有 playbook/lessons
-当前 goal/intent
-最近 observation/finding
-当前 browser action（若宿主提供）
-```
-
-Laya 一次选择：
+候选仍由代码生成：
 
 ```text
-read-skill
-read-capability
-run-capability
+src_read_capability
+src_read_lesson
+src_run_capability
 src_http
 browser-action
 delegate
-parallel
 record-research
 ask-user
 ```
 
-不再独立串行调用：
+第一版不做 `parallel` 自动并行；并行会改变审批、速率、证据和状态语义，必须另行验证。
 
-```text
-先问 delegate
-再问 skill
-再问 target
-```
-
-`delegate` 只是 next-action 的一种候选，不是每个 HTTP 的固定 hook。
-
-### Phase 2：Browser fast loop
-
-前提：确认宿主现有 browser executor。
-
-目标链路：
-
-```text
-existing page observation
-  → 编号/结构化元素候选
-  → 一次 Laya 返回 operation + targetRef
-  → stale/scope/approval guard
-  → existing Playwright action
-  → useful-change observation
-```
-
-第一批只接：
-
-```text
-observe / click / type / press / scroll / wait / extract
-```
-
-Laya 输出示例：
+统一 next-action 的最小结果：
 
 ```js
 {
-  operation: "click",
-  targetRef: "e17",
-  value: null,
-  observationFingerprint: "...",
-  confidence: 0.91,
-  expiresAt: 0
+  actionId,
+  targetRef,
+  argsRef,
+  confidence,
+  source,
+  fallback,
+  latency
 }
 ```
 
-不得新增第二套：
+`argsRef` 只能引用代码生成并通过 hard guard 的参数，不允许 Laya 自由构造任意工具参数。
+
+接入统一 next-action 后，才评估删除：
 
 ```text
-browser/context/page 生命周期
-Playwright driver
-scope/approval/recovery
+src_http 固定 delegate hook
+src_http 固定 skill hook
+重复主 prompt 流程文字
+重复 tool description 决策规则
 ```
 
-stale、页面变化、Laya 超时或协议错误时，直接重新观察或回退现有 executor。
+删除必须以 telemetry 证明为依据，不能提前删。
 
-### Phase 3：主动工具/Skill 记忆
+---
 
-目标：解决 agent 偷懒和忘记工具，而不是在 `src_http` 返回一行容易被忽略的提示。
+## 7. Phase 3：主动 Skill/tool recall（后置）
 
-触发时机：
+当前 `src_http → skillHint` 继续保留，不能宣称为全局主动记忆。
+
+后置版本的触发点应是：
 
 ```text
 新 goal/intent
-intent 状态变化
-出现新资产或新输入类型
-browser 页面类型变化
+新资产或新输入类型
 认证边界变化
+browser 页面类型变化
 上一步失败或需要换方向
 ```
 
-Laya 看到的不是静态 Skill 名称，而是带能力和前置条件的真实候选：
+候选必须来自：
 
-```js
-{
-  actionId: "src_read_capability",
-  targetRef: "authorization",
-  reasonCode: "object-id-plus-auth-boundary",
-  preconditions: ["second-account"],
-  nextAction: "read-before-test"
-}
+```text
+真实注册工具
+capability manifest
+playbook route
+lesson
+browser action
 ```
 
-去重单位不能是“整个会话一次”，应是：
+去重单位：
 
 ```text
 session + intent + phase + contextFingerprint
 ```
 
-这样早期读过 `js-reverse` 后，后续进入授权验证仍能召回 `authorization`。
+不要按整个 session 粗暴只提醒一次。
 
-### Phase 4：研究路径和 payload 记忆
+---
 
-只建设轻量研究目录，不建设 payload 执行平台：
+## 8. 明确暂不实施
+
+在 Phase 1/2 未验收前，禁止开始：
 
 ```text
-research/inbox/
-research/triaged/
-research/replay/
-research/accepted/
+完整 next-action orchestrator
+新的 orchestrator/recovery/job queue
+第二套 browser executor
+完整 closure/repetition 系统
+强制重复请求阻断
+approval/todo TTL
+大型 payload registry
+研究内容自动执行
+高风险 Laya on 模式
+删除现有 prompt/tool description/fallback
 ```
 
-X、博客、报告中的内容先转成：
+这些不是永远不做，而是不能作为当前 browser loop 的前置工作。
+
+---
+
+## 9. 关键指标和比较方式
+
+不能预先把 `250ms` 或 `p50≤100ms/p95≤250ms` 当成已验证目标。先测量，再定预算。
+
+至少比较：
 
 ```text
-假设
-前置条件
-输入位置
-安全变体
-预期 oracle
-来源/许可证
-本地复现状态
-```
-
-Laya 选择的是：
-
-```text
-是否适用
-下一实验
-需要什么前置条件
-```
-
-不是直接选择并执行任意 payload。
-
-第一批最多 20～50 个经过本地 fixture 或授权目标验证的 hypothesis。未验证内容不进入运行时候选。
-
-## 6. 明确后置事项
-
-以下不再作为 Laya 接入主线的前置工作：
-
-- 完整 `repetition.js` 和强制重复阻断；
-- 完整 `closure.js` 和自动 intent 收尾；
-- approval/todo TTL 与历史状态治理；
-- 持久化 orchestrator/job queue；
-- 第二套 browser executor；
-- 大型 payload 数据库；
-- 全系统统一的复杂 decision envelope。
-
-这些可以在主决策循环已经证明有效后，根据真实数据单独处理。当前只允许记录轻量 observation，不直接阻断差分、状态机或 fuzzing 变体。
-
-## 7. 规模控制
-
-接入 Laya 后新增代码原则上只允许三类：
-
-```text
-Decision adapter：把已有状态/候选转成 Laya 输入
-Action adapter：把 Laya 输出交给已有工具/浏览器执行器
-Hard guard：执行前校验 scope/approval/stale/evidence
-```
-
-若一个改动同时新增：
-
-```text
-新 prompt + 新 flag + 新状态 + 新存储表 + 新执行器
-```
-
-则默认判定为过度设计，必须拆回最小 adapter。
-
-## 8. 关键指标
-
-不以“Laya 调用越少越好”为目标，重点衡量：
-
-```text
-被 Laya 替代的 agent planning turn 数
-browser action p50/p95
+agent planning turns
+Laya decision latency p50/p95/p99
+fallback rate
+adoption rate
+replacedAgentTurn
+stale/guard denial rate
+action failure rate
 有效动作完成时间
-action 失败率
-fallback 率
-tool/Skill 采纳率
-agent 忘记工具导致的重复探索
 每个 intent 的有效验证数
 verified finding rate
 ```
 
-只有在这些指标改善时，才继续扩大 Laya 的决策范围。
+成功标准不是“Laya 调用更多”，而是：
 
-## 9. Done 定义
+```text
+在不增加安全违规和错误动作的前提下
+减少 agent planning turns
+减少无效浏览器动作
+减少有效动作完成时间
+```
 
-本计划完成的标准：
+如果 Laya 的选择准确率不足，优先改：
 
-1. Laya 已经进入真实 next-action loop，而不是只写 shadow telemetry。
-2. 一次决策能覆盖工具/Skill/浏览器动作选择，agent 不再为每一步重复慢思考。
-3. 现有 browser executor 被复用，没有出现第二套 browser 生命周期。
-4. 工具和 Skill 由真实候选自动进入决策上下文，agent 不再依赖记忆名称。
-5. 旧 prompt 中重复的流程决策被删除或压缩。
-6. 安全边界仍由代码硬校验，不依赖 Laya 自律。
-7. 研究内容可以通过结构化 hypothesis 进入候选，但未验证 payload 不会直接执行。
-8. 项目代码和状态复杂度下降，而不是新增一套 Agent 平台。
+```text
+候选生成
+observation 结构化
+完成判据
+hard guard
+```
+
+不要继续堆 prompt 文字来掩盖准确率问题。
+
+---
+
+## 10. 交给实施 AI 的第一批任务
+
+按以下顺序执行，完成一项再做下一项：
+
+1. 不改业务逻辑，定位 Playwright MCP 在当前 web profile 的注册、同步、调用和生命周期。
+2. 用低风险 `data:` 页面记录一次真实 dsh agent → MCP tool → browser result 的完整链路。
+3. 确认是否有可复用 before/after action hook；没有则提出最小 host hook 位置和接口，不要直接新建 browser 子系统。
+4. 新增一个只负责 `observation → candidate list → Laya index` 的 Decision adapter。
+5. 新增一个只负责 candidate index → 既有 MCP tool 的 Action adapter。
+6. 新增 stale/scope/approval/done 的 Hard guard。
+7. 用本地 fixture 完成一个 click 或 type 闭环。
+8. 加 telemetry 和回归测试。
+9. 输出 baseline 与 Laya loop 对比后，等待确认再进入 Phase 2。
+
+### 实施 AI 的停止条件
+
+遇到以下任一情况必须停止扩大范围并报告：
+
+```text
+找不到 browser executor 所有者
+需要复制 page/context 生命周期
+需要新增持久化状态表
+需要让 Laya 生成任意 selector/URL/工具参数
+需要提前删除 prompt/fallback
+需要把 flag 切到 on 才能证明功能
+需要同时改 HTTP、delegate、Skill、research 多条链
+```
+
+这份计划的最终目标是做减法：让 Laya 接管已经被代码结构化的下一动作，而不是再造一个 Agent 平台。
