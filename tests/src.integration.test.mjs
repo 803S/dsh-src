@@ -1671,6 +1671,31 @@ test("[local.16] buildReport 双视角呈现：有 victimImpact 输出两行；�
   assert.ok(!report2.markdown.includes("⑤ 受害者影响"), "空 victimImpact 不渲染⑤受害者影响行（动态模板：空步骤不占位）");
 });
 
+test("[Phase 8] pattern lesson 四列、形态校验、同型去重与目标特征召回", async () => {
+  const dir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-pattern-"));
+  process.env.DSH_SRC_LESSONS_DIR = dir;
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("pattern-1");
+  await h.run("src_add_goal", { target: "api.example.test", objective: "pattern" }, parent);
+  const args = { id: "credential-diff", kind: "pattern", vulnType: "凭证响应差分", recognize: "接口在匿名、无效凭证与有效凭证下返回结构或权限差异", try: "对同一资源执行匿名、假值和授权会话三组低风险对照请求", success: "有效凭证相对匿名和假值出现可证明的身份或资源差分", falsePoint: "仅状态码或通用错误文案变化，且三组响应没有敏感内容差分", featureKeys: "api,credential,auth" };
+  const created = await h.run("src_record_lesson", args, parent);
+  assert.equal(created.updatedExisting, false);
+  const text = await fsPromises.readFile(nodePath.join(dir, "credential-diff.md"), "utf8");
+  assert.match(text, /## 认什么/);
+  assert.match(text, /"kind":"pattern"/);
+  await assert.rejects(() => h.run("src_record_lesson", { ...args, id: "credential-diff-2" }, parent), /同型 pattern 已存在/);
+  await assert.rejects(() => h.run("src_record_lesson", { ...args, id: "bad-domain", recognize: "在 https:\/\/target.example.com/api 返回 token" }, parent), /域名\/URL/);
+  await assert.rejects(() => h.run("src_record_lesson", { ...args, id: "bad-field", recognize: "响应包含 userId 字段" }, parent), /字段名/);
+  const { patternLessonsForContext } = await import("../lib/src/lessons.js");
+  const hits = await patternLessonsForContext({ target: "api.example.test", text: "验证认证接口的凭证差分" });
+  assert.equal(hits.length, 1);
+  assert.deepEqual(hits[0].features.sort(), ["api", "auth", "credential"]);
+  const quiet = await patternLessonsForContext({ target: "static.example.test", text: "纯静态资源" });
+  assert.equal(quiet.length, 0);
+});
+
 test("[local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索引注入 + finalize 未沉淀警告", async () => {
   const dir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "src-lessons-"));
   process.env.DSH_SRC_LESSONS_DIR = dir;

@@ -136,6 +136,20 @@ if (lessonsTotal > 20000) {
 	violations += 1;
 }
 
+/* [Phase 8] pattern lesson 校验：四列、敏感细节形态化、内置种子预算。 */
+const patternMd = readFileSync(join(root, "lib/src/lessons.js"), "utf8");
+for (const token of ["PATTERN_COLUMNS", "patternShapeError", "patternLessonsForContext"]) {
+  if (!patternMd.includes(token)) { console.error(`::error file=lib/src/lessons.js::缺少 pattern 机制 ${token}`); violations += 1; }
+}
+const shortTable = join(process.env.DSH_SRC_SHORT_TABLE ?? "/Users/lihua-dis/Downloads/clown-src-6k-skill/skills/skill/知识库/打穿短表.md");
+try {
+  const seedRows = readFileSync(shortTable, "utf8").split("\n").filter((line) => /^\|/.test(line) && !/^\|[- ]+\|/.test(line) && !line.includes("认什么 |"));
+  if (seedRows.length < 80 || seedRows.length > 100) { console.error(`::error file=${shortTable}::短表 pattern 行数 ${seedRows.length} 不在 80..100 预算`); violations += 1; }
+  if (seedRows.some((line) => /https?:\/\//i.test(line) && /认什么/.test(line))) { console.error(`::error file=${shortTable}::短表认法包含 URL，禁止把实例写入通用 pattern`); violations += 1; }
+} catch (error) {
+  console.warn(`::warning::未找到短表种子 ${shortTable}，跳过 pattern seed 行数检查`);
+}
+
 /* [Phase 0.5] 参数对象重复键静态检查：JS 对象字面量后键覆盖前键（b410890 事故：src_add_finding
  * victimImpact 重复定义，模型看到的是旧描述）。字符串/注释感知的括号深度扫描，同一括号深度下
  * 重复属性键报 error。只扫工具 schema 对象（lib/src/tools/index.js）——其他文件的对象字面量
