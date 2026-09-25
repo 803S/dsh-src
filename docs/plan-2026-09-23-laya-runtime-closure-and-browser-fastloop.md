@@ -3,7 +3,27 @@
 日期：2026-09-24  
 状态：**可以开始落地，但只能按 Phase 0 → Phase 1 的窄范围实施**  
 仓库：`/Users/lihua-dis/Software/dsh-src`  
-最近提交：`c628e22 local.95：统一 Laya 响应解析并补响应分类与 Skill 部署`
+最近提交：`19341f3 local.96：Laya 浏览器候选闭环与安全回退`
+
+### local.96 Phase 1 验收记录（2026-09-25）
+
+Phase 1 最小 browser action loop 已完成并部署：
+
+```text
+MCP observation → 代码候选 → Laya index → stale/scope/target hard guard
+→ 既有 Playwright MCP executor → after observation → telemetry
+```
+
+已满足：
+
+- 真实 Playwright MCP context/page 生命周期仍由 MCP 宿主持有，browser-loop 不创建第二套生命周期。
+- 真实 `ctx.tools.execute` seam 已通过独立 host runner 验证；所有 snapshot/action 调用保留同一 execution 上下文。
+- 本地无副作用 data 页面已完成真实 Laya 采纳闭环：`click Continue` 后页面状态从 `idle` 变为 `clicked`，按钮变为 `Done`。
+- Laya warm-up 后本地实测 browser-index 决策约 20–55ms；首次冷启动/超时会安全 fallback 为 `wait`，不点击首个按钮。
+- fallback、stale、scope、target、snapshot、action、after-snapshot 错误均有独立 telemetry 字段，sink 失败不阻塞动作。
+- `browser.observation/decision/guard/action` 均记录 `sessionId`、`engagementId`、`candidateCount`、`chosenIndex`、`operation`、`targetRef`、`confidence`、`latency`、`source`、`fallback`、`adopted`、`replacedAgentTurn`、`executed`、`success`、`failureCode`、`guardCode`。
+
+验证结果：`browser-loop 8/8`、`SRC integration 207/207`、语法检查和 `git diff --check` 全部通过。该薄层仍保持独立，尚未注册为 SRC 正式工具或自动接管 agent 的全部 browser 调用；这是后续 Phase 2 的独立决策，不影响 Phase 1 验收。
 
 > 本文是交给其他 AI/开发者的实施边界，不是继续扩张项目的方案。任何不符合本文“暂不做”的改动，先停下来确认。
 
