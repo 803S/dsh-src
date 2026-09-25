@@ -115,6 +115,8 @@ export interface SrcProjectionObservation {
   readonly decision: string
   readonly respHeaders: string
   readonly respBodySnippet: string
+  readonly reqHeaders?: string
+  readonly reqBodySnippet?: string
   readonly createdAt: number
 }
 

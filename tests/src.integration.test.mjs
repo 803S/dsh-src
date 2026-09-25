@@ -5908,3 +5908,199 @@ test("emitLayaDecision 按 taskType 分派 flag", async () => {
 		if (prev.g === undefined) delete process.env.DSH_SRC_LAYA_DELEGATE; else process.env.DSH_SRC_LAYA_DELEGATE = prev.g;
 	}
 });
+
+/* local.99 regression: assert the actual host-normalized model content, not only execute().value. */
+async function freshEvidenceHarness() {
+  (await import("../lib/src.js")).__resetSharedDomainOpensForTests();
+  return harness();
+}
+async function modelResult(h, name, args, exec) {
+  const { ToolRuntime } = await import("@deepseek-ai/dsh-tools");
+  const value = await h.run(name, args, exec);
+  // Exercise the real host's snapshot → output schema → render → materialization seam.
+  const runtime = { concludingExecutions: new Set(), canonicalResults: new WeakMap(),
+    markCanonical: ToolRuntime.prototype.markCanonical, materializeFinalResult: ToolRuntime.prototype.materializeFinalResult };
+  return ToolRuntime.prototype.createSuccessResult.call(runtime, { arguments: args, token: Symbol(name) }, h.tools.get(name), value);
+}
+const modelText = (r) => r.content.map((c) => c.text ?? "").join("\n");
+
+test("[local.99] HTTP 模型可见响应与自动证据：脱敏、去重不丢原证据、父子读取、投影", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-http"), child = h.exec("l99-http-child", "l99-http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "https://fixture.example.test", "set-cookie": "sid=RESPONSE_COOKIE_SECRET; HttpOnly" });
+    res.end(JSON.stringify({ marker: "MODEL_MUST_SEE_BODY", echo: req.headers.authorization, phone: "13800001111" }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${server.address().port}/api/list?item=2`;
+  try {
+    await h.run("src_add_goal", { target: "127.0.0.1", objective: "fixture" }, parent);
+    const intent = await h.run("src_add_intent", { title: "授权响应对照", goalId: "goal-1" }, parent);
+    const account = await h.run("src_add_test_account", { label: "fixture", credential: "Authorization: Bearer INJECTED_SECRET_99" }, parent);
+    const args = { url, method: "GET", credentialRef: account.credentialRef, intentId: intent.id, justification: "local fixture" };
+    const first = await modelResult(h, "src_http", args, child);
+    assert.match(modelText(first), /MODEL_MUST_SEE_BODY/);
+    assert.match(modelText(first), /access-control-allow-origin/);
+    assert.match(modelText(first), /13800001111/);
+    assert.doesNotMatch(modelText(first), /INJECTED_SECRET_99|RESPONSE_COOKIE_SECRET/);
+    assert.ok(first.value.evidenceId);
+    const second = await modelResult(h, "src_http", args, child);
+    assert.equal(second.value.deduped, true);
+    assert.notEqual(second.value.evidenceId, first.value.evidenceId);
+    const evidence = await modelResult(h, "src_get_evidence", { ids: [second.value.evidenceId], full: true }, child);
+    assert.match(modelText(evidence), /MODEL_MUST_SEE_BODY/);
+    assert.match(modelText(evidence), /item=2/);
+    assert.match(modelText(evidence), /Request headers/);
+    assert.doesNotMatch(modelText(evidence), /INJECTED_SECRET_99|RESPONSE_COOKIE_SECRET/);
+    const state = await h.run("src_state", {}, child);
+    assert.equal(state.observations.length, 2);
+    assert.equal(state.observations[0].intentId, intent.id);
+    const { srcDomainSpec } = await import("../lib/src.js");
+    const persisted = srcDomainSpec.tables.observations.valueSchema.parse(state.observations[0]);
+    assert.match(persisted.reqHeaders, /<stored>/);
+    assert.match(persisted.respBodySnippet, /MODEL_MUST_SEE_BODY/);
+    const events = h.sessions.get("l99-http").events.filter((e) => e.data?.name === "src_record_observation");
+    assert.equal(events.length, 2);
+    let folded = applySrcEvent(srcInitialState, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "127.0.0.1", objective: "fixture" }) } });
+    folded = applySrcEvent(folded, { type: "tool/call", data: { name: "src_add_intent", arguments: JSON.stringify({ title: "授权响应对照", goalId: "goal-1" }) } });
+    for (const e of events) folded = applySrcEvent(folded, e);
+    assert.deepEqual(folded.observations.map((o) => o.id), state.observations.map((o) => o.id));
+    assert.equal(applySrcEvent(folded, events[0]).observations.length, 2);
+    const outsider = h.exec("l99-outsider");
+    const missing = await h.run("src_get_evidence", { ids: [first.value.evidenceId] }, outsider);
+    assert.equal(missing.items[0].found, false);
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+test("[local.99] Laya 高置信 allow 不越过审批；统一注入认证/Content-Type；重放留证", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-laya");
+  let hits = 0, seenHeaders;
+  const server = http.createServer((req, res) => { hits++; seenHeaders = req.headers; res.setHeader("content-type", "application/json"); res.end('{"marker":"REPLAY_EVIDENCE"}'); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const root = `http://127.0.0.1:${server.address().port}`;
+  const prevFetch = globalThis.fetch, prevFlag = process.env.DSH_SRC_LAYA_DECISION;
+  globalThis.fetch = async (url, init) => String(url).endsWith("/decide") ? new Response(JSON.stringify({ answers: { risk: { score: 0 }, action: { choice: "allow", probabilities: { allow: 1 }, confidence: 1 } } }), { status: 200 }) : prevFetch(url, init);
+  process.env.DSH_SRC_LAYA_DECISION = "on";
+  try {
+    await h.run("src_add_goal", { target: "127.0.0.1", objective: "approval fixture" }, parent);
+    const pending = await modelResult(h, "src_http", { url: `${root}/delete`, method: "GET", justification: "mock destructive name" }, parent);
+    assert.equal(pending.value.approval, "pending"); assert.equal(hits, 0);
+    assert.equal((await h.run("src_state", {}, parent)).observations.length, 0);
+    const approved = await modelResult(h, "src_resolve_approval", { id: pending.value.pendingApprovalId, action: "allow" }, parent);
+    assert.equal(hits, 1); assert.ok(approved.value.evidenceId);
+    assert.match(modelText(approved), /REPLAY_EVIDENCE/);
+    assert.match(modelText(approved), new RegExp(approved.value.evidenceId));
+    const account = await h.run("src_add_test_account", { label: "local", credential: "Authorization: Bearer L99_HEADER_SECRET" }, parent);
+    await modelResult(h, "src_http", { url: `${root}/query`, method: "POST", body: '{"filter":"local"}', credentialRef: account.credentialRef, justification: "read-only query" }, parent);
+    assert.equal(seenHeaders.authorization, "Bearer L99_HEADER_SECRET");
+    assert.equal(seenHeaders["content-type"], "application/json");
+    const reject = await h.run("src_http", { url: `${root}/destroy`, method: "GET", justification: "mock" }, parent);
+    await h.run("src_resolve_approval", { id: reject.pendingApprovalId, action: "reject" }, parent);
+    assert.equal(hits, 2);
+  } finally { globalThis.fetch = prevFetch; if (prevFlag === undefined) delete process.env.DSH_SRC_LAYA_DECISION; else process.env.DSH_SRC_LAYA_DECISION = prevFlag; await new Promise((r) => server.close(r)); }
+});
+
+test("[local.99] submit ID 映射、部分失败保留父投影、受限复核写回", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-submit"), child = h.exec("l99-submit-child", "l99-submit");
+  await h.run("src_add_goal", { target: "example.test", objective: "offline" }, parent);
+  const intent = await h.run("src_add_intent", { title: "复核证据", goalId: "goal-1" }, parent);
+  const batch = { intentId: intent.id, stage: "progress", facts: [{ kind: "http", target: "example.test", detail: "LOCAL_FACT_MARKER", confidence: 1 }] };
+  const first = await modelResult(h, "src_submit", batch, child);
+  assert.deepEqual(first.value.factIds, ["fact-1"]); assert.match(modelText(first), /facts=fact-1/);
+  const duplicate = await h.run("src_submit", batch, child);
+  assert.equal(duplicate.facts, 0); assert.deepEqual(duplicate.factIds, ["fact-1"]);
+  assert.match(modelText(await modelResult(h, "src_get_evidence", { ids: first.value.factIds }, child)), /LOCAL_FACT_MARKER/);
+  const bad = { title: "unproved", severity: "medium", impact: "test", affectedScope: "test", remediation: "test", pocEvidence: ["test"], reproducibleSteps: ["test"] };
+  await assert.rejects(() => h.run("src_submit", { ...batch, facts: [{ ...batch.facts[0], detail: "PARTIAL_FACT_MARKER" }], findings: [bad] }, child), /已持久化.*facts=fact-2/);
+  assert.ok(h.sessions.get("l99-submit").events.some((e) => e.data?.name === "src_add_fact" && e.data.arguments.includes("PARTIAL_FACT_MARKER")));
+  const research = await modelResult(h, "src_record_research", { intentId: intent.id, category: "fixture", hypothesis: "local hypothesis", status: "verified", evidence: ["fact-1"] }, child);
+  assert.ok(research.value.id);
+  assert.ok(h.sessions.get("l99-submit").events.some((e) => e.data?.name === "src_record_research"));
+  const other = await h.run("src_add_intent", { title: "不同任务", goalId: "goal-1" }, parent);
+  await assert.rejects(() => h.run("src_record_research", { intentId: other.id, category: "fixture", hypothesis: "wrong intent", status: "verified", evidence: ["fact-1"] }, child), /先用 src_submit/);
+  await assert.rejects(() => h.run("src_record_research", { intentId: intent.id, category: "fixture", hypothesis: "wrong evidence", status: "verified", evidence: ["fact-999"] }, child), /evidence 必须/);
+});
+
+test("[local.99] state/playbook/scan/bypass 的模型内容包含决策字段", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-render");
+  await h.run("src_add_goal", { target: "example.test", objective: "offline render" }, parent);
+  const intent = await modelResult(h, "src_add_intent", { title: "API 认证授权检查", goalId: "goal-1", priority: 8 }, parent);
+  assert.ok(intent.value.playbook.checks.length > 0);
+  assert.ok(modelText(intent).includes(intent.value.playbook.checks[0]));
+  await h.run("src_add_fact", { intentId: intent.value.id, kind: "http", detail: "STATE_EVIDENCE_MARKER", confidence: 1 }, parent);
+  await h.run("src_user_todo", { title: "SECOND_ACCOUNT_NEEDED", detail: "local fixture", kind: "auth-session" }, parent);
+  const summary = modelText(await modelResult(h, "src_state", { detail: "summary" }, parent));
+  assert.match(summary, /SECOND_ACCOUNT_NEEDED/); assert.match(summary, /API 认证授权检查/); assert.match(summary, /P8/); assert.match(summary, /fact-1/);
+  assert.match(modelText(await modelResult(h, "src_state", { detail: "evidence" }, parent)), /STATE_EVIDENCE_MARKER/);
+  assert.match(modelText(await modelResult(h, "src_state", { detail: "orchestration" }, parent)), /SECOND_ACCOUNT_NEEDED/);
+  const scan = h.tools.get("src_scan_surface").output.render({}, { requested: 2, responses: 2, hints: 1, results: [{ path: "/one", status: 401, contentType: "application/json", hints: ["/next"] }, { path: "/two", status: 200 }] });
+  assert.match(scan[0].text, /\/one → 401/); assert.match(scan[0].text, /\/next/);
+  const bypass = h.tools.get("src_test_bypass").output.render({}, { researchId: "research-1", differential: false, results: [{ phase: "baseline", method: "GET", path: "/one", status: 401, headers: { authorization: "MUST_NOT_RENDER" } }] });
+  assert.match(bypass[0].text, /baseline GET \/one → 401/); assert.doesNotMatch(bypass[0].text, /MUST_NOT_RENDER/);
+});
+
+test("[local.99] 自动证据写失败明确已执行；请求体敏感字段脱敏；会话间不吞响应", async () => {
+  const { safeRequestBody } = await import("../lib/src/evidence-output.js");
+  const { createHttpBodyDescriber } = await import("../lib/src/http-output.js");
+  assert.doesNotMatch(safeRequestBody('{"nested":{"password":"p99","token":"t99"},"resourceId":2}'), /p99|t99/);
+  assert.doesNotMatch(safeRequestBody("password=p99&token=t99&resourceId=2"), /p99|t99/);
+  const describe = createHttpBodyDescriber(); const args = { url: "https://example.test/a", method: "GET", contentType: "text/plain", rawBody: "BODY" };
+  describe({ ...args, sessionId: "first" }); assert.equal(describe({ ...args, sessionId: "second" }).deduped, false);
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-store-failure");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "local" }, parent);
+  h.domain.table("observations").put = async () => { throw new Error("disk failure"); };
+  const server = http.createServer((_q, res) => { res.setHeader("content-type", "text/plain"); res.end("EXECUTED_ONCE"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const r = await modelResult(h, "src_http", { url: `http://127.0.0.1:${server.address().port}/query`, method: "GET", justification: "fixture" }, parent);
+    assert.match(modelText(r), /EXECUTED_ONCE/); assert.match(modelText(r), /已执行.*证据落库/); assert.equal(r.value.evidenceId, undefined);
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+test("[local.99] 并发自动证据不覆盖、同毫秒不同ID不丢投影、无intent开局可留证", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-concurrent");
+  await h.run("src_add_goal", { target: "example.test", objective: "offline concurrency" }, parent);
+  const rows = await Promise.all(Array.from({ length: 20 }, (_, i) => h.run("src_record_observation", { path: `https://example.test/${i}`, httpStatus: 200 }, parent)));
+  assert.equal(new Set(rows.map((r) => r.id)).size, 20);
+  assert.equal((await h.run("src_state", {}, parent)).observations.length, 20);
+  const event = (id) => ({ type: "tool/call", data: { name: "src_record_observation", arguments: JSON.stringify({ id, path: "/same", createdAt: 123, httpStatus: 200 }) } });
+  let state = applySrcEvent(srcInitialState, event("observation-1"));
+  state = applySrcEvent(state, event("observation-2"));
+  assert.equal(state.observations.length, 2);
+  assert.equal(applySrcEvent(state, event("observation-1")).observations.length, 2);
+  const { srcDomainSpec } = await import("../lib/src.js");
+  const obsSchema = srcDomainSpec.tables.observations.valueSchema;
+  for (const row of rows) assert.equal(obsSchema.safeParse(row).success, true);
+});
+
+test("[local.99] 证据分页可读尾部、总预算有界、HTTP证据可用于覆盖声明", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l99-pages");
+  await h.run("src_add_goal", { target: "example.test", objective: "offline pagination" }, parent);
+  const obs = await h.run("src_record_observation", { path: "https://example.test/", httpStatus: 200 }, parent);
+  const table = h.domain.table("observations");
+  await table.put(`l99-pages:${obs.id}`, { ...obs, respBodySnippet: "A".repeat(31900) + "TAIL_MARKER" });
+  const first = await modelResult(h, "src_get_evidence", { ids: [obs.id] }, parent);
+  assert.equal(first.value.items[0].truncated, true);
+  const tail = await modelResult(h, "src_get_evidence", { ids: [obs.id], full: true, offset: first.value.items[0].nextOffset }, parent);
+  assert.match(modelText(tail), /TAIL_MARKER/);
+  const many = await modelResult(h, "src_get_evidence", { ids: Array(32).fill(obs.id), full: true }, parent);
+  assert.ok(modelText(many).length < 70000);
+  const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: ["http-authz-surface", "cors-headers", "dom-xhr", "dict-budget", "multi-account-cross-authz"].map((dimension) => ({ dimension, status: "covered", evidenceId: obs.id })) }, parent);
+  assert.ok(!fin.blockers.some((b) => b.includes("evidenceId")), "observation is a valid coverage evidence pointer");
+});
+
+test("[local.99] Pattern 实际工具接线与 blocked 历史不误记证伪", async () => {
+  const prev = process.env.DSH_SRC_LESSONS_DIR;
+  const dir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "l99-pattern-")); process.env.DSH_SRC_LESSONS_DIR = dir;
+  try {
+    await fsPromises.writeFile(nodePath.join(dir, "wiring.md"), '# WIRING_PATTERN\n## 认什么\n认证差分\n## 打哪\n本地对照\n## 出什么算成\n身份差异\n## 假点\n公开数据\n<!-- lesson-meta: {"kind":"pattern","featureKeys":["auth"]} -->\n');
+    const h = await freshEvidenceHarness(), parent = h.exec("l99-pattern");
+    await h.run("src_add_goal", { target: "example.test", objective: "offline" }, parent);
+    const intent = await modelResult(h, "src_add_intent", { title: "认证差分", goalId: "goal-1" }, parent);
+    assert.match(modelText(intent), /Pattern 形态命中.*WIRING_PATTERN/);
+    await h.run("src_record_research", { intentId: intent.value.id, category: "fixture", hypothesis: "NEEDS_ACCOUNT_NOT_FALSIFIED", status: "blocked", stopReason: "missing account" }, parent);
+    const next = await modelResult(h, "src_add_goal", { target: "example.test", objective: "resume" }, h.exec("l99-pattern-next"));
+    assert.equal(next.value.priorContext.falsifiedHypotheses, undefined);
+    assert.equal(next.value.priorContext.blockedHypotheses.length, 1);
+    assert.match(modelText(next), /历史受阻（未证伪/);
+  } finally { if (prev === undefined) delete process.env.DSH_SRC_LESSONS_DIR; else process.env.DSH_SRC_LESSONS_DIR = prev; await fsPromises.rm(dir, { recursive: true, force: true }); }
+});

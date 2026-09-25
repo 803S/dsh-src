@@ -1,7 +1,7 @@
 {
   "name": "@lihua_dis/dsh-src",
   "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-  "version": "0.1.0-local.90",
+  "version": "0.1.0-local.99",
   "publishConfig": {
     "access": "public"
   },
@@ -59,7 +59,7 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/src.integration.test.mjs",
+    "test": "node --test tests/src.integration.test.mjs tests/browser-loop.test.mjs",
     "ui-src:typecheck": "cd src/dsh-client-ui-src && tsc -p tsconfig.json",
     "ui-src:build": "cd src/dsh-client-ui-src && tsdown && cp dist/index.js ../../lib/ui-src.client.js"
   },
