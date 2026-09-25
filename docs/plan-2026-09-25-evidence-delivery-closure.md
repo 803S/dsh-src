@@ -85,7 +85,7 @@ finding 生命周期、finalize/报告质量语义拆分、survey 闭环/模式�
 
 ### 尚未宣称完成
 
-- 模型本地靶场盲测/A-B 尚未运行，不能宣称有效漏洞产出提升。
+- 本地真实模型盲测已启动，但各组在时间预算内未完成有效验证，不能宣称有效漏洞产出提升。过程与限制见 [首轮评测记录](evaluation-2026-09-25-local99-blind.md)。
 - 子任务权限仍是宿主父链与既有 checkpoint 关联，不是不可伪造的 intent capability token；同 engagement 内只读证据共享，不是按 intent 的保密隔离。
 - 现有 fact/finding/checkpoint 的跨表写入不是事务；本版解决局部失败已写内容可见，不承诺全局事务或所有类型并发 ID 分配已修复。
 - scan/bypass 自动留证、finding/报告语义、survey 真闭环仍后置。
@@ -95,5 +95,5 @@ finding 生命周期、finalize/报告质量语义拆分、survey 闭环/模式�
 - npm pack 成功：`/tmp/dsh-local99-pack/lihua_dis-dsh-src-0.1.0-local.99.tgz`，已核对新模块和本方案入包。
 - 双 profile 文件同步完成，部署脚本 MD5 全通过；web/headless 副本均 local.99，独立进程 import `lib/src.js` 成功。部署日志 `/tmp/dsh-local99-deploy.log`。
 - 同步前包备份：`/tmp/dsh-before-local99-20260925-190013/{web-src,headless-src}.tgz`。
-- 现有 Web PID **37320**（17:20 启动）保留，HTTP 200。**未重启，不能宣称运行进程已加载 local.99**；待无活跃任务时在原配置下重启。未修改 feature flags、网络范围或真实目标数据。
+- 首次文件同步时保留PID37320。随后经只读API两次确认413会话均无running，按原参数安全重启为 **PID43172**，HTTP200；日志 `/tmp/dsh-web-local99.log`。未修改feature flags、网络范围或真实目标数据。
 - UI 仅添加可选类型字段，没有修改 UI 显示组件或重建 bundle；新增请求报文可通过 src_get_evidence 读取，UI请求报文专用展示不在本版范围。
