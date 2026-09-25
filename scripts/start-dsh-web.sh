@@ -6,13 +6,17 @@
 #   DSH_SRC_STATE_VERSION=1|2         （默认 1，A/B 后再翻 2）
 #   DSH_SRC_ORCHESTRATOR=off|shadow|on（本轮只到 shadow）
 #   DSH_SRC_ROUTE_V2=off|shadow|on    （灰度数据达标后才开）
-#   DSH_SRC_EVENT_STORE=off|shadow|on （§10 事件落盘，local.77）
+#   DSH_SRC_LAYA_NEXT=off|shadow|on     （默认 on：每轮主决策建议；fail-open）
 set -u
 export DSH_SRC_TELEMETRY="${DSH_SRC_TELEMETRY:-shadow}"
 export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
 export DSH_SRC_ORCHESTRATOR="${DSH_SRC_ORCHESTRATOR:-off}"
 export DSH_SRC_ROUTE_V2="${DSH_SRC_ROUTE_V2:-off}"
 export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
+export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-on}"
+export DSH_SRC_LAYA_DELEGATE="${DSH_SRC_LAYA_DELEGATE:-on}"
+export DSH_SRC_LAYA_SKILL="${DSH_SRC_LAYA_SKILL:-on}"
+export DSH_SRC_LAYA_DECISION="${DSH_SRC_LAYA_DECISION:-on}"
 
 LOG=/tmp/dsh-web-latest.log
 PIDFILE=/tmp/dsh-web.pid

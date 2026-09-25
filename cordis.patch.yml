@@ -55,3 +55,9 @@
 - insert:
     - id: src-preset-root
       name: '@lihua_dis/dsh-src/preset-root'
+
+# dsh-src local.100: keyless web search provider. It is deliberately inside the
+# SRC plugin context so web_search has a usable provider without DeepSeek search key.
+- id: web
+  config:
+    searchProvider: src-keyless-search
