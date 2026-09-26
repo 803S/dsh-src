@@ -35,8 +35,9 @@ lsof -ti tcp:3080 2>/dev/null | xargs kill 2>/dev/null; sleep 1
 BROWSER_DECIDER_HOME=/Users/lihua-dis/Software/laya-browser-agent
 BROWSER_DECIDER_PY=/Users/lihua-dis/models/laya/laya-env/bin/python
 BROWSER_DECIDER_PIDFILE=/tmp/dsh-localdecide-browser.pid
-if [ -f "$BROWSER_DECIDER_PIDFILE" ] && kill -0 "$(cat "$BROWSER_DECIDER_PIDFILE")" 2>/dev/null; then
-  :
+BROWSER_DECIDER_PORT_PID=$(lsof -ti tcp:8791 2>/dev/null | head -1 || true)
+if [ -n "${BROWSER_DECIDER_PORT_PID:-}" ] && kill -0 "$BROWSER_DECIDER_PORT_PID" 2>/dev/null; then
+  echo "$BROWSER_DECIDER_PORT_PID" > "$BROWSER_DECIDER_PIDFILE"
 elif [ -x "$BROWSER_DECIDER_PY" ] && [ -f "$BROWSER_DECIDER_HOME/localdecide/serve.py" ]; then
   nohup env PYTHONPATH="$BROWSER_DECIDER_HOME" HF_HOME=/Users/lihua-dis/models/laya/hf_cache HF_HUB_OFFLINE=0 LOCALDECIDE_BACKEND=laya-mlx LOCALDECIDE_PORT=8791 "$BROWSER_DECIDER_PY" -m localdecide.serve > /tmp/dsh-localdecide-browser.log 2>&1 < /dev/null &
   echo $! > "$BROWSER_DECIDER_PIDFILE"
