@@ -3,7 +3,9 @@
 日期：2026-09-26
 基线：`b4126bd`（local.100 搜索引擎扩展与 Laya next-action 去重）
 前置基线：`c7bd0bf`（local.99 证据交付链）、`9b8f4d4`（隔离盲测工具）
-状态：**方案评审稿；本文完成前不继续追加运行时功能。**
+状态：**研究与首批实现已完成；当前为运行验收与后续分批施工边界。**
+
+当前实际运行：Web PID 94769，HTTP 200；browser System One 服务 PID 94768，`/v1/systemone` smoke test 返回 browser-tuned Laya 的 `CLICK + target index`，决策约 53–111ms。相关实现提交：`bc83c60`、`46f09fd`、`4e3dd63`、`21d2675`、`b4126bd`、`da493e1`、`1d60826`。
 
 > 本文的目标不是继续增加一个 Agent 平台，而是给普通实现模型一份可以按批次执行、可回滚、不会引入隐性编排的施工说明。任何超出本文范围的改动先停止。
 
@@ -85,7 +87,7 @@ local.99 已解决：
 
 ### 1.2 local.100 系列已经暴露的问题
 
-#### A. Web 搜索 provider 分叉
+#### A. Web 搜索 provider 分叉（首批已修，仍需选择语义收敛）
 
 宿主原生已有：
 
@@ -103,6 +105,8 @@ WebSearchProvider
 - 引擎选择不能硬编码为固定业务政策；
 - provider 只能把搜索结果返回给宿主 `web_search`，不能自行追加另一套模型搜索工具；
 - 引擎失败要保留明确错误和实际 engine，不把网络失败伪装为“无结果”。
+
+首批实现已完成：当前 session `proxyUrl` 通过 `makeHttpFetch(infra)` 进入 provider；已支持 DuckDuckGo、Google、Bing、百度解析与代理路由。当前实现是 provider 内部 fallback；后续只补轻量 engine preference/auto 参数，不新增工具。
 
 #### B. Laya 主决策
 
@@ -573,6 +577,8 @@ false_recommendation_rate
 
 ### browser-index backend 已替换；完整 browser planning takeover 仍需 seam 确认后才能实现：
 
+当前只替换决策 backend，不替换 Playwright MCP executor；未确认 seam 前不宣称普通 agent planning 已自动接管。
+
 ```text
 before action observation
 → code candidate list
@@ -719,7 +725,39 @@ sideEffectObserved（只有明确证据才填）
 
 ---
 
-## 7. 全局一致性结论
+## 7. 当前最终状态
+
+### 已完成
+
+- local.99 证据交付链；
+- `web_search` 使用 session proxy，支持 DDG/Google/Bing/百度 provider 内部来源；
+- Laya next-action、tool advisory、source/fallback/latency/probabilities telemetry；
+- risk-grade 不再阻断普通 GET/认证基线；
+- `laya-browser-agent` 作为 browser-index System One backend；
+- 本地决策服务启动、重启、健康检查和 smoke test；
+- npm test **232/232**，preset consistency、TypeScript 5.9.3、语法和 diff check 通过。
+
+### 尚未完成
+
+- 普通 agent 的 Playwright planning turn 没有通过宿主正式 before/after seam 完整替换；
+- Skill recommendation→read→evidence/research 的 recommendationId 关联漏斗尚未完成；
+- approval accuracy 没有真实标签，不能用 allow rate 代替；
+- OpenAPI 大响应的结构化 endpoint 提取尚未实现；
+- 首轮真实模型盲测受上游延迟影响，没有有效 A/B 结论；
+- finding/report 语义收敛与 survey 消费闭环仍是后续批次。
+
+### 当前后续顺序
+
+```text
+1. 搜索 engine preference/auto 语义收敛（不新增工具）
+2. Laya candidate 增加 evidenceDelta/repeatedCount/lastOutcome，降低重复建议
+3. Skill 推荐→读取→后续 evidence 关联
+4. 宿主 browser before/after seam 事实核查
+5. 确认 seam 后再决定是否自动替换普通 browser planning
+6. 审批人工标签与准确率评估
+```
+
+## 8. 全局一致性结论
 
 ### 保留
 
