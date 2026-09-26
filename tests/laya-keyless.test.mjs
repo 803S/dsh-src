@@ -27,6 +27,21 @@ test('local.100 Laya next-action consumes indexed answers', async () => {
   } finally { globalThis.fetch = previous; if (previousUrl === undefined) delete process.env.DSH_SRC_LAYA_URL; else process.env.DSH_SRC_LAYA_URL = previousUrl; }
 });
 
+test('local.100 keyless search provider supports Bing and Baidu parser shapes', async () => {
+  const previous = globalThis.fetch; const seen = [];
+  try {
+    globalThis.fetch = async (url) => {
+      seen.push(String(url));
+      if (String(url).includes('bing.com')) return new Response('<li class="b_algo"><h2><a href="https://bing.example/result">Bing result</a></h2></li>', { status: 200 });
+      if (String(url).includes('baidu.com')) return new Response('<h3><a href="https://baidu.example/result">Baidu result</a></h3>', { status: 200 });
+      return new Response('<html>no parseable results</html>', { status: 200 });
+    };
+    const result = await keylessSearchProvider.search({ query: 'engine fallback', maxResults: 8 });
+    assert.ok(seen.some((url) => url.includes('bing.com')));
+    assert.equal(result.sources[0].url, 'https://bing.example/result');
+  } finally { globalThis.fetch = previous; }
+});
+
 test('local.100 keyless search provider fails over from blocked engine', async () => {
   const previous = globalThis.fetch; let calls = 0;
   try {
