@@ -252,7 +252,7 @@ persistent runtime
 
 ### 2.6 外部研究结论
 
-没有一个项目能直接作为 dsh-src 的“现成浏览器 Laya 插件”。可复用的是模式，不是代码：
+研究与本机验证后，`ChenneyZhuang/laya-browser-agent` v0.3.2 是本批唯一直接采用的 browser System 1 backend：已复制到 `/Users/lihua-dis/Software/laya-browser-agent`，通过 `localdecide serve /v1/systemone` 使用 browser-tuned checkpoint 返回真实 `CLICK + target index`，首轮模型加载后的协议决策约 111ms。dsh 只采用它的 System One 决策协议，不采用其 PlaywrightDriver/CDPDriver 生命周期。其他项目只作为架构参考，不进入生产依赖。可复用的是模式，不是代码：
 
 ```text
 Stagehand 的 observe/act/extract 分层
@@ -542,13 +542,15 @@ false_recommendation_rate
 
 ---
 
-## Phase 4：Browser seam 研究，不立即接管
+## Phase 4：用 laya-browser-agent 替换当前 browser decision backend
 
 ### 目标
 
-确认 dsh 宿主是否提供真实的 browser action before/after seam。
+保留 dsh 现有 Playwright MCP 的 page/context/executor，只把当前 `browser-index` 的决策 backend 替换为本机 `laya-browser-agent/localdecide`。不再同时维护旧 Laya browser-index 决策路径。
 
-### 事实核查
+### 已完成选择与仍需核查
+
+已确认 `localdecide` 的 `/v1/systemone` 接口接收 state+typed questions，返回 validated choice/probabilities/confidence；其 driver 也明确把 observe 与 execute 分离，model 只选 observed index。仍需确认 dsh 宿主普通 MCP 调用的 before/after 生命周期，才能宣称普通 browser planning 已被替换；当前只替换 browser-index backend。
 
 实现模型必须定位并记录：
 
@@ -569,7 +571,7 @@ false_recommendation_rate
 - BrowserGym/WebArena：只借鉴 trajectory/evaluator，不引入 benchmark 平台；
 - OpenAI CUA sample：借鉴 persistent worker + feedback，不复制第二 page/context。
 
-### 只有 seam 确认后才能实现
+### browser-index backend 已替换；完整 browser planning takeover 仍需 seam 确认后才能实现：
 
 ```text
 before action observation
@@ -598,7 +600,7 @@ before action observation
 - action success 有独立完成校验；
 - 没有第二套生命周期。
 
-否则 browser-loop 保持独立实验文件，不再扩大。
+在 seam 未确认前，`browser-loop.js` 只作为兼容适配器，不能宣称生产 browser planning 已完全接管；不再继续扩大 browser runtime。
 
 ---
 

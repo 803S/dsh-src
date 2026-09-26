@@ -27,6 +27,25 @@ test('local.100 Laya next-action consumes indexed answers', async () => {
   } finally { globalThis.fetch = previous; if (previousUrl === undefined) delete process.env.DSH_SRC_LAYA_URL; else process.env.DSH_SRC_LAYA_URL = previousUrl; }
 });
 
+test('local.100 browser-index uses laya-browser-agent System One endpoint shape', async () => {
+  const previous = globalThis.fetch, previousUrl = process.env.DSH_SRC_BROWSER_DECIDER_URL;
+  try {
+    process.env.DSH_SRC_BROWSER_DECIDER_URL = 'http://browser-decider.test/v1/systemone';
+    globalThis.fetch = async (url, init) => {
+      assert.equal(String(url), 'http://browser-decider.test/v1/systemone');
+      const body = JSON.parse(init.body);
+      assert.equal(body.model, 'browser');
+      assert.ok(body.questions.operation);
+      return new Response(JSON.stringify({ latency_ms: 12, answers: { operation: { choice: 'CLICK', confidence: .99, probabilities: { CLICK: 1, WAIT: 0 } }, click_target: { choice: '0', confidence: 1, probabilities: { '0': 1 } } } }), { status: 200 });
+    };
+    const { layaDecide } = await import('../lib/src/decision/laya-client.js');
+    const result = await layaDecide({ taskType: 'browser-index', goal: 'click Continue', observation: 'button Continue [ref=e1]', candidates: [{ index: 0, operation: 'click', targetRef: 'e1', label: 'Continue' }] }, { agent: { session: { id: 'browser-test' } } });
+    assert.equal(result.index, 0);
+    assert.equal(result.source, 'laya-browser-agent');
+    assert.equal(result.fallback, false);
+  } finally { globalThis.fetch = previous; if (previousUrl === undefined) delete process.env.DSH_SRC_BROWSER_DECIDER_URL; else process.env.DSH_SRC_BROWSER_DECIDER_URL = previousUrl; }
+});
+
 test('local.100 keyless search provider supports Bing and Baidu parser shapes', async () => {
   const previous = globalThis.fetch; const seen = [];
   try {

@@ -17,6 +17,7 @@ export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-on}"
 export DSH_SRC_LAYA_DELEGATE="${DSH_SRC_LAYA_DELEGATE:-on}"
 export DSH_SRC_LAYA_SKILL="${DSH_SRC_LAYA_SKILL:-on}"
 export DSH_SRC_LAYA_DECISION="${DSH_SRC_LAYA_DECISION:-on}"
+export DSH_SRC_BROWSER_DECIDER_URL="${DSH_SRC_BROWSER_DECIDER_URL:-http://127.0.0.1:8791/v1/systemone}"
 
 LOG=/tmp/dsh-web-latest.log
 PIDFILE=/tmp/dsh-web.pid
@@ -28,6 +29,18 @@ if [ -f "$PIDFILE" ]; then
 fi
 # 兜底：3080 端口残留进程
 lsof -ti tcp:3080 2>/dev/null | xargs kill 2>/dev/null; sleep 1
+
+# Browser System 1 backend: laya-browser-agent/localdecide owns only the decision model;
+# dsh remains the Playwright MCP executor and page/context owner.
+BROWSER_DECIDER_HOME=/Users/lihua-dis/Software/laya-browser-agent
+BROWSER_DECIDER_PY=/Users/lihua-dis/models/laya/laya-env/bin/python
+BROWSER_DECIDER_PIDFILE=/tmp/dsh-localdecide-browser.pid
+if [ -f "$BROWSER_DECIDER_PIDFILE" ] && kill -0 "$(cat "$BROWSER_DECIDER_PIDFILE")" 2>/dev/null; then
+  :
+elif [ -x "$BROWSER_DECIDER_PY" ] && [ -f "$BROWSER_DECIDER_HOME/localdecide/serve.py" ]; then
+  nohup env PYTHONPATH="$BROWSER_DECIDER_HOME" HF_HOME=/Users/lihua-dis/models/laya/hf_cache HF_HUB_OFFLINE=0 LOCALDECIDE_BACKEND=laya-mlx LOCALDECIDE_PORT=8791 "$BROWSER_DECIDER_PY" -m localdecide.serve > /tmp/dsh-localdecide-browser.log 2>&1 < /dev/null &
+  echo $! > "$BROWSER_DECIDER_PIDFILE"
+fi
 
 cd ~/.dsh/profiles/web
 nohup dsh web > "$LOG" 2>&1 &
