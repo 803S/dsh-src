@@ -13,7 +13,7 @@
 
 - 没有新建 HTB/Lab 模式；HTB 仍只是 SRC 的一个真实授权目标。
 - 没有用 Laya 代替搜索 provider；Laya 决策“是否/选择何种下一步”，web_search 由宿主 provider 执行。
-- 没有自动强制 skill 运行；Skill Selector 仍需可观测推荐→读取→结果闭环，自动运行脚本仍受既有人工审批。
+- local.101 已补 recommendationId→skill.read→下一工具→evidence outcome 旁路漏斗；没有自动强制 skill 运行，能力脚本仍受既有人工审批。
 - browser-loop 仍不拥有 page/context；普通 browser MCP 通过 advisory 观测，独立 candidate loop 不复制宿主生命周期。
 
 ## 验收

@@ -285,7 +285,7 @@ test("src_collect_passive promotes OpenAPI and GraphQL metadata into endpoint as
   try {
     globalThis.fetch = async (url) => {
       const path = new URL(url).pathname;
-      if (path === "/openapi.json") return new Response('{"openapi":"3.0.0","paths":{"/api/users":{},"/graphql":{}}}', { status: 200, headers: { "content-type": "application/json" } });
+      if (path === "/openapi.json") return new Response(JSON.stringify({ openapi: "3.0.0", info: { title: "Fixture API", version: "1" }, paths: { "/api/users/{id}": { get: { operationId: "getUser", parameters: [{ name: "id" }] } }, "/graphql": {} }, components: { schemas: { Large: { description: "x".repeat(70000) } } } }), { status: 200, headers: { "content-type": "application/json" } });
       if (path === "/graphql") return new Response('{"data":{"__schema":{"queryType":{"name":"Query"}}}}', { status: 200, headers: { "content-type": "application/json" } });
       if (path === "/robots.txt") return new Response('', { status: 200, headers: { "content-type": "text/plain" } });
       if (path === "/sitemap.xml") return new Response('', { status: 200, headers: { "content-type": "application/xml" } });
@@ -304,6 +304,9 @@ test("src_collect_passive promotes OpenAPI and GraphQL metadata into endpoint as
     assert.equal(state.apiDiscovery.schemas >= 1, true);
     assert.equal(state.apiDiscovery.graphql >= 1, true);
     assert.equal(state.facts.some((f) => /api schema candidate \/openapi\.json/.test(f.detail)), true);
+    assert.equal(state.facts.some((f) => /openapi index[\s\S]*GET \/api\/users\/\{id\}/.test(f.detail)), true, "大 OpenAPI 响应也提取结构化路径索引");
+    const indexedAsset = state.assets.find((a) => decodeURIComponent(a.value) === "https://example.test/api/users/{id}" && a.meta.includes("getUser"));
+    assert.ok(indexedAsset && indexedAsset.meta.includes("GET"), `endpoint 资产携带方法与 operationId：${JSON.stringify(state.assets.filter((a) => a.type === "endpoint").map((a) => [a.value, a.meta]))}`);
     assert.equal(state.facts.some((f) => /graphql candidate \/graphql/.test(f.detail)), true);
     assert.equal(state.facts.some((f) => /parameter hint id/.test(f.detail)), true);
   } finally { globalThis.fetch = originalFetch; }
@@ -5872,10 +5875,16 @@ test("Skill Selector 召回真实 skill 源 + 污染闸 + 提醒去重", async (
 	// ② 污染闸：四条件
 	const reg = createSkillReminderRegistry();
 	assert.ok(reg.canRemind("s1", "authorization"), "首次可提醒");
-	reg.markReminded("s1", "authorization");
+	reg.markReminded("s1", "authorization", "skillrec-1");
 	assert.ok(!reg.canRemind("s1", "authorization"), "已提醒过 → 不再提醒（同会话去重）");
 	assert.ok(reg.canRemind("s1", "injection"), "其他 skill 不受影响");
-	reg.markRead("s1", "injection");
+	reg.markReminded("s1", "injection", "skillrec-2");
+	assert.equal(reg.markRead("s1", "injection"), "skillrec-2", "读取回传 recommendationId");
+	assert.deepEqual(reg.latestRead("s1"), { skillId: "injection", recommendationId: "skillrec-2", nextActionRecorded: false }, "漏斗保存最近一次关联读取");
+	assert.deepEqual(reg.markNextAction("s1"), { skillId: "injection", recommendationId: "skillrec-2" }, "只关联读取后的第一个真实工具");
+	assert.equal(reg.markNextAction("s1"), undefined, "后续工具不重复记 next action");
+	assert.deepEqual(reg.consumeLatestRead("s1"), { skillId: "injection", recommendationId: "skillrec-2" }, "outcome 可消费关联读取");
+	assert.equal(reg.latestRead("s1"), undefined, "关联只消费一次");
 	assert.ok(reg.isRead("s1", "injection"), "已读过");
 	reg.markRead("s2", "injection");
 	assert.ok(!reg.isRead("s1", "authorization"), "已读状态按会话隔离");
@@ -5984,11 +5993,19 @@ test("[local.99] Laya 高置信 allow 不越过审批；统一注入认证/Conte
     await h.run("src_add_goal", { target: "127.0.0.1", objective: "approval fixture" }, parent);
     const pending = await modelResult(h, "src_http", { url: `${root}/delete`, method: "GET", justification: "mock destructive name" }, parent);
     assert.equal(pending.value.approval, "pending"); assert.equal(hits, 0);
-    assert.equal((await h.run("src_state", {}, parent)).observations.length, 0);
-    const approved = await modelResult(h, "src_resolve_approval", { id: pending.value.pendingApprovalId, action: "allow" }, parent);
+    const pendingState = await h.run("src_state", {}, parent);
+    assert.equal(pendingState.observations.length, 0);
+    const pendingRow = pendingState.pendingApprovals.find((row) => row.id === pending.value.pendingApprovalId);
+    assert.match(pendingRow.ruleVerdict, /破坏性写入/);
+    assert.match(pendingRow.layaAdvice, /^allow:/);
+    const approved = await modelResult(h, "src_resolve_approval", { id: pending.value.pendingApprovalId, action: "allow", sideEffectObserved: false }, parent);
     assert.equal(hits, 1); assert.ok(approved.value.evidenceId);
     assert.match(modelText(approved), /REPLAY_EVIDENCE/);
     assert.match(modelText(approved), new RegExp(approved.value.evidenceId));
+    const approvedRow = (await h.run("src_state", {}, parent)).pendingApprovals.find((row) => row.id === pending.value.pendingApprovalId);
+    assert.equal(approvedRow.userDecision, "allow");
+    assert.equal(approvedRow.responseEvidenceId, approved.value.evidenceId);
+    assert.equal(approvedRow.sideEffectObserved, false);
     const account = await h.run("src_add_test_account", { label: "local", credential: "Authorization: Bearer L99_HEADER_SECRET" }, parent);
     await modelResult(h, "src_http", { url: `${root}/query`, method: "POST", body: '{"filter":"local"}', credentialRef: account.credentialRef, justification: "read-only query" }, parent);
     assert.equal(seenHeaders.authorization, "Bearer L99_HEADER_SECRET");

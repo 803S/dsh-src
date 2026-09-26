@@ -74,6 +74,11 @@ const capOutcomes = rows.filter((r) => r.event === "capability.outcome");
 const capCompleted = capOutcomes.filter((r) => payloadOf(r).status === "completed");
 const capFailed = capOutcomes.filter((r) => payloadOf(r).status === "failed");
 const capAvgMs = capOutcomes.filter((r) => Number.isFinite(payloadOf(r).durationMs)).map((r) => payloadOf(r).durationMs);
+const skillNextActions = rows.filter((r) => r.event === "skill.next-action" && payloadOf(r).recommendationId);
+const skillOutcomes = rows.filter((r) => r.event === "skill.outcome" && payloadOf(r).recommendationId);
+const skillReadRecommendations = new Set(rows.filter((r) => r.event === "skill.read" && payloadOf(r).recommendationId).map((r) => payloadOf(r).recommendationId));
+const skillNextRecommendations = new Set(skillNextActions.map((r) => payloadOf(r).recommendationId));
+const skillOutcomeRecommendations = new Set(skillOutcomes.map((r) => payloadOf(r).recommendationId));
 
 /* ---- 漏斗 3：审批 ---- */
 const waiting = rows.filter((r) => r.event === "approval.waiting");
@@ -159,7 +164,7 @@ if (jsonMode) {
 		dir: telemetryDir, files, rows: rows.length, window,
 		byEvent: Object.fromEntries([...byEvent.entries()].sort()),
 		funnel: { offeredSessions: distinct(offeredSessions), selectedSessions: distinct(selectedSessions), evidenceSessions: distinct(evidenceSessions), findingSessions: distinct(findingSessions), finalizedSessions: distinct(finalizedSessions), findingRatePct: findingRate },
-		skills: { reads: Object.fromEntries([...skillReads.entries()].sort((a, b) => b[1] - a[1])), capability: { requested: capRequested.length, completed: capCompleted.length, failed: capFailed.length, avgDurationMs: capAvgMs.length ? Math.round(capAvgMs.reduce((a, b) => a + b, 0) / capAvgMs.length) : 0 } },
+		skills: { reads: Object.fromEntries([...skillReads.entries()].sort((a, b) => b[1] - a[1])), funnel: { recommendedReads: skillReadRecommendations.size, nextActions: skillNextRecommendations.size, evidenceOutcomes: skillOutcomeRecommendations.size, readToNextActionPct: skillReadRecommendations.size ? Math.round(skillNextRecommendations.size / skillReadRecommendations.size * 100) : 0, readToEvidencePct: skillReadRecommendations.size ? Math.round(skillOutcomeRecommendations.size / skillReadRecommendations.size * 100) : 0 }, capability: { requested: capRequested.length, completed: capCompleted.length, failed: capFailed.length, avgDurationMs: capAvgMs.length ? Math.round(capAvgMs.reduce((a, b) => a + b, 0) / capAvgMs.length) : 0 } },
 		approvals: { waiting: waiting.length, waitingByCategory: waiting.reduce((m, r) => { const k = payloadOf(r).category ?? "?"; m[k] = (m[k] ?? 0) + 1; return m; }, {}), resolved: resolved.length, allow: allowed.length, approvalRatePct: approvalRate, avgLatencyMs: latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0 },
 		http: { requests: httpRows.length, replays: httpRows.filter((r) => payloadOf(r).replay === true).length, byStatus: Object.fromEntries([...statusMap.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0])))), topHosts: [...hostMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([h, c]) => ({ host: h, count: c })), responseBytes: httpBytes },
 		volume: { payloadChars, tokenEstimate },
@@ -184,6 +189,7 @@ console.log(`  finding_rate = ${findingRate}%`);
 console.log(`-- skill 用率 --`);
 for (const [id, n] of [...skillReads.entries()].sort((a, b) => b[1] - a[1])) console.log(`  read ${id}: ${n}`);
 if (skillReads.size === 0) console.log(`  （无 skill.read——playbook/lesson/能力文档零阅读，§6 疑点）`);
+console.log(`  recommendation 漏斗: read ${skillReadRecommendations.size} → next action ${skillNextRecommendations.size} (${skillReadRecommendations.size ? Math.round(skillNextRecommendations.size / skillReadRecommendations.size * 100) : 0}%) → evidence ${skillOutcomeRecommendations.size} (${skillReadRecommendations.size ? Math.round(skillOutcomeRecommendations.size / skillReadRecommendations.size * 100) : 0}%)`);
 console.log(`  capability: 请求 ${capRequested.length} / 完成 ${capCompleted.length} / 失败 ${capFailed.length}${capAvgMs.length ? ` / 平均 ${Math.round(capAvgMs.reduce((a, b) => a + b, 0) / capAvgMs.length)}ms` : ""}`);
 console.log(`-- 审批漏斗 --`);
 console.log(`  waiting ${waiting.length}（${byCategory(waiting)}）→ resolved ${resolved.length}（allow ${allowed.length} / reject ${resolved.length - allowed.length}），approval_rate=${approvalRate}%`);

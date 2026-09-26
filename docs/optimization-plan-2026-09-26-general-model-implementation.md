@@ -3,7 +3,7 @@
 日期：2026-09-26
 基线：`b4126bd`（local.100 搜索引擎扩展与 Laya next-action 去重）
 前置基线：`c7bd0bf`（local.99 证据交付链）、`9b8f4d4`（隔离盲测工具）
-状态：**研究与首批实现已完成；当前为运行验收与后续分批施工边界。**
+状态：**local.101 优化项已实现并通过确定性验收；仅真实模型长期 A/B 与人工审批标注属于运行评估，不再是代码缺口。**
 
 当前实际运行：Web PID 94769，HTTP 200；browser System One 服务 PID 94768，`/v1/systemone` smoke test 返回 browser-tuned Laya 的 `CLICK + target index`，决策约 53–111ms。相关实现提交：`bc83c60`、`46f09fd`、`4e3dd63`、`21d2675`、`b4126bd`、`da493e1`、`1d60826`。
 
@@ -87,7 +87,7 @@ local.99 已解决：
 
 ### 1.2 local.100 系列已经暴露的问题
 
-#### A. Web 搜索 provider 分叉（首批已修，仍需选择语义收敛）
+#### A. Web 搜索 provider 分叉（local.101 已完成选择语义收敛）
 
 宿主原生已有：
 
@@ -106,7 +106,7 @@ WebSearchProvider
 - provider 只能把搜索结果返回给宿主 `web_search`，不能自行追加另一套模型搜索工具；
 - 引擎失败要保留明确错误和实际 engine，不把网络失败伪装为“无结果”。
 
-首批实现已完成：当前 session `proxyUrl` 通过 `makeHttpFetch(infra)` 进入 provider；已支持 DuckDuckGo、Google、Bing、百度解析与代理路由。当前实现是 provider 内部 fallback；后续只补轻量 engine preference/auto 参数，不新增工具。
+local.101 已完成：当前 session `proxyUrl` 通过 `makeHttpFetch(infra)` 进入 provider；支持 DuckDuckGo、Google、Bing、百度解析与代理路由；`engine=auto` 才允许 fallback，指定 engine 时只访问该引擎，并返回实际 engine、requestedEngine 和失败诊断。不新增模型工具。
 
 #### B. Laya 主决策
 
@@ -552,9 +552,9 @@ false_recommendation_rate
 
 保留 dsh 现有 Playwright MCP 的 page/context/executor，只把当前 `browser-index` 的决策 backend 替换为本机 `laya-browser-agent/localdecide`。不再同时维护旧 Laya browser-index 决策路径。
 
-### 已完成选择与仍需核查
+### 已完成选择与宿主 seam 核查结论
 
-已确认 `localdecide` 的 `/v1/systemone` 接口接收 state+typed questions，返回 validated choice/probabilities/confidence；其 driver 也明确把 observe 与 execute 分离，model 只选 observed index。仍需确认 dsh 宿主普通 MCP 调用的 before/after 生命周期，才能宣称普通 browser planning 已被替换；当前只替换 browser-index backend。
+已确认 `localdecide` 的 `/v1/systemone` 接口接收 state+typed questions，返回 validated choice/probabilities/confidence；其 driver 也明确把 observe 与 execute 分离，model 只选 observed index。宿主事实核查结论：所有 MCP 调用经过 `tools/pre-execute → tools/execute → tools/post-execute`，但 pre seam 不允许改写参数，也没有稳定的 Playwright page snapshot/candidate seam；post seam 只能观察/替换结果。因此 local.101 在 post-execute 记录真实 browser host result/after-observation 轨迹，不递归执行 snapshot/click，也不宣称普通 browser planning takeover。
 
 实现模型必须定位并记录：
 
@@ -575,7 +575,7 @@ false_recommendation_rate
 - BrowserGym/WebArena：只借鉴 trajectory/evaluator，不引入 benchmark 平台；
 - OpenAI CUA sample：借鉴 persistent worker + feedback，不复制第二 page/context。
 
-### browser-index backend 已替换；完整 browser planning takeover 仍需 seam 确认后才能实现：
+### browser-index backend 已替换；普通 browser planning takeover 经 seam 核查判定不安全，停止扩张：
 
 当前只替换决策 backend，不替换 Playwright MCP executor；未确认 seam 前不宣称普通 agent planning 已自动接管。
 
@@ -725,36 +725,33 @@ sideEffectObserved（只有明确证据才填）
 
 ---
 
-## 7. 当前最终状态
+## 7. local.101 最终状态
 
 ### 已完成
 
-- local.99 证据交付链；
-- `web_search` 使用 session proxy，支持 DDG/Google/Bing/百度 provider 内部来源；
-- Laya next-action、tool advisory、source/fallback/latency/probabilities telemetry；
-- risk-grade 不再阻断普通 GET/认证基线；
-- `laya-browser-agent` 作为 browser-index System One backend；
-- 本地决策服务启动、重启、健康检查和 smoke test；
-- npm test **232/232**，preset consistency、TypeScript 5.9.3、语法和 diff check 通过。
+- local.99 证据交付链与父子证据回流；
+- `web_search` 使用 session proxy，支持 `auto|duckduckgo|google|bing|baidu`，只有 auto fallback；
+- Laya next-action 增加 state fingerprint、evidenceDelta、repeatedCount、lastOutcome、blockedReason、nextRequiredTool 与 recommendationId；
+- Skill recommendationId → read → next tool → evidence outcome 旁路漏斗；能力脚本仍经原人工审批，不自动运行；
+- risk-grade 永久 advisory，`classifyHttpRequest` 仍是唯一审批硬法律；
+- 审批记录新增 ruleVerdict、layaAdvice、userDecision、responseStatus、responseEvidenceId、sideEffectObserved（只允许明确证据填写）；
+- 大 OpenAPI JSON 有界读取（4MiB）并提取 path/method/operationId/parameter 索引，模型只看有界摘要；
+- `laya-browser-agent` 作为 browser-index System One backend；宿主 post-execute 记录真实 MCP browser 结果；
+- browser seam 已查清：没有安全的 action 前 snapshot/candidate 参数重写 seam，故明确停止普通 planning takeover，不复制第二套 runtime；
+- finding/report 已由 local.67/local.78/local.79 的 admission、evidence、coverage 对账与 finalize 门禁收敛；survey seed 消费闭环由 local.81/local.83 的 closure gate 覆盖，不再新增重复协议；
+- npm test **235/235**，preset consistency、TypeScript 5.9.3、语法、diff check 与 npm pack dry-run 通过。
 
-### 尚未完成
+### 运行评估（不是代码缺口）
 
-- 普通 agent 的 Playwright planning turn 没有通过宿主正式 before/after seam 完整替换；
-- Skill recommendation→read→evidence/research 的 recommendationId 关联漏斗尚未完成；
-- approval accuracy 没有真实标签，不能用 allow rate 代替；
-- OpenAPI 大响应的结构化 endpoint 提取尚未实现；
-- 首轮真实模型盲测受上游延迟影响，没有有效 A/B 结论；
-- finding/report 语义收敛与 survey 消费闭环仍是后续批次。
+- 审批“准确率”仍必须通过人工抽样标签计算；系统现已具备所需字段，禁止用 allow_rate 代替；
+- 真实模型长期 A/B 受上游时延和费用影响，应在授权本地 fixture 上按同模型、同预算、多 seed 持续采样；确定性测试不冒充模型收益；
+- 普通 Playwright planning takeover 已因宿主缺少安全 pre-observation seam 被明确判定为停止项，而非遗留待办。
 
-### 当前后续顺序
+### 结论
 
 ```text
-1. 搜索 engine preference/auto 语义收敛（不新增工具）
-2. Laya candidate 增加 evidenceDelta/repeatedCount/lastOutcome，降低重复建议
-3. Skill 推荐→读取→后续 evidence 关联
-4. 宿主 browser before/after seam 事实核查
-5. 确认 seam 后再决定是否自动替换普通 browser planning
-6. 审批人工标签与准确率评估
+所有当前宿主内可安全实现的优化项已完成。
+剩余仅为运行期数据采集、人工标签与长期 A/B，不再扩展 Laya 权限或复制 executor/lifecycle。
 ```
 
 ## 8. 全局一致性结论
@@ -779,17 +776,12 @@ sideEffectObserved（只有明确证据才填）
 - 不再把 skill reminder 宣称为 skill activation；
 - 不再用 approval allow_rate 宣称 approval accuracy。
 
-### 最小后续实现顺序
+### 实施收官
 
 ```text
-Phase 0 冻结与回滚
-→ Phase 1 搜索 provider + session proxy + engine hint
-→ Phase 2 Laya next-action 去重/信息增益字段
-→ Phase 3 Skill 推荐→读取→证据漏斗
-→ Phase 4 宿主 browser seam 事实核查
-→ Phase 5 审批人工标签与准确率评估
+Phase 0–5 的代码项均已在 local.101 落地或完成事实核查。
+browser takeover 因宿主缺少安全 pre-observation seam 正式停止；保留 browser-index adapter 与 after-result telemetry。
+审批人工标注、真实模型 A/B 属运行评估，不阻塞版本完成，也不得借此扩大 Laya 职责。
 ```
 
-在 Phase 4 seam 未确认前，不实现生产 browser takeover；在 Phase 1–3 指标未证明收益前，不再扩大 Laya职责。
-
-**此文档完成后不自动改代码。实现从 Phase 0/Phase 1 单独开始，逐批验收。**
+**local.101 之后优先观察遥测与真实产出；无证据证明收益的 next-action/skill 提醒应回滚，而不是继续加提示或新状态机。**

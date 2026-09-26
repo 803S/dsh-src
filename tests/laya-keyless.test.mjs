@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { keylessSearchProvider } from '../lib/src/web-search-provider.js';
+import { extractOpenApiIndex, renderOpenApiIndex } from '../lib/src/openapi-index.js';
 
 test('local.100 keyless search provider parses public result pages without API key', async () => {
   const previous = globalThis.fetch;
@@ -59,6 +60,44 @@ test('local.100 keyless search provider supports Bing and Baidu parser shapes', 
     assert.ok(seen.some((url) => url.includes('bing.com')));
     assert.equal(result.sources[0].url, 'https://bing.example/result');
   } finally { globalThis.fetch = previous; }
+});
+
+test('local.101 keyless search provider honors an explicit engine without fallback', async () => {
+  const previous = globalThis.fetch; const seen = [];
+  try {
+    globalThis.fetch = async (url) => {
+      seen.push(String(url));
+      return new Response('<li class="b_algo"><h2><a href="https://bing.example/only">Only Bing</a></h2></li>', { status: 200 });
+    };
+    const result = await keylessSearchProvider.search({ query: 'explicit', engine: 'bing', maxResults: 3 });
+    assert.equal(result.engine, 'bing');
+    assert.equal(result.requestedEngine, 'bing');
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], /bing\.com/);
+  } finally { globalThis.fetch = previous; }
+});
+
+test('local.101 keyless search reports per-engine diagnostics', async () => {
+  const previous = globalThis.fetch;
+  try {
+    globalThis.fetch = async (url) => new Response('blocked', { status: String(url).includes('duckduckgo') ? 403 : 429 });
+    await assert.rejects(() => keylessSearchProvider.search({ query: 'diagnostics', engine: 'duckduckgo' }), /duckduckgo: 403/);
+  } finally { globalThis.fetch = previous; }
+});
+
+test('local.101 OpenAPI index extracts bounded routes without exposing the full document', () => {
+  const raw = JSON.stringify({ openapi: '3.0.0', info: { title: 'Large API', version: '1.2' }, paths: {
+    '/api/users/{id}': { get: { operationId: 'getUser', tags: ['users'], parameters: [{ name: 'id' }] }, patch: { operationId: 'patchUser', parameters: [{ name: 'body' }] } },
+    '/api/admin/reset': { post: { operationId: 'resetAdmin' } }
+  }, components: { schemas: { Huge: { description: 'x'.repeat(200000) } } } });
+  const index = extractOpenApiIndex(raw);
+  assert.equal(index.valid, true);
+  assert.equal(index.paths.length, 2);
+  assert.deepEqual(index.paths[0].methods, ['GET', 'PATCH']);
+  assert.ok(index.parameters.includes('id'));
+  const rendered = renderOpenApiIndex(index);
+  assert.match(rendered, /GET,PATCH \/api\/users/);
+  assert.ok(rendered.length < 5000);
 });
 
 test('local.100 keyless search provider fails over from blocked engine', async () => {
