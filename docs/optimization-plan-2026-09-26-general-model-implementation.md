@@ -731,12 +731,12 @@ sideEffectObserved（只有明确证据才填）
 
 - local.99 证据交付链与父子证据回流；
 - `web_search` 使用 session proxy，支持 `auto|duckduckgo|google|bing|baidu`，只有 auto fallback；
-- Laya next-action 增加 state fingerprint、evidenceDelta、repeatedCount、lastOutcome、blockedReason、nextRequiredTool 与 recommendationId；
+- Laya risk-grade advisory、主/子 agent delegate/self 与 Skill Selector 均保留；生产主循环关闭 next-action，避免 commander 收到 `src_submit` 等 child-only 建议；
 - Skill recommendationId → read → next tool → evidence outcome 旁路漏斗；能力脚本仍经原人工审批，不自动运行；
-- risk-grade 永久 advisory，`classifyHttpRequest` 仍是唯一审批硬法律；
+- risk-grade 永久 advisory，`classifyHttpRequest` 仍是唯一审批硬法律；用户人工 allow/reject 仍是高风险请求最终闸；
 - 审批记录新增 ruleVerdict、layaAdvice、userDecision、responseStatus、responseEvidenceId、sideEffectObserved（只允许明确证据填写）；
 - 大 OpenAPI JSON 有界读取（4MiB）并提取 path/method/operationId/parameter 索引，模型只看有界摘要；
-- `laya-browser-agent` 作为 browser-index System One backend；宿主 post-execute 记录真实 MCP browser 结果；
+- `laya-browser-agent` 作为 browser-index System One backend；宿主 post-execute 记录真实 MCP browser 结果；browser 决策后端替换与 dsh Playwright executor 边界保持不变；
 - browser seam 已查清：没有安全的 action 前 snapshot/candidate 参数重写 seam，故明确停止普通 planning takeover，不复制第二套 runtime；
 - finding/report 已由 local.67/local.78/local.79 的 admission、evidence、coverage 对账与 finalize 门禁收敛；survey seed 消费闭环由 local.81/local.83 的 closure gate 覆盖，不再新增重复协议；
 - npm test **235/235**，preset consistency、TypeScript 5.9.3、语法、diff check 与 npm pack dry-run 通过。

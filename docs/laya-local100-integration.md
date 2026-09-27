@@ -4,16 +4,16 @@
 
 - dsh 原生 `web_search` 使用 `ctx.web` provider seam；SRC 不再依赖 DeepSeek native search key，新增 `src-keyless-search`，先尝试 DuckDuckGo HTML，失败再尝试 Google HTML。模型工具名仍是宿主原生 `web_search`，不是 Laya 搜索。
 - SRC 组合根注册 keyless provider，并通过 profile 的 `web.searchProvider=src-keyless-search` 选择它；不修改宿主 dsh 包。
-- `agent/pre-step` 接入 Laya `next-action`：每个 commander step 根据 SRC 状态生成有界候选，Laya 选择后以 durable user message 注入主模型；候选只是建议，工具/审批/范围硬闸仍优先。
-- `tools/pre-execute` 对 bash、MCP、Playwright/browser 工具做 Laya advisory telemetry；不阻止、不替换、不剥夺 bash/curl 能力。原有 dsh shell sandbox/approval 和 SRC HTTP 审批继续各自生效。
+- Laya 职责收敛：风险审批 `risk-grade` advisory、主/子 agent `delegate/self`（在 src_add_intent 决策点）和 Skill Selector 均保留；生产主循环不再使用 `next-action`，不向 commander 注入 `src_submit` 建议。
+- `tools/pre-execute` 仅保留 web_search 的 session proxy 注入；不再对 bash/MCP/Playwright 额外调用 Laya。原有 dsh shell sandbox/approval 和 SRC HTTP 风险审批继续各自生效。
 - Laya telemetry 补 source/fallback/latency/probabilities；next-action 与 tool-advisory 单独记录。`laya-client` 每次调用惰性读取 `DSH_SRC_LAYA_URL`，运行时换 daemon 地址不固化。
-- `start-dsh-web.sh` 默认开启 `DSH_SRC_LAYA_NEXT/DELEGATE/SKILL/DECISION=on`；代码默认仍保持 off/on 的测试兼容性，显式启动脚本才开启生产行为。risk Laya 只做 advisory，不得绕过 `classifyHttpRequest` 审批硬闸，也不得阻断普通 GET/认证基线。
+- `start-dsh-web.sh` 生产默认开启 `DSH_SRC_LAYA_DELEGATE/SKILL/DECISION=on`，关闭 `DSH_SRC_LAYA_NEXT`；代码默认 risk/delegate off、skill on。risk Laya 只做 advisory，不得绕过 `classifyHttpRequest` 审批硬闸，也不得阻断普通 GET/认证基线。
 
 ## 有意未做
 
 - 没有新建 HTB/Lab 模式；HTB 仍只是 SRC 的一个真实授权目标。
 - 没有用 Laya 代替搜索 provider；Laya 决策“是否/选择何种下一步”，web_search 由宿主 provider 执行。
-- local.101 已补 recommendationId→skill.read→下一工具→evidence outcome 旁路漏斗；没有自动强制 skill 运行，能力脚本仍受既有人工审批。
+- local.101/102 已补 recommendationId→skill.read→下一工具→evidence outcome 旁路漏斗；没有自动强制 skill 运行，能力脚本仍受既有人工审批。
 - browser-loop 仍不拥有 page/context；普通 browser MCP 通过 advisory 观测，独立 candidate loop 不复制宿主生命周期。
 
 ## 验收

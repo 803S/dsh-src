@@ -3998,6 +3998,13 @@ test("单一 mutation API 保持 store/event/projection 三账本一致 [local.5
 });
 
 /* [local.54] 凭证库基础行为：写入/读回/校验/脱敏/头解析（独立临时 DSH_HOME，不碰真实 ~/.dsh）。 */
+test("[local.101] credentialHeaders 支持 api-key/x-api-key 审批重放头", async () => {
+  const { credentialHeaders } = await import("../lib/src/credentials.js");
+  assert.deepEqual(credentialHeaders("api-key: fake"), { "api-key": "fake" });
+  assert.deepEqual(credentialHeaders("x-api-key: fake"), { "x-api-key": "fake" });
+  assert.deepEqual(credentialHeaders("Authorization: Bearer fake"), { Authorization: "Bearer fake" });
+});
+
 test("[local.54] credentials 模块：指纹写入/读回校验/脱敏/头解析", async () => {
 	const { writeCredential, readCredential, redactCredential, redactText, credentialHeaders, stripCredentialHeaders, credentialVaultDir } = await import("../lib/src/credentials.js");
 	const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "creds54-"));
@@ -5977,6 +5984,20 @@ test("[local.99] HTTP 模型可见响应与自动证据：脱敏、去重不丢�
     const outsider = h.exec("l99-outsider");
     const missing = await h.run("src_get_evidence", { ids: [first.value.evidenceId] }, outsider);
     assert.equal(missing.items[0].found, false);
+  } finally { await new Promise((r) => server.close(r)); }
+});
+
+test("[local.101] SRC HTTP 证据在唯一 active intent 时自动归属 intent", async () => {
+  const h = await freshEvidenceHarness(), parent = h.exec("l101-intent");
+  await h.run("src_add_goal", { target: "127.0.0.1", objective: "intent attribution" }, parent);
+  const intent = await h.run("src_add_intent", { title: "唯一当前 HTTP intent", goalId: "goal-1", priority: 8 }, parent);
+  const server = http.createServer((_req, res) => { res.setHeader("content-type", "text/plain"); res.end("intent-attributed"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const got = await modelResult(h, "src_http", { url: `http://127.0.0.1:${server.address().port}/read`, method: "GET", justification: "唯一 intent 证据归属" }, parent);
+    const state = await h.run("src_state", {}, parent);
+    const obs = state.observations.find((row) => row.id === got.value.evidenceId);
+    assert.equal(obs.intentId, intent.id);
   } finally { await new Promise((r) => server.close(r)); }
 });
 

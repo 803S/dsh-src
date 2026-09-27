@@ -16,7 +16,7 @@ test('local.100 keyless search provider parses public result pages without API k
   } finally { globalThis.fetch = previous; }
 });
 
-test('local.100 Laya next-action consumes indexed answers', async () => {
+test('local.101 Laya next-action remains a direct client compatibility path only', async () => {
   const previous = globalThis.fetch, previousUrl = process.env.DSH_SRC_LAYA_URL;
   try {
     process.env.DSH_SRC_LAYA_URL = 'http://laya.test';

@@ -13,7 +13,9 @@ export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
 export DSH_SRC_ORCHESTRATOR="${DSH_SRC_ORCHESTRATOR:-off}"
 export DSH_SRC_ROUTE_V2="${DSH_SRC_ROUTE_V2:-off}"
 export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
-export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-on}"
+# Laya 只保留 risk-grade advisory、delegate/self 决策与 Skill Selector；
+# next-action/tool-advisory 已从生产主循环移除，风险审批硬闸仍保留。
+export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-off}"
 export DSH_SRC_LAYA_DELEGATE="${DSH_SRC_LAYA_DELEGATE:-on}"
 export DSH_SRC_LAYA_SKILL="${DSH_SRC_LAYA_SKILL:-on}"
 export DSH_SRC_LAYA_DECISION="${DSH_SRC_LAYA_DECISION:-on}"
