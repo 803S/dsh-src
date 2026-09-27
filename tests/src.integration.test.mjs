@@ -6126,6 +6126,73 @@ test("[local.99] 证据分页可读尾部、总预算有界、HTTP证据可用�
   assert.ok(!fin.blockers.some((b) => b.includes("evidenceId")), "observation is a valid coverage evidence pointer");
 });
 
+test("[local.103] 域数据面板：确认/运行闸、精确清理、共享凭证、失败重试、冷投影", async () => {
+  const tmp = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), 'src-domain-panel-'));
+  const prevHome = process.env.DSH_HOME, prevLessons = process.env.DSH_SRC_LESSONS_DIR, prevTel = process.env.DSH_SRC_TELEMETRY_DIR;
+  process.env.DSH_HOME = tmp;
+  process.env.DSH_SRC_LESSONS_DIR = nodePath.join(tmp, 'storages', 'src-lessons');
+  process.env.DSH_SRC_TELEMETRY_DIR = nodePath.join(tmp, 'storages', 'src-telemetry');
+  try {
+    const h = await freshEvidenceHarness();
+    let running = false;
+    h.ctx.get = (name) => name === 'agents' ? { list: () => [{ status: running ? 'running' : 'idle' }] } : undefined;
+    const a = h.exec('domain-delete-alpha'), b = h.exec('domain-keep-beta');
+    await h.run('src_add_goal', { target: 'alpha.test', objective: 'delete fixture' }, a);
+    await h.run('src_add_goal', { target: 'beta.test', objective: 'keep fixture' }, b);
+    await h.run('src_add_asset', { type: 'subdomain', value: 'api.alpha.test', source: 'fixture' }, a);
+    await h.run('src_record_domain_note', { category: 'misc', title: 'alpha note', content: 'delete me' }, a);
+    await h.run('src_record_domain_note', { category: 'misc', title: 'beta note', content: 'keep me' }, b);
+    const shared = await h.run('src_add_test_account', { label: 'shared', credential: 'x-api-key: shared-test-secret' }, a);
+    await h.run('src_add_test_account', { label: 'shared', credentialRef: shared.credentialRef }, b);
+    const own = await h.run('src_add_test_account', { label: 'own', credential: 'x-api-key: alpha-only-secret' }, a);
+    const { artifactsRoot } = await import('../lib/src/artifacts.js');
+    const alphaDir = artifactsRoot(a.agent.session.id, { target: 'alpha.test' });
+    const betaDir = artifactsRoot(b.agent.session.id, { target: 'beta.test' });
+    await fsPromises.mkdir(process.env.DSH_SRC_LESSONS_DIR, { recursive: true });
+    await fsPromises.writeFile(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'alpha.md'), `# lesson\n<!-- lesson-meta: ${JSON.stringify({sessionId: a.agent.session.id})} -->`);
+    await fsPromises.writeFile(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'beta.md'), `# lesson\n<!-- lesson-meta: ${JSON.stringify({sessionId: b.agent.session.id})} -->`);
+    const command = h.commands.get('src-delete-domain');
+    const invoke = (rawInput) => command.handler({ rawInput, agent: a.agent });
+    assert.equal(h.tools.has('src-delete-domain'), false);
+    assert.equal((await invoke('alpha.test confirm')).kind, 'error');
+    running = true;
+    assert.equal((await invoke('alpha.test confirm alpha.test')).kind, 'error');
+    assert.equal((await h.run('src_state', {}, a)).initialized, true);
+    running = false;
+    const catalog = JSON.parse((await h.commands.get('src-domains').handler({ agent: a.agent })).text).domains;
+    assert.equal(catalog.find((r) => r.target === 'alpha.test').assets, 1);
+    const projection = h.projections.get('src');
+    const goalEvent = { type: 'tool/call', time: Date.now() - 10000, data: { name: 'src_add_goal', arguments: JSON.stringify({ target: 'alpha.test', objective: 'old' }) } };
+    const oldState = projection.apply(srcInitialState, goalEvent);
+    // Inject a file failure AFTER DB deletion: journal must retain a retryable plan.
+    await fsPromises.writeFile(nodePath.join(alphaDir, 'README.md'), 'ownership unknown');
+    assert.equal((await invoke('alpha.test confirm alpha.test')).kind, 'error');
+    assert.equal((await h.run('src_state', {}, a)).initialized, false);
+    assert.equal(JSON.parse((await h.commands.get('src-domains').handler({})).text).domains.find((r) => r.target === 'alpha.test').cleanupPending, true);
+    await fsPromises.writeFile(nodePath.join(alphaDir, 'README.md'), `- 会话：${a.agent.session.id}\n`);
+    const result = await invoke('alpha.test confirm alpha.test');
+    assert.equal(result.kind, 'success', result.text);
+    assert.equal(existsSync(alphaDir), false);
+    assert.equal(existsSync(betaDir), true);
+    assert.equal(existsSync(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'alpha.md')), false);
+    assert.equal(existsSync(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'beta.md')), true);
+    const vaultFile = (ref) => nodePath.join(tmp, 'storages/src-credentials', ref.slice('credential://'.length) + '.json');
+    assert.equal(existsSync(vaultFile(own.credentialRef)), false);
+    assert.equal(existsSync(vaultFile(shared.credentialRef)), true);
+    assert.equal((await h.run('src_state', {}, b)).domainNotes.length, 1);
+    assert.equal(projection.view(oldState).goal, null, 'cached projection cannot resurrect deleted target');
+    assert.equal(projection.view(projection.apply(srcInitialState, goalEvent)).goal, null, 'cold full replay cannot resurrect deleted target');
+    const freshState = projection.apply(srcInitialState, { ...goalEvent, time: Date.now() + 1000 });
+    assert.equal(projection.view(freshState).goal.target, 'alpha.test', 'new engagement after deletion is allowed');
+    assert.ok(h.sessions.get(a.agent.session.id).events.some((e) => e.data.name === 'src_domain_data_deleted'));
+    const newGoal = await h.run('src_add_goal', { target: 'alpha.test', objective: 'new' }, h.exec('domain-new-alpha'));
+    assert.equal(newGoal.priorContext, undefined, 'new session no longer receives deleted prior context');
+  } finally {
+    for (const [key, value] of Object.entries({ DSH_HOME: prevHome, DSH_SRC_LESSONS_DIR: prevLessons, DSH_SRC_TELEMETRY_DIR: prevTel })) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    await fsPromises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("[local.99] Pattern 实际工具接线与 blocked 历史不误记证伪", async () => {
   const prev = process.env.DSH_SRC_LESSONS_DIR;
   const dir = await fsPromises.mkdtemp(nodePath.join(nodeOs.tmpdir(), "l99-pattern-")); process.env.DSH_SRC_LESSONS_DIR = dir;
