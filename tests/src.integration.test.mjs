@@ -16,6 +16,9 @@ import { isJsonValue } from "@deepseek-ai/dsh-session";
 const __dshHomePrev = process.env.DSH_HOME;
 const __dshHomeTmp = nodePath.join(nodeOs.tmpdir(), `dsh-src-test-home-${process.pid}-${Date.now()}`);
 process.env.DSH_HOME = __dshHomeTmp;
+/* [local.104] Existing integration fixtures exercise the tool directly rather than the user command plane.
+ * They explicitly opt into the legacy path; production has no such env override. */
+process.env.DSH_SRC_ALLOW_LEGACY_MODEL_APPROVAL = "1";
 process.on("exit", () => { try { rmSync(__dshHomeTmp, { recursive: true, force: true }); } catch {} });
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
@@ -4095,7 +4098,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
 		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
 		"src_add_finding", "src_add_asset", "src_state", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",
-		"src_update_finding", "src_reject_finding", "src_resolve_approval", "src_request_asset_confirm",
+		"src_update_finding", "src_reject_finding", "src_reclassify_finding", "src_resolve_approval", "src_request_asset_confirm",
 		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve", "src_survey_seed"
 	], "拆包前必须冻结当前工具名称和注册顺序");
 });
@@ -6153,6 +6156,10 @@ test("[local.103] 域数据面板：确认/运行闸、精确清理、共享凭�
     await fsPromises.writeFile(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'beta.md'), `# lesson\n<!-- lesson-meta: ${JSON.stringify({sessionId: b.agent.session.id})} -->`);
     const { SrcStore } = await import('../lib/src.js');
     const adminStore = new SrcStore({ storageDomain: { open: async () => h.domain } });
+    const { apply: applyDomainAdmin } = await import('../lib/src-domain-admin.js');
+    h.ctx.get = (name) => name === 'agents' ? { list: () => [{ status: running ? 'running' : 'idle' }] } : undefined;
+    applyDomainAdmin(h.ctx);
+    assert.equal(h.commands.has('src-delete-domain'), true, 'global admin command is mounted on the real command registry');
     assert.equal(h.tools.has('src-delete-domain'), false);
     const catalog = await adminStore.listDomainCatalog();
     assert.equal(catalog.find((r) => r.target === 'alpha.test').assets, 1);
@@ -6176,6 +6183,25 @@ test("[local.103] 域数据面板：确认/运行闸、精确清理、共享凭�
     assert.equal(existsSync(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'beta.md')), true);
     const vaultFile = (ref) => nodePath.join(tmp, 'storages/src-credentials', ref.slice('credential://'.length) + '.json');
     assert.equal(existsSync(vaultFile(own.credentialRef)), true, 'store-only API does not own vault file cleanup');
+    assert.equal(existsSync(vaultFile(shared.credentialRef)), true);
+    assert.equal((await h.run('src_state', {}, b)).domainNotes.length, 1);
+    // Exercise the actual global user command after the pure store contract above.
+    await h.run('src_add_goal', { target: 'alpha.test', objective: 'command fixture restored' }, a);
+    await h.run('src_add_asset', { type: 'subdomain', value: 'api.alpha.test', source: 'fixture' }, a);
+    await h.run('src_record_domain_note', { category: 'misc', title: 'alpha command note', content: 'delete me by command' }, a);
+    const deleteCommand = h.commands.get('src-delete-domain');
+    running = true;
+    const busy = await deleteCommand.handler({ rawInput: 'alpha.test confirm alpha.test', agent: a.agent });
+    assert.equal(busy.kind, 'error');
+    assert.match(busy.text, /任务正在运行/);
+    running = false;
+    const deletedByCommand = await deleteCommand.handler({ rawInput: 'alpha.test confirm alpha.test', agent: a.agent });
+    assert.equal(deletedByCommand.kind, 'success');
+    assert.equal(existsSync(alphaDir), false, 'actual command removes owned artifacts');
+    assert.equal(existsSync(betaDir), true, 'actual command preserves other-domain artifacts');
+    assert.equal(existsSync(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'alpha.md')), false);
+    assert.equal(existsSync(nodePath.join(process.env.DSH_SRC_LESSONS_DIR, 'beta.md')), true);
+    assert.equal(existsSync(vaultFile(own.credentialRef)), false);
     assert.equal(existsSync(vaultFile(shared.credentialRef)), true);
     assert.equal((await h.run('src_state', {}, b)).domainNotes.length, 1);
     await fsPromises.mkdir(nodePath.join(tmp, 'storages'), { recursive: true });

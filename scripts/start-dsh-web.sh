@@ -6,7 +6,7 @@
 #   DSH_SRC_STATE_VERSION=1|2         （默认 1，A/B 后再翻 2）
 #   DSH_SRC_ORCHESTRATOR=off|shadow|on（本轮只到 shadow）
 #   DSH_SRC_ROUTE_V2=off|shadow|on    （灰度数据达标后才开）
-#   DSH_SRC_LAYA_NEXT=off|shadow|on     （默认 on：每轮主决策建议；fail-open）
+#   DSH_SRC_LAYA_NEXT=off|shadow|on     （默认 off：生产不启用每轮 next-action 建议）
 set -u
 export DSH_SRC_TELEMETRY="${DSH_SRC_TELEMETRY:-shadow}"
 export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
