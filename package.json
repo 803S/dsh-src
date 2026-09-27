@@ -18,7 +18,8 @@
     "./invariant": "./lib/invariant.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
-    "./src-web-search-provider": "./lib/src/web-search-provider.js"
+    "./src-web-search-provider": "./lib/src/web-search-provider.js",
+    "./src-domain-admin": "./lib/src-domain-admin.js"
   },
   "files": [
     "lib/**/*.js",

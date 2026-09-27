@@ -43,6 +43,10 @@
       config:
         path: !!js dshHomePath('storages', 'src-sessions.db')
 
+- insert:
+    - id: src-domain-admin
+      name: '@lihua_dis/dsh-src/src-domain-admin'
+
 - id: storage-domain
   config:
     backend: json
