@@ -1,4 +1,6 @@
-# local.100：Laya 主决策与无 key 搜索接线
+# local.100：Laya 与无 key 搜索接线（历史快照）
+
+> 当前行为以 [local.105实施记录](implementation-2026-09-29-laya-repair.md) 为准。旧版调用和字段存在不等于生产收益；next-action不承担规划，分工提示不代表实际派发，Skill证据关联不代表因果收益。搜索代理上下文现位于tools/execute，不是pre-execute。
 
 ## 已实现
 

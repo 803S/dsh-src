@@ -65,7 +65,7 @@ export function apply(ctx, config) {
     while (!finished) {
       await new Promise((r) => setTimeout(r, 250));
       if (agents.list().some((a) => a.status === 'running')) quiet = 0; else quiet++;
-      if (stopped || quiet >= 12) { await finish(stopped ? 'budget' : 'completed'); break; }
+      if (stopped || quiet >= 12) { await finish(stopped ? 'budget' : steps === 0 ? 'error' : 'completed'); break; }
     }
   })().catch((error) => finish('error', error));
 }

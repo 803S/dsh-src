@@ -16,15 +16,16 @@ test('local.100 keyless search provider parses public result pages without API k
   } finally { globalThis.fetch = previous; }
 });
 
-test('local.101 Laya next-action remains a direct client compatibility path only', async () => {
+test('Laya does not perform high-level next-action planning', async () => {
   const previous = globalThis.fetch, previousUrl = process.env.DSH_SRC_LAYA_URL;
   try {
     process.env.DSH_SRC_LAYA_URL = 'http://laya.test';
-    globalThis.fetch = async () => new Response(JSON.stringify({ answers: { action: { choice: 'inspect-state', probabilities: { 'inspect-state': 0.98 }, confidence: 0.98 } } }), { status: 200 });
+    globalThis.fetch = async () => { assert.fail('high-level planner must not call Laya'); };
     const { layaDecide } = await import('../lib/src/decision/laya-client.js');
     const result = await layaDecide({ taskType: 'next-action', stateSummary: 'pending', candidates: [{ id: 'inspect-state', label: 'inspect' }] }, { agent: { session: { id: 'laya-test' } } });
-    assert.equal(result.action, 'inspect-state');
-    assert.equal(result.fallback, false);
+    assert.equal(result.action, 'pending');
+    assert.equal(result.source, 'main-model-planning');
+    assert.equal(result.fallback, true);
   } finally { globalThis.fetch = previous; if (previousUrl === undefined) delete process.env.DSH_SRC_LAYA_URL; else process.env.DSH_SRC_LAYA_URL = previousUrl; }
 });
 

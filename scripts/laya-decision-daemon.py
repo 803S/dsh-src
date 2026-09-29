@@ -17,7 +17,7 @@ import sys
 import json
 import http.server
 import socketserver
-import threading
+import time
 
 # 加载 laya-mlx
 os.environ.setdefault("HF_HOME", "/Users/lihua-dis/models/laya/hf_cache")
@@ -48,6 +48,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        received_at = time.time() * 1000
+        started = time.monotonic()
         if self.path != "/decide":
             self.send_error(404)
             return
@@ -65,10 +67,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for k, v in schema.items():
                 if isinstance(v, dict) and "type" in v and "instructions" in v and "criteria" in v:
                     norm_schema[k] = v
+            # Keep single-model inference serialized. preHandlerMs includes transport
+            # and kernel queue delay; it is NOT a pure inference/queue measurement.
+            infer_at = time.monotonic()
             result = agent.predict(text, norm_schema)
-            self._send_json({"answers": result["answers"]})
-        except Exception as e:
-            self.send_error(400, str(e))
+            timing = {"inferenceMs": (time.monotonic() - infer_at) * 1000,
+                      "handlerMs": (time.monotonic() - started) * 1000}
+            sent_at = payload.get("sentAt")
+            if isinstance(sent_at, (int, float)):
+                timing["preHandlerMs"] = max(0, received_at - sent_at)
+            self._send_json({"answers": result["answers"], "timing": timing})
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Client cancellation is not model failure; never retry prediction.
+        except Exception:
+            self.send_error(400, "decision failed")
 
     def _send_json(self, data):
         self.send_response(200)

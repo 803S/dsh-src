@@ -8,9 +8,10 @@ import { keylessSearchProvider } from "../lib/src/web-search-provider.js";
 import { patternShapeError } from "../lib/src/lessons.js";
 import { layaDecide } from "../lib/src/decision/laya-client.js";
 
-test("project defect guard: read-only POST shapes do not create approval debt", () => {
+test("project defect guard: body words and endpoint patches cannot waive approval", () => {
   assert.equal(classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: '{"method":"tools/list"}' }).require, false);
-  assert.equal(classifyHttpRequest({ method: "POST", path: "/utils/transform_request", headers: {}, body: '{"model":"x"}' }).require, false);
+  assert.equal(classifyHttpRequest({ method: "POST", path: "/utils/transform_request", headers: {}, body: '{"model":"x"}' }).require, true);
+  assert.equal(classifyHttpRequest({ method: "POST", path: "/payments", headers: {}, body: '{"note":"schema query tools/list"}' }).require, true);
 });
 
 test("project defect guard: search parser rejects generic Google feedback navigation", async () => {

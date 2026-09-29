@@ -28,6 +28,10 @@ export type SrcProjectionNode =
     readonly status: SrcIntentStatus
     /** [local.42] Decide 优先级 1-9（9 最高）；未设置按中优先级处理 */
     readonly priority?: number
+    readonly delegationMode?: 'delegate' | 'self' | 'unknown'
+    readonly delegationAdvice?: { action: 'delegate' | 'self' | 'pending'; confidence: number; reason: string; source: string; fallback: boolean }
+    readonly executionSource?: string
+    readonly childSessionId?: string
     readonly createdAt: number
   }
   | {

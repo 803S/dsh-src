@@ -7,6 +7,7 @@ import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
+import { issueApprovalGrant } from "../lib/src/approval-grants.js";
 import { flushDefaultTelemetry } from "../lib/src/telemetry/events.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
 import { routePlaybookV2 as routePlaybook, PLAYBOOK_ROUTE_KEYS } from "../lib/src/playbooks.js";
@@ -16,9 +17,6 @@ import { isJsonValue } from "@deepseek-ai/dsh-session";
 const __dshHomePrev = process.env.DSH_HOME;
 const __dshHomeTmp = nodePath.join(nodeOs.tmpdir(), `dsh-src-test-home-${process.pid}-${Date.now()}`);
 process.env.DSH_HOME = __dshHomeTmp;
-/* [local.104] Existing integration fixtures exercise the tool directly rather than the user command plane.
- * They explicitly opt into the legacy path; production has no such env override. */
-process.env.DSH_SRC_ALLOW_LEGACY_MODEL_APPROVAL = "1";
 process.on("exit", () => { try { rmSync(__dshHomeTmp, { recursive: true, force: true }); } catch {} });
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
@@ -90,6 +88,8 @@ function harness() {
     return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
   };
   const run = (name, args, execution) => {
+    // This fixture emulates the human command plane, not a production approval bypass.
+    if (name === "src_resolve_approval" && !args.approvalToken) args = { ...args, approvalToken: issueApprovalGrant(execution.agent.session.header?.parentSession ?? execution.agent.session.id, args.id, args.action) };
     const tool = tools.get(name);
     const out = tool.execute(args, execution);
     /* [local.34] 全工具过 schema 闸（异步结果在 resolve 后检查）。 */
@@ -366,7 +366,7 @@ test("finalize engagement warns on discovered API endpoints with no follow-up", 
     assert.equal(gated.blockers.some((b) => /未完成漏洞研究假设/.test(b)), true);
     const result = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }], allowIncomplete: true, allowIncompleteReason: "范围耗尽" }, parent);
     assert.equal(result.ready, true, "allowIncomplete bypasses the new gates");
-    assert.match(result.warnings.join(" "), /已按「受限完成」处理/);
+    assert.match(result.warnings.join(" "), /受限完成仍有.*未解决阻断项/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -1397,7 +1397,7 @@ test("[local.64] 投影待办 id 与 store 同源：合成事件带真实 id；�
   assert.equal(noop.userTodos[0].status, "pending");
 });
 
-test("[local.15] src_recover_child 无 checkpoint 子代理也可唤醒；额度限制与 intent 状态回写不变", async () => {
+test("src_recover_child 无 checkpoint 仍可唤醒；入队不冒充恢复成功", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   __resetSharedDomainOpensForTests();
   const h = harness();
@@ -1422,9 +1422,10 @@ test("[local.15] src_recover_child 无 checkpoint 子代理也可唤醒；额度
     () => h.run("src_recover_child", { childSessionId: "child-never-checkpointed", intentId: intent.id, message: "第五次" }, parent),
     /recovery limit reached/,
   );
-  // 唤醒把 intent 从 failed 拉回 running
+  // 消息入队不把尚未实际执行的任务伪装为 running。
   const after = await h.run("src_state", {}, parent);
-  assert.equal(after.intents.find((row) => row.id === intent.id).status, "running");
+  assert.equal(first.status, "queued");
+  assert.equal(after.intents.find((row) => row.id === intent.id).status, "planned");
 });
 
 test("[local.16] src_update_finding 重写字段：store 直写 + fold 投影同步 + 标题冲突拒绝", async () => {

@@ -192,7 +192,7 @@
       name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 
     - id: src-recon-agent
-      name: '@deepseek-ai/dsh-tool-subagent'
+      name: '@lihua_dis/dsh-src/src-subagent'
       config:
         provider: spawn
         toolName: src_recon
@@ -204,7 +204,7 @@
           deny: [src_add_capability, src_recover_child, src_update_finding, src_reject_finding, src_reclassify_finding, src_resolve_approval, src_request_asset_confirm, src_run_capability, src_record_lesson, src_finalize_engagement, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_record_observation, src_test_bypass, src_test_credential, src_user_todo, src_fetch_policy, src_set_infra, src_add_test_account, src_record_domain_note, src_set_goal_target, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_update_intent, src_graph, src_report, src_recon, src_audit, src_verify, src_survey_seed]
 
     - id: src-audit-agent
-      name: '@deepseek-ai/dsh-tool-subagent'
+      name: '@lihua_dis/dsh-src/src-subagent'
       config:
         provider: spawn
         toolName: src_audit
@@ -216,7 +216,7 @@
           deny: [src_add_capability, src_recover_child, src_update_finding, src_reject_finding, src_reclassify_finding, src_resolve_approval, src_request_asset_confirm, src_run_capability, src_record_lesson, src_finalize_engagement, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_record_observation, src_user_todo, src_fetch_policy, src_set_infra, src_add_test_account, src_record_domain_note, src_set_goal_target, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_update_intent, src_graph, src_report, src_recon, src_audit, src_verify, src_survey_seed]
 
     - id: src-verify-agent
-      name: '@deepseek-ai/dsh-tool-subagent'
+      name: '@lihua_dis/dsh-src/src-subagent'
       config:
         provider: fork
         toolName: src_verify

@@ -13,8 +13,9 @@ export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
 export DSH_SRC_ORCHESTRATOR="${DSH_SRC_ORCHESTRATOR:-off}"
 export DSH_SRC_ROUTE_V2="${DSH_SRC_ROUTE_V2:-off}"
 export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
-# Laya 只保留 risk-grade advisory、delegate/self 决策与 Skill Selector；
-# next-action/tool-advisory 已从生产主循环移除，风险审批硬闸仍保留。
+# Laya 仅作风险形态/简单分工/文档匹配提示；复杂决策和采纳由主模型负责。
+# next-action/tool-advisory 不进生产主循环，风险审批硬闸仍保留。
+export DSH_SRC_LAYA_TIMEOUT_MS="${DSH_SRC_LAYA_TIMEOUT_MS:-120000}"
 export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-off}"
 export DSH_SRC_LAYA_DELEGATE="${DSH_SRC_LAYA_DELEGATE:-on}"
 export DSH_SRC_LAYA_SKILL="${DSH_SRC_LAYA_SKILL:-on}"
@@ -24,13 +25,18 @@ export DSH_SRC_BROWSER_DECIDER_URL="${DSH_SRC_BROWSER_DECIDER_URL:-http://127.0.
 LOG=/tmp/dsh-web-latest.log
 PIDFILE=/tmp/dsh-web.pid
 
+# 拒绝在已运行任务中重启；API失败也不能把SPA的HTTP200当空闲。
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+if lsof -ti tcp:3080 -sTCP:LISTEN >/dev/null 2>&1; then
+  node "$SCRIPT_DIR/check-web-idle.mjs" || { echo "无法确认Web空闲，停止重启" >&2; exit 1; }
+fi
 # 幂等：旧进程在就杀掉（仅限本脚本拉起的）
 if [ -f "$PIDFILE" ]; then
   OLD=$(sed 's/PID //' "$PIDFILE" 2>/dev/null)
   [ -n "${OLD:-}" ] && kill "$OLD" 2>/dev/null && sleep 1
 fi
 # 兜底：3080 端口残留进程
-lsof -ti tcp:3080 2>/dev/null | xargs kill 2>/dev/null; sleep 1
+lsof -ti tcp:3080 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; sleep 1
 
 # Browser System 1 backend: laya-browser-agent/localdecide owns only the decision model;
 # dsh remains the Playwright MCP executor and page/context owner.

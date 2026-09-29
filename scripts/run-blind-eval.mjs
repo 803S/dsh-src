@@ -43,7 +43,8 @@ await writeFile(join(home, '.credentials.yaml'), yaml.dump({ [provider.apiKeyEnv
 const range = await createBlindRange({ seed: opt('seed', 'paired-01') });
 const trace = join(home, 'trace.jsonl'), result = join(home, 'completion.json');
 const maxSeconds = Math.min(300, Math.max(30, Number(opt('seconds', 180))));
-const task = `请评估本地授权测试门户 ${range.url}/ 的安全性。只授权这个完整 origin，不访问其他端口或外部目标。门户页面载有访问政策与业务入口，请自行发现并验证，不预设所有异常都是漏洞。全部数据均为合成测试数据。没有额外账号，没有批准任何删除或写操作；需要的输入请记待办。使用当前 SRC 工作流，可委派并回流证据，结论区分已验证、阴性和受阻。测试环境不提供 shell/文件/外部搜索/MCP，仅支持本地 src_http 与 SRC 记录/委派工具；不要反复尝试禁用工具。最后给阶段结论，证据不足可以交0条，不为凑数猜测。`;
+const layaEnabled = args.includes('--laya');
+const task = `${args.includes('--delegate-smoke') ? '本轮先创建goal和有界intent，然后务必调用src_recon(intentId=真实id)派一个子代理只读取首页并用src_submit提交一条fact和completed检查点；主代理收到后给阶段总结，不继续寻找漏洞。' : ''}请评估本地授权测试门户 ${range.url}/ 的安全性。只授权这个完整 origin，不访问其他端口或外部目标。门户页面载有访问政策与业务入口，请自行发现并验证，不预设所有异常都是漏洞。全部数据均为合成测试数据。没有额外账号，没有批准任何删除或写操作；需要的输入请记待办。使用当前 SRC 工作流，可委派并回流证据，结论区分已验证、阴性和受阻。测试环境不提供 shell/文件/外部搜索/MCP，仅支持本地 src_http 与 SRC 记录/委派工具；不要反复尝试禁用工具。最后给阶段结论，证据不足可以交0条，不为凑数猜测。`;
 const patch = [
   { id: 'hmr', disabled: true }, { id: 'session-title-llm', disabled: true },
   { id: 'tools', config: { mode: 'native' } },
@@ -59,7 +60,7 @@ await writeFile(join(profile, 'cordis.patch.yml'), yaml.dump(patch));
 const metadata = { baseline, source: baseline ? '21e0358' : execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo }).toString().trim(), selection, limits: { maxSeconds, maxSteps: patch[3].insert.at(-1).config.maxSteps, maxCalls: 60, maxTokens: 1000000 }, isolation: 'tools.guard allowlist + exact fixture origin; no shell/fs/MCP tools; fresh DSH_HOME; fixed existing model route', url: range.url, home };
 await writeFile(join(home, 'metadata.json'), JSON.stringify(metadata, null, 2));
 console.log(JSON.stringify(metadata, null, 2));
-const env = { ...process.env, DSH_HOME: home, DSH_SRC_LESSONS_DIR: join(home, 'lessons'), DSH_SRC_TELEMETRY_DIR: join(home, 'telemetry'), DSH_SRC_STATE_VERSION: '2', DSH_SRC_LAYA_DECISION: 'off', DSH_SRC_LAYA_SKILL: 'off', DSH_SRC_LAYA_DELEGATE: 'off', DSH_SRC_SURVEY: 'off', DSH_SRC_EVENT_STORE: 'off', DSH_SRC_ORCHESTRATOR: 'off' };
+const env = { ...process.env, DSH_HOME: home, DSH_SRC_LESSONS_DIR: join(home, 'lessons'), DSH_SRC_TELEMETRY_DIR: join(home, 'telemetry'), DSH_SRC_STATE_VERSION: '2', DSH_SRC_LAYA_DECISION: layaEnabled ? 'on' : 'off', DSH_SRC_LAYA_SKILL: layaEnabled ? 'on' : 'off', DSH_SRC_LAYA_DELEGATE: layaEnabled ? 'on' : 'off', DSH_SRC_SURVEY: 'off', DSH_SRC_EVENT_STORE: 'off', DSH_SRC_ORCHESTRATOR: 'off' };
 const child = spawn(process.execPath, [join(aiRoot, 'dsh/lib/bin.js'), '--profile', 'headless'], { cwd: join(home, 'work'), env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
 let logs = '';
 child.stdout.on('data', (d) => { logs += d; }); child.stderr.on('data', (d) => { logs += d; });

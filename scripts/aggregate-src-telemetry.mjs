@@ -138,7 +138,15 @@ for (const row of rows) {
 const duplicates = [...dupGroups.entries()].filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1]).slice(0, 12);
 
 /* ---- orphan/恢复 ---- */
-const recoveries = rows.filter((r) => r.event === "intent.recovered").map((r) => `${r0(payloadOf(r).intentId)}(${r0(payloadOf(r).attempt)}/4)`);
+const decisions = rows.filter((r) => r.event === "laya.decision");
+const laya = Object.fromEntries([...new Set(decisions.map(r => payloadOf(r).taskType ?? "risk-grade"))].map(task => {
+	const own = decisions.filter(r => (payloadOf(r).taskType ?? "risk-grade") === task);
+	const calls = own.filter(r => !payloadOf(r).cached);
+	const ms = calls.map(r => Number(payloadOf(r).latency ?? 0)).sort((a,b) => a-b);
+	return [task, { observations: own.length, actualCalls: calls.length, cacheHits: own.length - calls.length, failures: calls.filter(r => payloadOf(r).fallback).length, p50Ms: ms[Math.floor(ms.length * .5)] ?? 0, p95Ms: ms[Math.min(ms.length - 1, Math.floor(ms.length * .95))] ?? 0, errors: calls.filter(r=>payloadOf(r).errorType).reduce((m,r)=>{ const k=payloadOf(r).errorType; m[k]=(m[k]??0)+1; return m; }, {}) }];
+}));
+const recoveries = rows.filter((r) => r.event === "intent.recovery-queued").map((r) => `${r0(payloadOf(r).intentId)}(${r0(payloadOf(r).attempt)}/4)`);
+const childResults = { started: rows.filter(r=>r.event === "child.started").length, ended: rows.filter(r=>r.event === "child.ended").length, checkpoints: rows.filter(r=>r.event === "submit.checkpoint").length };
 
 /* ---- 事件时间窗 ---- */
 const times = rows.map((r) => Number(r.occurredAt ?? 0)).filter((n) => n > 0);
@@ -161,6 +169,7 @@ const suggestionComparison = [...new Set(suggestions.map((r) => r0(payloadOf(r).
 
 if (jsonMode) {
 	console.log(JSON.stringify({
+		laya, childResults, skillAttribution: "temporal-only, not causal benefit",
 		dir: telemetryDir, files, rows: rows.length, window,
 		byEvent: Object.fromEntries([...byEvent.entries()].sort()),
 		funnel: { offeredSessions: distinct(offeredSessions), selectedSessions: distinct(selectedSessions), evidenceSessions: distinct(evidenceSessions), findingSessions: distinct(findingSessions), finalizedSessions: distinct(finalizedSessions), findingRatePct: findingRate },
@@ -204,7 +213,11 @@ console.log(line);
 console.log(`-- 重复调用 top（同会话+事件+键）--`);
 if (duplicates.length === 0) console.log(`  无`);
 for (const [key, n] of duplicates) console.log(`  ×${n}  ${key}`);
-console.log(`-- orphan 恢复（intent.recovered）--`);
+console.log(`-- Laya（缓存/失败/完整耗时；不是判断准确率）--`);
+console.log(JSON.stringify(laya));
+console.log(`-- 恢复入队（非恢复成功）、真实运行与检查点 --`);
+console.log(JSON.stringify(childResults));
+console.log(`Skill 后续动作/证据仅表示时间关联，不代表因果收益。`);
 console.log(`  ${recoveries.length === 0 ? "无" : recoveries.join(", ")}`);
 console.log(`-- orchestrator shadow：建议 vs 实际（[Phase 3]）--`);
 if (suggestions.length === 0) console.log(`  无建议事件（DSH_SRC_ORCHESTRATOR=off 或尚无 src_state 观测点）`);

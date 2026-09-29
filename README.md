@@ -46,6 +46,15 @@
 
 ---
 
+## local.105：Laya 接入与分工修复
+
+- Laya仅提供低层风险、明确任务分工和文档匹配提示；复杂规划、漏洞真假及最终审批仍由主模型/代码/用户负责。
+- 本地输入保留真实请求与任务语义；默认等待120秒，可用 `DSH_SRC_LAYA_TIMEOUT_MS` 配置，无短时熔断。
+- `src_recon/src_audit/src_verify` 显式传 `intentId`，默认继承父会话实际模型；`src_recover_child(inheritParentModel=true)` 可显式沿用父当前模型，默认不改变原子模型。
+- 建议、派发、接管、checkpoint分别记录；Skill按真实文档版本去重。`completionStatus=limited` 表示受限报告，不代表完整验证。
+- 用户审批token为一次性、24小时有效，重启后需用户重新批准。Laya高置信allow不能代批。
+- 实施范围、验证证据与未宣称的效果见 [实施记录](docs/implementation-2026-09-29-laya-repair.md)。
+
 ## 环境要求
 
 - **Node.js ≥ 24**（使用内置 `node:sqlite`）
