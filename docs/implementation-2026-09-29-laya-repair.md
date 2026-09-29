@@ -1,6 +1,6 @@
 # Laya 接入修复实施记录（2026-09-29）
 
-版本：local.105。基线：7bf6c95/local.104。代码与隔离测试已完成，部署结果见文末。
+版本：local.105。基线：7bf6c95/local.104。代码、隔离测试及双profile部署已完成；长期效果不作完成承诺。
 
 ## 已确认边界
 - 本地 Laya 接收实际任务、请求头、请求体，不默认脱敏或压成布尔值；永久遥测不复制这些输入和凭据。
@@ -53,7 +53,7 @@
 - 补齐部署文件、package exports及UI类型；构建使用项目自身tsc/tsdown，避免shell PATH错误。
 
 ## 验证记录与限制
-- 最终全量回归：252项，251通过；唯一失败为受限完成旧文案断言，已更新并单独复验（结果见发布记录）。不是忽略业务失败。
+- 最终全量回归：252项，251通过；唯一失败为受限完成旧文案断言。修正后仅复跑该用例，1/1通过（/tmp/dsh-local105-retest.log）；未重复运行付费评测，也未把分次验证谎称一次252/252。
 - UI typecheck、preset一致性、语法/diff检查通过。UI构建成功，原tsdown/rolldown版本组合仍有define/import.meta警告；未为此次修改升级构建依赖。
 - 上一轮真实模型隔离验证：`/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-blind-eval-WXUAGc`。子代理deepseek-v4-flash确实完成首页读取与checkpoint，父会话达到180秒预算，**整次评测不是完成验收，也不是漏洞质量提升证据**。
 - 更早首轮因routeForChild对空override解引用失败，已修复并补普通父会话assembly负例。评测器零步退出不再标completed。
@@ -62,4 +62,11 @@
 - 长期A/B、误审批率/文档推荐准确率需真实运行样本；不在本轮继续消耗付费调用追求数字。
 
 ## 发布记录
-待写入：提交、备份路径、部署哈希核对及启动API检查。代码完成不等于这栏已完成。
+- 代码提交：`ba20b65`，中文提交「local.105：修复Laya低层提示、真实分工与文档消费链路」。
+- 回滚备份：`/tmp/dsh-before-local105-20260929-233219`，含双profile包、部署脚本会覆盖的插件/桥文件、原daemon脚本和SQLite一致性备份。恢复包/脚本即可回滚；不要无故用旧数据库覆盖后续业务记录。
+- 双profile已同步，部署脚本逐文件哈希通过；额外复核src/adapter/routing/client/knowledge/UI/preset文件与仓库相同，均为0.1.0-local.105。
+- Web重启前session.list：415个会话，全部idle。重启后JSON API同样返回415个idle，无运行任务被中断。
+- Web PID `99315`，management HTTP200，日志 `/tmp/dsh-web-latest.log`；无启动错误。Chrome只读页面验收：选择现有会话→SRC视图可见，pageerror=[]；未发送用户消息/执行目标工具。
+- Laya daemon脚本已更新并重启，PID `99296`，`/health` 返回JSON `{ok:true,model:aac6fef/laya-multilingual-mlx}`。本次仅health检查，不额外请求付费模型。
+- 外部browser decider PID `94768` 保持不变，未重启。headless副本已更新，现有headless进程未强制重启。
+- 新版npm pack dry-run通过；其npm JSON输出是按包名索引的对象，初次汇总脚本误按数组读取失败，包检查本身成功，未因该展示错误重跑模型或测试。
