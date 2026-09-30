@@ -1,5 +1,7 @@
 /node_modules
 node_modules/
+# Dependency directory may be a symlink in an isolated worktree.
+/src/dsh-client-ui-src/node_modules
 src/dsh-client-ui-src/dist/
 # macOS
 .DS_Store

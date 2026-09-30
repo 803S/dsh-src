@@ -39,7 +39,7 @@ Jev替代Laya的判断后端。授权范围内的低风险HTTP外发可由Jev自
 - 全局配置已写入用户提供的SystemOne endpoint，jev-latest，timeout120000，risk/skill/delegate/browser均on。key不进入仓库。
 - Chrome面板验收：基础设施decision-settings出现；endpoint/model读回正确；4模式均on；password值为空；pageerror=[]。测试已保存连接返回jev-1.13.0，2858ms，合成read分类成功。未运行真实目标请求。
 - 原3166/8791模型进程没有强制终止，但SRC四条生产决策入口均不再调用它们。
-- 源码工作区将在收尾时移入Software/dsh-src-jev以避免临时目录丢失；原Software/dsh-src的远端合并冲突仍保留，未擅选ours/theirs。
+- 源码已移入`/Users/lihua-dis/Software/dsh-src-jev`，分支feat/jev-service；当前重启/部署请从此目录运行`scripts/start-dsh-web.sh`/`scripts/deploy.mjs`。原`/Users/lihua-dis/Software/dsh-src`的远端合并冲突仍保留，未擅选ours/theirs，不应从旧目录覆盖部署。
 
 ## 验收表
 - [x] 低风险POST即使旧泛写规则挂起，也可由Jev放行；高风险和语义不明不执行。
