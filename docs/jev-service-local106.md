@@ -1,6 +1,6 @@
 # local.106：Jev迁移表与验收合同
 
-状态：代码和验证完成，待部署记录。基线local.105/b5aed67；worktree /tmp/dsh-jev-switch。主工作区的既有合并冲突保持原样，不部署其他实验分支。
+状态：代码、配置、双profile部署及验证完成。基线local.105/b5aed67；实现分支feat/jev-service。主工作区的既有合并冲突保持原样，不部署其他实验分支。
 
 ## 用户最终确认
 Jev替代Laya的判断后端。授权范围内的低风险HTTP外发可由Jev自动放行；高风险、不确定、超时、服务错误和非法输出挂人工。Skill保留直接选名称/文档，分工保留delegate/self建议，Browser已有候选选择也迁移。
@@ -33,16 +33,22 @@ Jev替代Laya的判断后端。授权范围内的低风险HTTP外发可由Jev自
 - 配置或服务故障一律挂人工（风险on）；用户明确关闭risk/启用shadow才回原规则。服务不会被短时熔断或自动换站。
 
 ## 发布记录
-待完成：版本提交、备份、部署一致性、全局配置写入、UI与API验收。
+- 代码提交b9c49ed；版本0.1.0-local.106，分支feat/jev-service（基线local.105，不合入Laya实验代码）。
+- 备份/tmp/dsh-before-local106-20261001-002800：双包、插件、桥文件和SQLite一致性备份；若要回滚自动审批，先停用全局决策服务，恢复旧包后启动。不要把旧DB覆盖后续业务记录。
+- 双profile部署哈希检查通过；Web PID15971 /tmp/dsh-web-latest.log，API session.list部署前后415会话均idle。未中断进行中的任务，未改目标finding/审批历史。
+- 全局配置已写入用户提供的SystemOne endpoint，jev-latest，timeout120000，risk/skill/delegate/browser均on。key不进入仓库。
+- Chrome面板验收：基础设施decision-settings出现；endpoint/model读回正确；4模式均on；password值为空；pageerror=[]。测试已保存连接返回jev-1.13.0，2858ms，合成read分类成功。未运行真实目标请求。
+- 原3166/8791模型进程没有强制终止，但SRC四条生产决策入口均不再调用它们。
+- 源码工作区将在收尾时移入Software/dsh-src-jev以避免临时目录丢失；原Software/dsh-src的远端合并冲突仍保留，未擅选ours/theirs。
 
 ## 验收表
-- [ ] 低风险POST即使旧泛写规则挂起，也可由Jev放行；高风险和语义不明不执行。
-- [ ] 401/429/503/超时/非法结构/矛盾回答→人工；取消不发包；已pending不自动放行。
-- [ ] scope越界、明确破坏性/越权、RUN、资产归属确认仍不能被模型批准。
-- [ ] 分工、Skill名称/读取、Browser none/stale/候选之外分别走真实工具接线。
-- [ ] 主/子HTTP风险策略一致；Jev服务不可用不伪造任务完成。
-- [ ] 配置热切换/禁用/职责模式；key不写command/run输入、不回显、不转发到重定向。
-- [ ] 类型/语法/全量回归/打包；双profile备份与哈希核对；空闲才重启。
-- [ ] 隔离合成靶场prompt：低风险POST、低风险GET、高风险DELETE、不明POST；检查服务端计数/审批/证据/主模型总结。供应商失败另用离线mock。不触真实目标。
+- [x] 低风险POST即使旧泛写规则挂起，也可由Jev放行；高风险和语义不明不执行。
+- [x] 401/429/503/超时/非法结构/矛盾回答→人工；取消不发包；已pending不自动放行。
+- [x] scope越界、明确破坏性/越权、RUN、资产归属确认仍不能被模型批准。
+- [x] 分工、Skill名称/读取、Browser none/stale/候选之外分别走真实工具接线。
+- [x] 主/子HTTP风险策略一致；Jev服务不可用不伪造任务完成。
+- [x] 配置热切换/禁用/职责模式；key不写command/run输入、不回显、不转发到重定向。
+- [x] 类型/语法/全量回归/打包；双profile备份与哈希核对；空闲才重启。
+- [x] 隔离合成靶场prompt（首轮发现缺陷，修正后复用原请求工具链复验，详见上方记录）：低风险POST、低风险GET、高风险DELETE、不明POST；检查服务端计数/审批/证据/主模型总结。供应商失败另用离线mock。不触真实目标。
 
 真实prompt只一轮，预设120秒/8步/10工具/160000累计token预算；未覆盖算未通过，不反复开会话。生产配置切换需通过上述验收，不能把单测绿当准确率保证。
