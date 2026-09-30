@@ -280,6 +280,9 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  let hits=0,verdict='allow',risk='low',effect='read',fail=false;
  globalThis.fetch=async(url,init)=>{
   if(String(url).includes('jev.fixture')){
+   const incoming=JSON.parse(init.body);
+   assert.equal(incoming.state.executionPolicy.targetScopeChecked,true);
+   assert.equal(incoming.state.executionPolicy.lowRiskAutoApprovalGranted,true);
    if(fail)return new Response('unavailable',{status:503});
    const p=JSON.parse(init.body);const choices={decision:effect,risk,verdict};
    return new Response(JSON.stringify({model:'jev-fixture',answers:Object.fromEntries(Object.entries(p.questions).map(([k,q])=>[k,{choice:choices[k],confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option===choices[k]?1:0]))}]))}));
@@ -302,4 +305,38 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  await saveDecisionSettings({riskMode:'shadow'});
  const shadow=await h.run('src_http',{method:'GET',url:'https://fixture.test/shadow',justification:'shadow read'});assert.equal(shadow.value.approval,'allowed-auto');assert.equal(shadow.value.riskAdvice,undefined);assert.equal(hits,3);
  const outside=await h.run('src_http',{method:'GET',url:'https://other.invalid/',justification:'not authorized'});assert.equal(outside.isError,true);assert.equal(hits,3);
+});
+
+test('regression 3291: child credential evidence goes to engagement; bad IDs and asset enums are actionable',async t=>{
+ const h=await fixture(t),prev=globalThis.fetch;t.after(()=>globalThis.fetch=prev);
+ await saveDecisionSettings({riskMode:'off',skillMode:'off',delegateMode:'off'});
+ const intent=(await h.run('src_add_intent',{title:'credential fixture'})).value;
+ const child={id:'credential-child',session:{id:'credential-child',header:{parentSession:h.parent.id},append(){}}};
+ let hits=0;
+ globalThis.fetch=async()=>{hits++;return new Response('login success',{status:200});};
+ const bad=await h.run('src_http',{method:'GET',url:'https://fixture.test/',intentId:'goal-1',justification:'baseline'});
+ assert.equal(bad.isError,true);assert.match(bad.content[0].text,/goal-\*.*已有intent.*intent-1/);assert.equal(hits,0);
+ const asset=await h.run('src_add_asset',{type:'service',value:'https://fixture.test/',source:'user',method:'manual'});
+ assert.equal(asset.isError,true);assert.match(asset.content[0].text,/passive|low-impact/);
+ const result=await h.run('src_test_credential',{intentId:intent.id,loginUrl:'https://fixture.test/login',username:'fixture-user',candidates:['fixture-pass'],dictionarySource:'isolated fixture'},child);
+ assert.equal(result.isError,false,JSON.stringify(result));assert.equal(hits,1);
+ const state=(await h.run('src_state',{})).value;
+ assert.ok(state.facts.some(row=>row.intentId===intent.id));assert.ok(state.coverage.some(row=>row.phase==='credential-test'));
+ assert.ok(h.events.some(r=>r.type==='tool/call'&&r.data.name==='src_add_fact'&&r.data.callId?.startsWith('src-submit-')));
+});
+
+test('regression 3291: resident child turn error marks failed before subagent/end',async t=>{
+ const h=await fixture(t);
+ const intent=(await h.run('src_add_intent',{title:'resident failed child'})).value;
+ await h.run('src_recon',{intentId:intent.id,description:'fixture',prompt:'bounded task'});
+ const child={id:'fixture-child',header:{parentSession:h.parent.id},events:[]};
+ const ended={type:'turn/end',data:{reason:{kind:'error',error:{code:'INVALID_REQUEST',message:'fixture reasoning protocol error'}}}};
+ child.events.push(ended);
+ h.ctx.emit('session/event',child,ended);
+ await new Promise(r=>setTimeout(r,20));
+ const state=(await h.run('src_state',{})).value;
+ assert.equal(state.intents.find(row=>row.id===intent.id).status,'failed');
+ const {childTurnFailure}=await import('../lib/src/child-outcome.js');
+ assert.equal(childTurnFailure(child).code,'INVALID_REQUEST');
+ child.events.push({type:'turn/start'});assert.equal(childTurnFailure(child),undefined,'new turn is not old failure');
 });
