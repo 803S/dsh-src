@@ -1,0 +1,95 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import http from 'node:http';
+import { readDecisionSettings, saveDecisionSettings, publicDecisionSettings, decisionSettingsPath } from '../lib/src/decision/service-settings.js';
+import { jevDecide, decisionServiceStatus } from '../lib/src/decision/jev-client.js';
+import { registerDecisionCommands } from '../lib/src/decision/service-commands.js';
+const answer = (choice,options,model='jev-fixture') => {
+ const result={ model, answers:{decision:{choice,confidence:.95,probabilities:Object.fromEntries(options.map(k=>[k,k===choice?1:0]))}} };
+ result.answers.risk={choice:'high',confidence:1,probabilities:{low:0,high:1,unknown:0}};
+ result.answers.verdict={choice:'pending',confidence:1,probabilities:{allow:0,pending:1}};
+ return result;
+};
+async function fixture(t){const prev=process.env.DSH_HOME, fetch=globalThis.fetch;const dir=await fs.mkdtemp(path.join(os.tmpdir(),'jev-service-'));await fs.mkdir(dir,{recursive:true,mode:0o700});await fs.chmod(dir,0o700);process.env.DSH_HOME=dir;t.after(async()=>{globalThis.fetch=fetch;if(prev===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=prev;await fs.rm(dir,{recursive:true,force:true});});return dir;}
+const exec={agent:{session:{id:'fixture'}}};
+const args={taskType:'skill-activate',justification:'排查TLS差异',headers:{'api-key':'business-fixture-secret'},candidates:[{id:'network-guide',title:'网络诊断',identity:'v1',excerpt:'比较代理直连和TLS错误'}]};
+
+test('Jev settings are global, private, atomic, mask keys, and require key on provider-origin change',async t=>{
+ await fixture(t);assert.equal((await readDecisionSettings()).enabled,false);
+ const saved=await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',model:'jev-latest',apiKey:'provider-secret'});
+ assert.equal(saved.hasKey,true);assert.equal(saved.apiKey,undefined);
+ assert.equal((await fs.stat(decisionSettingsPath())).mode&0o777,0o600);
+ await assert.rejects(()=>saveDecisionSettings({endpoint:'https://b.test/v1/systemone'}),/origin/);
+ assert.equal((await readDecisionSettings()).endpoint,'https://a.test/v1/systemone');
+ await saveDecisionSettings({endpoint:'https://b.test/v1/systemone',apiKey:'new-provider'});
+ await saveDecisionSettings({model:'jev-preview',apiKey:''});assert.equal((await readDecisionSettings()).apiKey,'new-provider');
+ await saveDecisionSettings({clearKey:true});assert.equal((await readDecisionSettings()).apiKey,'');
+ for(const endpoint of ['http://remote.test','https://user:pass@a.test','https://a.test/?key=x'])await assert.rejects(()=>saveDecisionSettings({endpoint}));
+});
+
+test('Jev direct Skill mapping, remote credential removal, warm cache, config/key/model invalidation',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',apiKey:'provider-secret'});
+ let calls=0;
+ globalThis.fetch=async(url,init)=>{calls++;assert.equal(init.redirect,'error');assert.match(init.headers.authorization,/Bearer /);assert.ok(!init.body.includes('business-fixture-secret'));const p=JSON.parse(init.body);assert.ok(p.state.candidates[0].excerpt);return new Response(JSON.stringify(answer('doc-1',Object.keys(p.questions.decision.criteria),p.model)));};
+ const first=await jevDecide(args,exec);assert.equal(first.action,'network-guide');assert.equal(first.source,'jev');
+ assert.equal((await jevDecide(args,exec)).cached,true);assert.equal(calls,1);
+ await saveDecisionSettings({model:'jev-preview'});assert.equal((await jevDecide(args,exec)).model,'jev-preview');assert.equal(calls,2);
+ await saveDecisionSettings({apiKey:'replacement-key'});await jevDecide(args,exec);assert.equal(calls,3);
+ await saveDecisionSettings({enabled:false});assert.equal((await jevDecide(args,exec)).errorType,'disabled');assert.equal(calls,3);
+ assert.equal(JSON.stringify(await decisionServiceStatus()).includes('replacement-key'),false);
+});
+
+test('Jev one-shot errors remain neutral; no automatic retry or Laya fallback',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone'});
+ let calls=0;
+ for(const status of [401,429,503]){
+ globalThis.fetch=async()=>{calls++;return new Response('SECRET ECHO',{status});};
+ const r=await jevDecide(args,exec);assert.equal(r.errorType,`http-${status}`);assert.equal(r.action,'skip');assert.equal(JSON.stringify(r).includes('SECRET'),false);
+ }
+ assert.equal(calls,3);
+ globalThis.fetch=async()=>new Response('{}');assert.equal((await jevDecide(args,exec)).errorType,'schema');
+ globalThis.fetch=async(_u,init)=>new Response(JSON.stringify(answer('outside',Object.keys(JSON.parse(init.body).questions.decision.criteria))));assert.equal((await jevDecide(args,exec)).errorType,'schema');
+ globalThis.fetch=async(_u,init)=>new Response(JSON.stringify(answer('skip',Object.keys(JSON.parse(init.body).questions.decision.criteria))));assert.equal((await jevDecide(args,exec)).fallback,false,'next call can succeed; no circuit breaker');
+});
+
+test('Jev timeout/cancellation returns neutral and explicit remote operation classification never grants execution',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone',timeoutMs:1000});
+ globalThis.fetch=async(_u,init)=>new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));
+ assert.equal((await jevDecide(args,exec)).errorType,'timeout');
+ const cancel=new AbortController();cancel.abort();assert.equal((await jevDecide(args,{...exec,signal:cancel.signal})).errorType,'cancelled');
+ globalThis.fetch=async(_u,init)=>{assert.ok(!init.body.includes('body-secret'));assert.ok(!init.body.includes('cookie-secret'));return new Response(JSON.stringify(answer('write',Object.keys(JSON.parse(init.body).questions.decision.criteria))));};
+ const r=await jevDecide({taskType:'risk-grade',method:'POST',url:'https://fixture.test/delete?token=url-secret',headers:{cookie:'sid=cookie-secret'},body:'{"password":"body-secret"}',justification:'delete synthetic'},exec);
+ assert.equal(r.effect,'write');assert.equal(r.action,'pending');assert.equal(r.riskScore,null);assert.equal(r.advisoryOnly,false);
+});
+
+test('Jev refuses redirects so authorization cannot leak to a second endpoint',async t=>{
+ await fixture(t);let second=0;
+ const server=http.createServer((req,res)=>{if(req.url==='/to'){second++;res.end('{}');return;}res.writeHead(302,{location:'/to'});res.end();});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>new Promise(r=>{server.closeAllConnections();server.close(r);}));
+ await saveDecisionSettings({enabled:true,endpoint:`http://127.0.0.1:${server.address().port}/from`,apiKey:'provider-secret'});
+ assert.equal((await jevDecide(args,exec)).fallback,true);assert.equal(second,0);
+});
+
+test('Jev control-plane commands suppress input recording and never return keys',async t=>{
+ await fixture(t);const commands=new Map();registerDecisionCommands({commands:{register:c=>commands.set(c.name,c)}});
+ const save=commands.get('src-decision-save');assert.equal(save.recordInput,false);
+ const r=await save.handler({rawInput:JSON.stringify({enabled:true,endpoint:'https://fixture.test/v1/systemone',apiKey:'command-secret'})});assert.equal(r.kind,'success');assert.ok(!r.text.includes('command-secret'));
+ assert.ok(!(await commands.get('src-decision-status').handler({})).text.includes('command-secret'));
+});
+
+test('Jev Browser candidate seam uses selected endpoint; none/off/shadow never clicks',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',browserMode:'on'});
+ const {chooseBrowserCandidate}=await import('../lib/src/decision/browser-loop.js');
+ const candidate={index:0,operation:'click',label:'取消',targetRef:'e1'};
+ let picked='0',calls=0;
+ globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://a.test/v1/systemone');const payload=JSON.parse(init.body);assert.ok(payload.questions.decision.criteria.none);return new Response(JSON.stringify(answer(picked,Object.keys(payload.questions.decision.criteria))));};
+ const input={goal:'取消',observation:'button 取消 [ref=e1]',candidates:[candidate]};
+ assert.equal((await chooseBrowserCandidate(input,exec)).index,0);
+ picked='none';const none=await chooseBrowserCandidate(input,exec);assert.equal(none.index,-1);assert.equal(none.fallback,true);
+ await saveDecisionSettings({browserMode:'shadow'});picked='0';assert.equal((await chooseBrowserCandidate(input,exec)).fallback,true);
+ await saveDecisionSettings({browserMode:'off'});assert.equal((await chooseBrowserCandidate(input,exec)).fallback,true);assert.equal(calls,3);
+});
+

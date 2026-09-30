@@ -169,6 +169,7 @@ const suggestionComparison = [...new Set(suggestions.map((r) => r0(payloadOf(r).
 
 if (jsonMode) {
 	console.log(JSON.stringify({
+		decisionProviders: Object.fromEntries([...new Set(decisions.map(r=>payloadOf(r).provider ?? payloadOf(r).source ?? 'unknown'))].map(provider=>[provider,decisions.filter(r=>(payloadOf(r).provider ?? payloadOf(r).source ?? 'unknown')===provider).length])),
 		laya, childResults, skillAttribution: "temporal-only, not causal benefit",
 		dir: telemetryDir, files, rows: rows.length, window,
 		byEvent: Object.fromEntries([...byEvent.entries()].sort()),
@@ -213,7 +214,7 @@ console.log(line);
 console.log(`-- 重复调用 top（同会话+事件+键）--`);
 if (duplicates.length === 0) console.log(`  无`);
 for (const [key, n] of duplicates) console.log(`  ×${n}  ${key}`);
-console.log(`-- Laya（缓存/失败/完整耗时；不是判断准确率）--`);
+console.log(`-- Jev与历史Laya（按provider/model分辨；不是判断准确率）--`);
 console.log(JSON.stringify(laya));
 console.log(`-- 恢复入队（非恢复成功）、真实运行与检查点 --`);
 console.log(JSON.stringify(childResults));

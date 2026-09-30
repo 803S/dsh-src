@@ -6005,14 +6005,16 @@ test("[local.101] SRC HTTP 证据在唯一 active intent 时自动归属 intent"
   } finally { await new Promise((r) => server.close(r)); }
 });
 
-test("[local.99] Laya 高置信 allow 不越过审批；统一注入认证/Content-Type；重放留证", async () => {
+test("Jev 高置信读取建议不越过审批；统一注入认证/Content-Type；重放留证", async () => {
   const h = await freshEvidenceHarness(), parent = h.exec("l99-laya");
   let hits = 0, seenHeaders;
   const server = http.createServer((req, res) => { hits++; seenHeaders = req.headers; res.setHeader("content-type", "application/json"); res.end('{"marker":"REPLAY_EVIDENCE"}'); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const root = `http://127.0.0.1:${server.address().port}`;
   const prevFetch = globalThis.fetch, prevFlag = process.env.DSH_SRC_LAYA_DECISION;
-  globalThis.fetch = async (url, init) => String(url).endsWith("/decide") ? new Response(JSON.stringify({ answers: { risk: { score: 0 }, action: { choice: "allow", probabilities: { allow: 1 }, confidence: 1 } } }), { status: 200 }) : prevFetch(url, init);
+  const {saveDecisionSettings}=await import('../lib/src/decision/service-settings.js');
+  await saveDecisionSettings({enabled:true,endpoint:'https://jev.fixture/decide'});
+  globalThis.fetch = async (url, init) => String(url).endsWith("/decide") ? new Response(JSON.stringify({ model:'jev-fixture',answers: { decision: { choice: "read", probabilities: { read:1,compute:0,write:0,external:0,auth:0,destructive:0,unknown:0 }, confidence: 1 },risk:{choice:'low',confidence:1,probabilities:{low:1,high:0,unknown:0}},verdict:{choice:'allow',confidence:1,probabilities:{allow:1,pending:0}} } }), { status: 200 }) : prevFetch(url, init);
   process.env.DSH_SRC_LAYA_DECISION = "on";
   try {
     await h.run("src_add_goal", { target: "127.0.0.1", objective: "approval fixture" }, parent);
@@ -6022,7 +6024,7 @@ test("[local.99] Laya 高置信 allow 不越过审批；统一注入认证/Conte
     assert.equal(pendingState.observations.length, 0);
     const pendingRow = pendingState.pendingApprovals.find((row) => row.id === pending.value.pendingApprovalId);
     assert.match(pendingRow.ruleVerdict, /破坏性写入/);
-    assert.match(pendingRow.layaAdvice, /^allow:/);
+    assert.equal(JSON.parse(pendingRow.layaAdvice).effect, 'read');
     const approved = await modelResult(h, "src_resolve_approval", { id: pending.value.pendingApprovalId, action: "allow", sideEffectObserved: false }, parent);
     assert.equal(hits, 1); assert.ok(approved.value.evidenceId);
     assert.match(modelText(approved), /REPLAY_EVIDENCE/);
@@ -6038,7 +6040,7 @@ test("[local.99] Laya 高置信 allow 不越过审批；统一注入认证/Conte
     const reject = await h.run("src_http", { url: `${root}/destroy`, method: "GET", justification: "mock" }, parent);
     await h.run("src_resolve_approval", { id: reject.pendingApprovalId, action: "reject" }, parent);
     assert.equal(hits, 2);
-  } finally { globalThis.fetch = prevFetch; if (prevFlag === undefined) delete process.env.DSH_SRC_LAYA_DECISION; else process.env.DSH_SRC_LAYA_DECISION = prevFlag; await new Promise((r) => server.close(r)); }
+  } finally { await saveDecisionSettings({enabled:false}); globalThis.fetch = prevFetch; if (prevFlag === undefined) delete process.env.DSH_SRC_LAYA_DECISION; else process.env.DSH_SRC_LAYA_DECISION = prevFlag; await new Promise((r) => server.close(r)); }
 });
 
 test("[local.99] submit ID 映射、部分失败保留父投影、受限复核写回", async () => {

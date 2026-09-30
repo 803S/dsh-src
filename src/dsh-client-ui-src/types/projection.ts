@@ -147,6 +147,8 @@ export interface SrcProjectionPendingApproval {
   readonly category: string
   readonly reason: string
   readonly justification: string
+  readonly layaAdvice?: string // persisted legacy field name; JSON now identifies Jev/model/verdict
+  readonly ruleVerdict?: string
   readonly status: 'pending' | 'approved' | 'rejected'
   readonly note: string
   readonly responseStatus: number

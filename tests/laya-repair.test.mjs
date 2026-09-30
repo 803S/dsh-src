@@ -8,6 +8,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
 import { ToolRuntime } from '@deepseek-ai/dsh-tools';
 import { apply as applySrc, __resetSharedDomainOpensForTests, applySrcEvent, srcInitialState } from '../lib/src.js';
 import { apply as applySubagent } from '../lib/src-subagent.js';
+import { saveDecisionSettings } from '../lib/src/decision/service-settings.js';
 import { layaDecide, resetLayaCacheForTests } from '../lib/src/decision/laya-client.js';
 import { recallKnowledgeCandidates, documentIdentity } from '../lib/src/decision/knowledge-recall.js';
 import { skillReminderRegistry } from '../lib/src/decision/skill-recall.js';
@@ -19,6 +20,7 @@ async function fixture(t) {
   process.env.DSH_HOME = home; process.env.DSH_SRC_TELEMETRY = 'off';
   process.env.DSH_SRC_LAYA_DECISION = 'off'; process.env.DSH_SRC_LAYA_SKILL = 'off'; process.env.DSH_SRC_LAYA_DELEGATE = 'off';
   __resetSharedDomainOpensForTests(); resetLayaCacheForTests(); resetChildRoutesForTests();
+  await saveDecisionSettings({enabled:true,endpoint:'https://jev.fixture/decide'});
   const tables = new Map();
   const domain = { table(name) { if (!tables.has(name)) tables.set(name, new Map()); const rows = tables.get(name); return { get: key => rows.get(key), entries: () => rows.entries(), put: async (key, value) => rows.set(key, value), delete: async key => rows.delete(key) }; }, async close() {} };
   const ctx = new Context();
@@ -62,7 +64,7 @@ test('host dispatch: advisory shadow/on never becomes execution; spawn uses effe
   assert.equal(routeForChild(h.parent), undefined, 'ordinary parent assembly must not dereference an absent override');
   const assembled = await h.ctx.systemPrompt.assemble({ agent: h.parent, scope: h.parent });
   assert.ok(assembled);
-  globalThis.fetch = async () => new Response(JSON.stringify({ answers: { choice: { choice: 'self', confidence: .99 } } }));
+  globalThis.fetch = async () => new Response(JSON.stringify({ model:'jev-fixture', answers: { decision: { choice: 'self', confidence: .99, probabilities:{delegate:0,self:1,pending:0} } } }));
   process.env.DSH_SRC_LAYA_DELEGATE = 'shadow';
   const shadow = await h.run('src_add_intent', { title: 'shadow scope' });
   assert.equal(shadow.isError, false, JSON.stringify(shadow));
@@ -205,8 +207,9 @@ test('host Skill recommendation -> read -> real dispatch -> evidence; no duplica
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('/decide')) {
       const body = JSON.parse(init.body);
-      if (body.schema.skill) { skillCalls++; return new Response(JSON.stringify({ answers: { skill: { choice: body.schema.skill.criteria[1], confidence: .99 } } })); }
-      return new Response(JSON.stringify({ answers: { action: { choice: 'allow', confidence: 1 }, risk: { score: 0 } } }));
+      const criteria=body.questions.decision.criteria;
+      if ('skip' in criteria) { skillCalls++; return new Response(JSON.stringify({ model:'jev-fixture',answers: { decision: { choice: 'doc-1', confidence: .99,probabilities:Object.fromEntries(Object.keys(criteria).map(k=>[k,k==='doc-1'?1:0])) } } })); }
+      return new Response(JSON.stringify({ model:'jev-fixture',answers: { decision: { choice: 'read', confidence: 1, probabilities:Object.fromEntries(Object.keys(criteria).map(k=>[k,k==='read'?1:0])) },risk:{choice:'low',confidence:1,probabilities:{low:1,high:0,unknown:0}},verdict:{choice:'allow',confidence:1,probabilities:{allow:1,pending:0}} } }));
     }
     assert.match(String(url), /^https?:\/\/fixture\.test/); actualRequests++;
     return new Response('fixture response', { headers: { 'content-type': 'text/plain' } });
@@ -215,7 +218,7 @@ test('host Skill recommendation -> read -> real dispatch -> evidence; no duplica
   const first = await h.run('src_http', request);
   assert.equal(first.isError, false, JSON.stringify(first));
   assert.match(first.value.skillHint, /zfixture.md/);
-  assert.match(first.content[0].text, /Laya 低层风险提示/);
+  assert.match(first.content[0].text, /Jev风险审批评估/);
   assert.equal(skillCalls, 1);
   const read = await h.run('src_read_capability', { id: 'clown-src-playbook', file });
   assert.equal(read.isError, false);
@@ -269,4 +272,34 @@ test('host child lifecycle: failure is not completed; real checkpoint supersedes
   state = (await h.run('src_state', {})).value;
   assert.equal(state.intents.find(row => row.id === intent.id).status, 'completed');
   assert.equal(state.intents.find(row => row.id === intent.id).executionSource, 'child-checkpoint');
+});
+
+test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, pending cannot replay itself',async t=>{
+ const h=await fixture(t),old=globalThis.fetch;t.after(()=>globalThis.fetch=old);
+ await saveDecisionSettings({riskMode:'on',skillMode:'off',delegateMode:'off'});
+ let hits=0,verdict='allow',risk='low',effect='read',fail=false;
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).includes('jev.fixture')){
+   if(fail)return new Response('unavailable',{status:503});
+   const p=JSON.parse(init.body);const choices={decision:effect,risk,verdict};
+   return new Response(JSON.stringify({model:'jev-fixture',answers:Object.fromEntries(Object.entries(p.questions).map(([k,q])=>[k,{choice:choices[k],confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option===choices[k]?1:0]))}]))}));
+  }
+  hits++;return new Response('fixture response');
+ };
+ const low=await h.run('src_http',{method:'POST',url:'https://fixture.test/compute',body:'{}',justification:'pure computation no effects'});
+ assert.equal(low.value.approval,'allowed-auto');assert.equal(low.value.decisionAuthority,'jev-low-risk');assert.equal(hits,1);
+ const child={id:'risk-child',session:{id:'risk-child',header:{parentSession:h.parent.id},append(){}}};
+ const childLow=await h.run('src_http',{method:'POST',url:'https://fixture.test/child-compute',body:'{}',justification:'pure computation'},child);
+ assert.equal(childLow.value.approval,'allowed-auto');assert.equal(hits,2);
+ risk='unknown';verdict='pending';effect='unknown';
+ const pending=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'unknown effects'});assert.equal(pending.value.approval,'pending');assert.equal(hits,2);
+ risk='low';verdict='allow';effect='read';
+ const repeat=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'try again'});assert.equal(repeat.value.pendingApprovalId,pending.value.pendingApprovalId);assert.equal(hits,2);
+ risk='high';
+ const high=await h.run('src_http',{method:'GET',url:'https://fixture.test/action',justification:'possible harmful side effect'});assert.equal(high.value.approval,'pending');assert.equal(hits,2);
+ fail=true;
+ const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);
+ await saveDecisionSettings({riskMode:'shadow'});
+ const shadow=await h.run('src_http',{method:'GET',url:'https://fixture.test/shadow',justification:'shadow read'});assert.equal(shadow.value.approval,'allowed-auto');assert.equal(shadow.value.riskAdvice,undefined);assert.equal(hits,3);
+ const outside=await h.run('src_http',{method:'GET',url:'https://other.invalid/',justification:'not authorized'});assert.equal(outside.isError,true);assert.equal(hits,3);
 });

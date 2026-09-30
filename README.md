@@ -46,6 +46,20 @@
 
 ---
 
+## local.106：全局 Jev 决策服务
+
+基础设施页 → **全局决策服务**，可编辑完整 SystemOne URL、模型、API key、等待超时及四个职责的 on/shadow/off。保存后下一调用立即生效，无需重启。换供应商 origin 必须同时提供新 key 或明确清除旧 key；留空 key 表示保留。停用后按原 SRC HTTP 规则执行，不自动回退 Laya。
+
+- **风险 on**：Jev 返回明确低风险、允许、操作语义已知，且授权范围校验通过，自动执行本次低风险 HTTP 请求；高风险、不明、矛盾、服务失败转人工。保留明确破坏性/越权硬边界；已 pending 的请求只能用户处理，不能通过重发重新判定放行。`RUN` 脚本和资产归属确认仍人工。
+- **分工 on**：Jev 给主/子 agent 建议，主模型决定采纳；host 派发/接管/checkpoint 是实际执行事实。
+- **Skill on**：Jev 直接推荐真实文档名称和读取入口或 skip；不自动运行文档中的操作。
+- **Browser on**：已有 browser-index adapter 使用同一 Jev 服务选择现有候选或 none；现有 MCP executor 和 stale/scope guards 保留。普通浏览器规划没有被新建运行时接管。
+- **shadow**：只记录，不改变原执行；**off**：该职责不调用 Jev。旧 `DSH_SRC_LAYA_*` 仅为未显式保存职责模式时的兼容缺省值。
+
+配置存储于 `$DSH_HOME/settings/src-decision.json`（目录0700/文件0600，非加密存储），key 不回显、不写入 command/run 输入或会话投影。远程仅发送经凭据过滤的任务与候选片段，仍应使用可信供应商。可用 `/src-decision-status` 查看状态，`/src-decision-test` 用合成任务测试；服务宕机不重试、不熔断、不自动换站，风险on时普通GET也可能挂人工。
+
+完整迁移表与验证结果见 [local.106实施记录](docs/jev-service-local106.md)。
+
 ## local.105：Laya 接入与分工修复
 
 - Laya仅提供低层风险、明确任务分工和文档匹配提示；复杂规划、漏洞真假及最终审批仍由主模型/代码/用户负责。

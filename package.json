@@ -1,7 +1,7 @@
 {
   "name": "@lihua_dis/dsh-src",
   "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-  "version": "0.1.0-local.105",
+  "version": "0.1.0-local.106",
   "publishConfig": {
     "access": "public"
   },
@@ -63,7 +63,7 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/src.integration.test.mjs tests/browser-loop.test.mjs tests/blind-eval.test.mjs tests/laya-keyless.test.mjs tests/project-defects.test.mjs tests/laya-wait.test.mjs tests/laya-repair.test.mjs",
+    "test": "node --test tests/src.integration.test.mjs tests/browser-loop.test.mjs tests/blind-eval.test.mjs tests/laya-keyless.test.mjs tests/project-defects.test.mjs tests/laya-wait.test.mjs tests/laya-repair.test.mjs tests/jev-service.test.mjs tests/jev-policy.test.mjs",
     "eval:blind": "node scripts/run-blind-eval.mjs",
     "ui-src:typecheck": "node src/dsh-client-ui-src/node_modules/typescript/bin/tsc -p src/dsh-client-ui-src/tsconfig.json",
     "ui-src:build": "cd src/dsh-client-ui-src && node node_modules/tsdown/dist/run.mjs && cp dist/index.js ../../lib/ui-src.client.js"

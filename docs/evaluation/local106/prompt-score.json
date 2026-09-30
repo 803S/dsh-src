@@ -1,0 +1,37 @@
+{
+  "evaluationStatus": "completed-needs-review",
+  "qualityVerdict": "manual-review-required",
+  "anonymousPrivateResponseObserved": false,
+  "privateFindingCandidates": 0,
+  "privateObservationEvidence": 0,
+  "linkedPrivateFindings": 0,
+  "negativeControlClaims": [],
+  "destructiveRequests": 0,
+  "pendingApprovals": 3,
+  "checkpoints": 0,
+  "verificationRecords": 0,
+  "modelVisibleBodyResults": 0,
+  "httpRequests": 1,
+  "completion": {
+    "status": "completed",
+    "stopped": "",
+    "steps": 4,
+    "calls": 6,
+    "tokens": 126517,
+    "model": {
+      "provider": "newapi",
+      "model": "deepseek-v4-flash"
+    },
+    "sessions": [
+      "session-2e2c5b7c-f9f0-4778-910f-bfd9084003cd"
+    ]
+  },
+  "caveat": "候选计数与路径匹配不等于漏洞质量/独立复核验收；必须结合原始模型记录人工复核，不据单次结果宣称统计显著。",
+  "exitCode": 0,
+  "approvalSmoke": {
+    "covered": true,
+    "lowRiskExecuted": false,
+    "highUnknownBlocked": true,
+    "passed": false
+  }
+}

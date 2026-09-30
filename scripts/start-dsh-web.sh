@@ -13,7 +13,8 @@ export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
 export DSH_SRC_ORCHESTRATOR="${DSH_SRC_ORCHESTRATOR:-off}"
 export DSH_SRC_ROUTE_V2="${DSH_SRC_ROUTE_V2:-off}"
 export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
-# Laya 仅作风险形态/简单分工/文档匹配提示；复杂决策和采纳由主模型负责。
+# 决策服务主开关/接口/key/模型在基础设施全局设置，以下LAYA命名env仅保留旧职责开关兼容。
+# Jev仅作风险形态/简单分工/文档匹配提示；复杂决策和采纳由主模型负责。
 # next-action/tool-advisory 不进生产主循环，风险审批硬闸仍保留。
 export DSH_SRC_LAYA_TIMEOUT_MS="${DSH_SRC_LAYA_TIMEOUT_MS:-120000}"
 export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-off}"
@@ -38,18 +39,8 @@ fi
 # 兜底：3080 端口残留进程
 lsof -ti tcp:3080 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; sleep 1
 
-# Browser System 1 backend: laya-browser-agent/localdecide owns only the decision model;
-# dsh remains the Playwright MCP executor and page/context owner.
-BROWSER_DECIDER_HOME=/Users/lihua-dis/Software/laya-browser-agent
-BROWSER_DECIDER_PY=/Users/lihua-dis/models/laya/laya-env/bin/python
-BROWSER_DECIDER_PIDFILE=/tmp/dsh-localdecide-browser.pid
-BROWSER_DECIDER_PORT_PID=$(lsof -ti tcp:8791 2>/dev/null | head -1 || true)
-if [ -n "${BROWSER_DECIDER_PORT_PID:-}" ] && kill -0 "$BROWSER_DECIDER_PORT_PID" 2>/dev/null; then
-  echo "$BROWSER_DECIDER_PORT_PID" > "$BROWSER_DECIDER_PIDFILE"
-elif [ -x "$BROWSER_DECIDER_PY" ] && [ -f "$BROWSER_DECIDER_HOME/localdecide/serve.py" ]; then
-  nohup env PYTHONPATH="$BROWSER_DECIDER_HOME" HF_HOME=/Users/lihua-dis/models/laya/hf_cache HF_HUB_OFFLINE=0 LOCALDECIDE_BACKEND=laya-mlx LOCALDECIDE_PORT=8791 "$BROWSER_DECIDER_PY" -m localdecide.serve > /tmp/dsh-localdecide-browser.log 2>&1 < /dev/null &
-  echo $! > "$BROWSER_DECIDER_PIDFILE"
-fi
+# local.106: browser-index decisions use the global Jev service. Do not auto-start
+# or terminate unrelated legacy localdecide processes here; MCP execution is unchanged.
 
 cd ~/.dsh/profiles/web
 nohup dsh web > "$LOG" 2>&1 &
