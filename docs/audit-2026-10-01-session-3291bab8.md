@@ -23,4 +23,6 @@
 - 上游协议进一步取证：new-api容器channel #3的400日志中request_id与dsh会话完全匹配（如5d28a05c、fcf7ad11、fd671e3c）；离线调用当前pi-ai convertMessages证明reasoning_content签名按reasoning_content回传，不会凭空变成reasoning_text或content[].thinking。不能证明网关具体哪个转换环节有错，但故障确在chat模型链、不是Jev决策服务。后续需检查该channel映射/思考格式透传与同一路由混模型，禁止用SRC假字段/无限retry解决。
 - 已有23条审批与历史intent不改写、不删除、不自动批准；修复只作用后续请求。新src_state可从child最新turn读取失败原因，既有records仍如实保留。
 
-状态：代码已验证，待部署。原始session解码临时文件/tmp/audit-jev-*.json权限0600，仅本机排查，不提交凭据或原始上下文。
+状态：已部署local.107（代码e072164）。备份/tmp/dsh-before-local107-20261001-055424；双profile部署哈希通过；Web PID20572，API部署前后419会话idle、management HTTP200。Jev配置与已有审批不变。未启动付费主模型、未重放目标、未修复或改动new-api channel #3。
+
+原始session解码临时文件/tmp/audit-jev-*.json权限0600，仅本机排查，不提交凭据或原始上下文。
