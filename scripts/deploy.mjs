@@ -47,6 +47,31 @@ const targets = [
 const md5 = (p) => createHash("md5").update(readFileSync(p)).digest("hex");
 let failed = false;
 
+/* 发布前硬闸：部署源必须可解析、无冲突标记，且统一回归先通过。 */
+const packagePath = join(repo, "package.json");
+try {
+  JSON.parse(readFileSync(packagePath, "utf8"));
+} catch (error) {
+  console.error(`✗ package.json 无法解析，停止部署: ${error.message}`);
+  process.exit(1);
+}
+const conflictFiles = ["package.json", "package-lock.json", ...files].filter((file) => {
+  const p = join(repo, file);
+  return existsSync(p) && /^(<<<<<<<|=======|>>>>>>>)/m.test(readFileSync(p, "utf8"));
+});
+if (conflictFiles.length > 0) {
+  console.error(`✗ 检测到 merge conflict marker，停止部署: ${conflictFiles.join(", ")}`);
+  process.exit(1);
+}
+console.log("─── 发布前回归 ───");
+const { execFileSync: runCommand } = await import("node:child_process");
+try {
+  runCommand("npm", ["test"], { cwd: repo, stdio: "inherit" });
+} catch (error) {
+  console.error("✗ Jev/SRC 发布前回归失败，停止部署");
+  process.exit(error.status ?? 1);
+}
+
 /* [local.55] dsh-home 资产：仓库转私有后收编的插件源头，单向 repo → ~/.dsh。
  * 注意 capabilities.yaml 不在此列：它是运行时入口（src_add_capability 会追加写入），
  * 只收编备份进 git，不做部署覆盖（避免回滚运行时新增的能力条目）。 */

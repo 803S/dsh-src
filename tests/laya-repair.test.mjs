@@ -295,7 +295,7 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  const childLow=await h.run('src_http',{method:'POST',url:'https://fixture.test/child-compute',body:'{}',justification:'pure computation'},child);
  assert.equal(childLow.value.approval,'allowed-auto');assert.equal(hits,2);
  risk='unknown';verdict='pending';effect='unknown';
- const pending=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'unknown effects'});assert.equal(pending.value.approval,'pending');assert.equal(hits,2);
+ const pending=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'unknown effects'});assert.equal(pending.value.approval,'pending');assert.equal(hits,2);assert.match(pending.value.reason,/POST \/opaque/);assert.match(pending.value.reason,/risk=unknown/);assert.doesNotMatch(pending.value.reason,/高风险\/不确定\/矛盾结论转人工/);
  risk='low';verdict='allow';effect='read';
  const repeat=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'try again'});assert.equal(repeat.value.pendingApprovalId,pending.value.pendingApprovalId);assert.equal(hits,2);
  risk='high';
@@ -339,4 +339,27 @@ test('regression 3291: resident child turn error marks failed before subagent/en
  const {childTurnFailure}=await import('../lib/src/child-outcome.js');
  assert.equal(childTurnFailure(child).code,'INVALID_REQUEST');
  child.events.push({type:'turn/start'});assert.equal(childTurnFailure(child),undefined,'new turn is not old failure');
+});
+
+test('research records for different findings do not overwrite each other', async t => {
+ const h = await fixture(t);
+ const intent = (await h.run('src_add_intent', { title:'research identity fixture' })).value;
+ const first = (await h.run('src_add_finding', { intentId:intent.id, title:'first', severity:'low', description:'first', impact:'A sufficiently detailed impact description for the first finding.', affectedScope:'fixture.test', remediation:'fix first', pocEvidence:['obs-1'], reproducibleSteps:['step'], rawRequest:'GET /one HTTP/1.1', victimImpact:'A sufficiently detailed victim impact description for first.', attackPrerequisites:'network access only', concreteLossEvidence:[] })).value;
+ const second = (await h.run('src_add_finding', { intentId:intent.id, title:'second', severity:'low', description:'second', impact:'A sufficiently detailed impact description for the second finding.', affectedScope:'fixture.test', remediation:'fix second', pocEvidence:['obs-2'], reproducibleSteps:['step'], rawRequest:'GET /two HTTP/1.1', victimImpact:'A sufficiently detailed victim impact description for second.', attackPrerequisites:'network access only', concreteLossEvidence:[] })).value;
+ await h.run('src_record_research', { intentId:intent.id, category:'authz', hypothesis:'first hypothesis', findingId:first.id, status:'verified' });
+ await h.run('src_record_research', { intentId:intent.id, category:'authz', hypothesis:'second hypothesis', findingId:second.id, status:'testing' });
+ const state = (await h.run('src_state',{})).value;
+ assert.equal(state.research.filter(row => row.category === 'authz').length, 2);
+ assert.deepEqual(new Set(state.research.filter(row => row.category === 'authz').map(row => row.findingId)), new Set([first.id, second.id]));
+});
+
+test('rejected findings are excluded from finalize verification and report', async t => {
+ const h = await fixture(t);
+ const intent = (await h.run('src_add_intent', { title:'rejected finalize fixture' })).value;
+ const finding = (await h.run('src_add_finding', { intentId:intent.id, title:'rejected candidate', severity:'low', description:'candidate', impact:'A sufficiently detailed impact description for a rejected candidate.', affectedScope:'fixture.test', remediation:'fix', pocEvidence:['obs'], reproducibleSteps:['step'], rawRequest:'GET /rejected HTTP/1.1', victimImpact:'A sufficiently detailed victim impact description for the rejected candidate.', attackPrerequisites:'network access only', concreteLossEvidence:[] })).value;
+ await h.run('src_reject_finding', { findingId:finding.id, reason:'duplicate; retain as rejected history' });
+ const finalized = (await h.run('src_finalize_engagement', { remainingDirections:[], blindSpots:[{dimension:'http-authz-surface',status:'notApplicable'},{dimension:'cors-headers',status:'notApplicable'},{dimension:'dom-xhr',status:'notApplicable'},{dimension:'dict-budget',status:'notApplicable'},{dimension:'multi-account-cross-authz',status:'notApplicable'}], allowIncomplete:true, allowIncompleteReason:'fixture' })).value;
+ assert.doesNotMatch(finalized.blockers.join('\\n'), /finding 缺少独立 verified/);
+ const report = (await h.run('src_report',{})).value.markdown;
+ assert.doesNotMatch(report, /rejected candidate/);
 });

@@ -5505,7 +5505,10 @@ test("[local.78 接口对账] endpointsTotal/Tested 入库 + finalize 对账闸�
   await h.run("src_record_coverage", { phase: "web", category: "dom-xhr", status: "completed", endpointsTotal: 10, endpointsTested: 8, endpointsSkipped: ["/x"] }, parent);
   const fin3 = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
   const overclaim = fin3.blockers.find((b) => b.includes("对不上") && b.includes("dom-xhr"));
-  assert.ok(overclaim, `虚报 tested 应触发 blocker（got: ${fin3.blockers.join(" | ")}）`);
+  assert.ok(overclaim, `虚报 tested 应触发 blocker（got: ${fin3.blockers.join(" | ")})`);
+  await assert.rejects(() => h.run("src_record_coverage", { phase: "web", category: "invalid-negative", status: "completed", endpointsTotal: -1, endpointsTested: 0 }, parent), /endpointsTotal 必须是非负整数/);
+  await assert.rejects(() => h.run("src_record_coverage", { phase: "web", category: "invalid-overclaim", status: "completed", endpointsTotal: 2, endpointsTested: 3 }, parent), /对账无效/);
+  await assert.rejects(() => h.run("src_record_coverage", { phase: "web", category: "invalid-skipped", status: "completed", endpointsTotal: 2, endpointsTested: 1, endpointsSkipped: ["/a", "/b"] }, parent), /对账无效/);
 });
 
 /* ===================== [local.79] 覆盖硬闸三件套 ===================== */

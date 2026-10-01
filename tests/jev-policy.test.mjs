@@ -3,9 +3,13 @@ import assert from 'node:assert/strict';
 import { httpDecisionPolicy } from '../lib/src/decision/http-policy.js';
 const readRule={require:false,category:'放行',reason:'read'};
 const genericPost={require:true,category:'未授权删改',reason:'POST unknown'};
+const context={method:'OPTIONS',path:'/api/user',rule:readRule};
 const low={fallback:false,action:'allow',risk:'low',effect:'read'};
 test('Jev execution contract: low impact allows generic POST; errors/high/unknown/contradiction require human even for GET',()=>{
- assert.equal(httpDecisionPolicy(genericPost,low,'on').authority,'jev-low-risk');
+ assert.equal(httpDecisionPolicy(genericPost,low,'on',context).authority,'jev-low-risk');
+ assert.match(httpDecisionPolicy(readRule,{...low,action:'pending'},'on',context).reason,/OPTIONS \/api\/user/);
+ assert.match(httpDecisionPolicy(readRule,{...low,action:'pending'},'on',context).reason,/risk=low/);
+ assert.match(httpDecisionPolicy(readRule,{...low,fallback:true,errorType:'timeout'},'on',context).reason,/Jev服务失败.*timeout/);
  for(const patch of [{risk:'high'},{risk:'unknown'},{action:'pending'},{effect:'unknown'},{effect:'destructive'},{fallback:true,errorType:'http-503'}]) {
   assert.equal(httpDecisionPolicy(readRule,{...low,...patch},'on').require,true);
   assert.equal(httpDecisionPolicy(genericPost,{...low,...patch},'on').require,true);
