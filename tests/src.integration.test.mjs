@@ -5492,6 +5492,12 @@ test("[local.78 接口对账] endpointsTotal/Tested 入库 + finalize 对账闸�
   assert.equal(row.endpointsTotal, 30, "endpointsTotal 持久化");
   assert.equal(row.endpointsTested, 6, "endpointsTested 持久化");
   assert.deepEqual(row.endpointsSkipped, ["/a/b", "/c/d"], "endpointsSkipped 持久化");
+  /* 部分状态更新不能抹掉已有对账数字。 */
+  await h.run("src_record_coverage", { phase: "web", category: "http-authz-surface", status: "running", limitation: "继续验证" }, parent);
+  const preserved = (await h.run("src_state", {}, parent)).coverage.find((c) => c.category === "http-authz-surface");
+  assert.equal(preserved.endpointsTotal, 30, "部分更新保留 endpointsTotal");
+  assert.equal(preserved.endpointsTested, 6, "部分更新保留 endpointsTested");
+  assert.deepEqual(preserved.endpointsSkipped, ["/a/b", "/c/d"], "部分更新保留 endpointsSkipped");
   /* 2) finalize 对账：tested=6 < total=30 且 skipped 只有 2 → 对账缺口 blocker */
   await h.run("src_add_intent", { title: "Surface audit", detail: "recon scope" }, parent);
   const fin = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, parent);
