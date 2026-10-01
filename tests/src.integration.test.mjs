@@ -342,7 +342,8 @@ test("src_collect_passive creates planned coverage skeletons for discovered API 
     assert.equal(state.endpointManifests.length, 1, "被动发现生成一个不可变 endpoint manifest");
     assert.ok(state.endpointManifests[0].endpoints.length >= 2, "manifest 包含发现的 endpoint");
     const statuses = Object.fromEntries(state.endpointManifests[0].endpoints.slice(0, 2).map((endpoint, index) => [endpoint.endpointId, index === 0 ? "tested" : "skipped"]));
-    await h.run("src_record_coverage", { phase: "api", category: "manifest-audit", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses }, parent);
+    await assert.rejects(() => h.run("src_record_coverage", { phase: "api", category: "manifest-audit-missing-evidence", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses }, parent), /必须提供 evidenceIds/);
+    await h.run("src_record_coverage", { phase: "api", category: "manifest-audit", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses, evidence: ["observation-fixture"] }, parent);
     const audited = (await h.run("src_state", {}, parent)).coverage.find((c) => c.category === "manifest-audit");
     assert.equal(audited.endpointsTotal, state.endpointManifests[0].endpoints.length);
     assert.equal(audited.endpointsTested, 1);
