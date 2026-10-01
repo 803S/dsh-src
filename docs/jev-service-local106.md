@@ -15,7 +15,7 @@ Jev替代Laya的判断后端。授权范围内的低风险HTTP外发可由Jev自
 |response-classify/tool-advisory/next-action|只有旧兼容客户端，无生产调用|不复活新规划决策；标注未启用|不擅删分工/风险，不新增高阶规划器|
 
 ## 全局配置
-基础设施→决策服务：SystemOne完整URL/模型/API key/timeout/启用及四职责on-shadow-off。DSH_HOME/settings/src-decision.json，目录0700、文件0600。key保存命令recordInput=false、查询仅hasKey；换origin必须新key/明确清除。保存后下一调用生效，缓存按配置身份隔离；服务宕机不自动换供应商/回退Laya，无短时熔断。远程去除业务凭据，不把认证头完整值送供应商。
+基础设施→决策服务：SystemOne完整URL/模型/API key/timeout/启用及四职责on-shadow-off。DSH_HOME/settings/src-decision.json，目录0700、文件0600。key在局域网管理页直接回显，保存命令recordInput=false；服务状态也返回完整key（按用户明确的局域网前提）。；换origin必须新key/明确清除。保存后下一调用生效，缓存按配置身份隔离；服务宕机不自动换供应商/回退Laya，无短时熔断。远程去除业务凭据，不把认证头完整值送供应商。
 
 ## 验证结果
 - 261/261完整回归通过（/tmp/jev106-release-tests.log），另类型/预设/语法/diff检查通过。UI bundle构建成功，已有rolldown define/import.meta警告保留，不为本轮升级依赖。

@@ -20,7 +20,7 @@ const args={taskType:'skill-activate',justification:'排查TLS差异',headers:{'
 test('Jev settings are global, private, atomic, mask keys, and require key on provider-origin change',async t=>{
  await fixture(t);assert.equal((await readDecisionSettings()).enabled,false);
  const saved=await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',model:'jev-latest',apiKey:'provider-secret'});
- assert.equal(saved.hasKey,true);assert.equal(saved.apiKey,undefined);
+ assert.equal(saved.hasKey,true);assert.equal(saved.apiKey,'provider-secret');
  assert.equal((await fs.stat(decisionSettingsPath())).mode&0o777,0o600);
  await assert.rejects(()=>saveDecisionSettings({endpoint:'https://b.test/v1/systemone'}),/origin/);
  assert.equal((await readDecisionSettings()).endpoint,'https://a.test/v1/systemone');
@@ -39,7 +39,7 @@ test('Jev direct Skill mapping, remote credential removal, warm cache, config/ke
  await saveDecisionSettings({model:'jev-preview'});assert.equal((await jevDecide(args,exec)).model,'jev-preview');assert.equal(calls,2);
  await saveDecisionSettings({apiKey:'replacement-key'});await jevDecide(args,exec);assert.equal(calls,3);
  await saveDecisionSettings({enabled:false});assert.equal((await jevDecide(args,exec)).errorType,'disabled');assert.equal(calls,3);
- assert.equal(JSON.stringify(await decisionServiceStatus()).includes('replacement-key'),false);
+ assert.equal(JSON.stringify(await decisionServiceStatus()).includes('replacement-key'),true);
 });
 
 test('Jev one-shot errors remain neutral; no automatic retry or Laya fallback',async t=>{
@@ -76,8 +76,8 @@ test('Jev refuses redirects so authorization cannot leak to a second endpoint',a
 test('Jev control-plane commands suppress input recording and never return keys',async t=>{
  await fixture(t);const commands=new Map();registerDecisionCommands({commands:{register:c=>commands.set(c.name,c)}});
  const save=commands.get('src-decision-save');assert.equal(save.recordInput,false);
- const r=await save.handler({rawInput:JSON.stringify({enabled:true,endpoint:'https://fixture.test/v1/systemone',apiKey:'command-secret'})});assert.equal(r.kind,'success');assert.ok(!r.text.includes('command-secret'));
- assert.ok(!(await commands.get('src-decision-status').handler({})).text.includes('command-secret'));
+ const r=await save.handler({rawInput:JSON.stringify({enabled:true,endpoint:'https://fixture.test/v1/systemone',apiKey:'command-secret'})});assert.equal(r.kind,'success');assert.ok(r.text.includes('command-secret'));
+ assert.ok((await commands.get('src-decision-status').handler({})).text.includes('command-secret'));
 });
 
 test('Jev Browser candidate seam uses selected endpoint; none/off/shadow never clicks',async t=>{
