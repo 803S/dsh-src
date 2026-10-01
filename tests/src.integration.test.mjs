@@ -339,6 +339,14 @@ test("src_collect_passive creates planned coverage skeletons for discovered API 
     assert.equal(state.coverage.some((c) => c.assetId === openapiAsset.id && c.category === "schema-review" && c.status === "planned"), true);
     assert.equal(state.coverage.some((c) => c.assetId === graphqlAsset.id && c.category === "graphql" && c.status === "planned"), true);
     assert.equal(state.coverage.some((c) => c.assetId === graphqlAsset.id && c.category === "authorization" && c.status === "planned"), true);
+    assert.equal(state.endpointManifests.length, 1, "被动发现生成一个不可变 endpoint manifest");
+    assert.ok(state.endpointManifests[0].endpoints.length >= 2, "manifest 包含发现的 endpoint");
+    const statuses = Object.fromEntries(state.endpointManifests[0].endpoints.slice(0, 2).map((endpoint, index) => [endpoint.endpointId, index === 0 ? "tested" : "skipped"]));
+    await h.run("src_record_coverage", { phase: "api", category: "manifest-audit", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses }, parent);
+    const audited = (await h.run("src_state", {}, parent)).coverage.find((c) => c.category === "manifest-audit");
+    assert.equal(audited.endpointsTotal, state.endpointManifests[0].endpoints.length);
+    assert.equal(audited.endpointsTested, 1);
+    assert.equal(audited.endpointsSkipped.length, 1);
   } finally { globalThis.fetch = originalFetch; }
 });
 
