@@ -18,11 +18,7 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
     try { setSettings(JSON.parse(await invoke('/src-decision-status'))); setMessage('') }
     catch (e: any) { setMessage(e.message) } finally { setBusy(false) }
   }
-    const reload = async () => {
-      try { setSettings(JSON.parse(await invoke('/src-decision-status'))); setMessage('') }
-      catch (e: any) { setMessage(e.message) }
-    }
-    if (settings === null) { void reload() }
+  useEffect(() => { void load() }, [runCommand])
 
   const save = async () => {
     if (!settings) return
@@ -53,7 +49,7 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
       <label>等待超时（毫秒）<input aria-label="决策超时" type="number" min={1000} max={300000} style={inputStyle} value={settings.timeoutMs} onChange={e => setSettings({ ...settings, timeoutMs: Number(e.target.value) })} /></label>
       <div style={{ display: 'flex', gap: 10 }}><button type="button" onClick={() => void save()}>保存决策设置</button><button type="button" onClick={() => void test()}>测试已保存的连接</button><button type="button" onClick={() => void load()}>刷新</button></div>
     </fieldset>}
-    {!settings && <><button type="button" disabled={busy} onClick={() => void load()}>读取设置</button><button type="button" disabled={busy} onClick={() => void reload()}>重试读取</button></>}
+    {!settings && <button type="button" disabled={busy} onClick={() => void load()}>读取设置</button>}
     <p style={{ fontSize: 12 }}>远程会收到经凭据过滤的任务语义及文档片段；当前部署按局域网环境回显并保存API key。失败不重试、不自动切换供应商或回退 Laya；风险on时服务失败包括GET也挂人工。风险off/shadow恢复原审批规则。Key以本地受限权限文件保存，不是加密存储。</p>
     {settings?.lastResult && <div style={{ fontSize: 12 }}>最近结果：{settings.lastResult.ok ? `成功 ${settings.lastResult.model ?? ''}` : `未取得建议 ${settings.lastResult.errorType}`} · {settings.lastResult.latency}ms</div>}
     <div role="status" style={{ fontSize: 12 }}>{busy ? '处理中…' : message}</div>
