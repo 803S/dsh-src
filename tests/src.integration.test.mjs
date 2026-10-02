@@ -17,6 +17,9 @@ import { isJsonValue } from "@deepseek-ai/dsh-session";
 const __dshHomePrev = process.env.DSH_HOME;
 const __dshHomeTmp = nodePath.join(nodeOs.tmpdir(), `dsh-src-test-home-${process.pid}-${Date.now()}`);
 process.env.DSH_HOME = __dshHomeTmp;
+/* [local.104] Existing integration fixtures exercise the tool directly rather than the user command plane.
+ * They explicitly opt into the legacy path; production has no such env override. */
+process.env.DSH_SRC_ALLOW_LEGACY_MODEL_APPROVAL = "1";
 process.on("exit", () => { try { rmSync(__dshHomeTmp, { recursive: true, force: true }); } catch {} });
 /* [local.49] 测试会话 id 规范：harness() 每次新建独立 MemoryDomain（跨测试无共享 state，
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
