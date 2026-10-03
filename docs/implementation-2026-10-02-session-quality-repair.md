@@ -95,6 +95,16 @@
 
 父子回流新会话首次建goal后reasoning400，一次有界续跑建intent后又reasoning400。随后单工具派发成功：子代理 `3639b015-ab35-485a-80ec-3d20d2b2594b` 只GET /read一次，提交父intent-1下fact-1/observation-1与completed checkpoint-1；父代理由完成事件唤醒并生成报告，没有轮询等待。独立文件核验218bytes及hash匹配。准确结论是有界分步触发后通过，原始单prompt前两次被上游中断，不能称无故障一遍通过。
 
+### D. session-11556888-3bc0-4c17-b5f4-fa34c7252980
+
+完整配置写入→独立批准→只执行一次→原件恢复的真实Web验证：
+- 模型先GET /settings拿原始snapshot，再完整保留charset/contact提交enabled=true的PUT与safetyPlan，Jev返回low/write/pending。
+- 页面批准approval-1后直接执行一次PUT，记录executionState=executed；写后GET回读matchesRequested=true，明确未证明所有业务健康。
+- 模型再GET当前状态获得新的快照，并用restoreFromSnapshot引用最初原件（不传body、不复制秘密正文到审批），生成approval-2。
+- 页面另行批准恢复后，服务端从原件取回enabled=false的完整JSON，第二次PUT执行一次，写后回读匹配。
+- fixture请求日志中仅有两次获批PUT，0次DELETE；最终charset=UTF-8、contact不丢失、enabled=false。旧真实目标无请求。
+- 实测发现恢复卡snapshotVerified显示不同步，已修正准备和执行后两处状态；历史“未发出”的reason改标“执行前分类记录”，避免与executed当前状态冲突。
+
 ## 5. 实测发现并修正的接入缺陷
 
 - 新权威状态命令起初只挂session层，Web看不到；提升到全局src-domain-admin层后实测页面正常，失联时仍禁用操作。
