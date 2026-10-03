@@ -148,6 +148,11 @@ export interface SrcProjectionPendingApproval {
   readonly reason: string
   readonly justification: string
   readonly layaAdvice?: string // persisted legacy field name; JSON now identifies Jev/model/verdict
+  readonly executionState?: string
+  readonly userDecision?: string
+  readonly decisionAt?: number
+  readonly executionError?: string
+  readonly safetyPlan?: { backupRef?: string; snapshotVerified?: boolean; recovery?: string }
   readonly ruleVerdict?: string
   readonly status: 'pending' | 'approved' | 'rejected'
   readonly note: string
@@ -182,6 +187,8 @@ export interface SrcProjectionCoverageRow {
 
 /** [local.32] One research row as carried by the wire projection (mirrors srcProjectionSchema). */
 export interface SrcProjectionResearchRow {
+  readonly verifierSessionId?: string
+  readonly findingFingerprint?: string
   readonly id: string
   readonly intentId: string
   readonly category: string

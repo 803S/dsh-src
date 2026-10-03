@@ -77,7 +77,8 @@ test('host dispatch: advisory shadow/on never becomes execution; spawn uses effe
   const failedUpdate = await h.run('src_update_intent', { intentId: intent.value.id, status: 'completed', delegationMode: 'delegate' });
   assert.equal(failedUpdate.isError, true);
   assert.equal(h.events.reduce(applySrcEvent, srcInitialState).nodes.find(r => r.id === intent.value.id).status, 'planned');
-  const legacy = applySrcEvent(h.events.reduce(applySrcEvent, srcInitialState), { type: 'tool/call', data: { callId: 'legacy-call', name: 'src_update_intent', arguments: JSON.stringify({ intentId: intent.value.id, status: 'running' }) } });
+  const legacyState = {...h.events.reduce(applySrcEvent, srcInitialState),lastAppliedEventSeq:0};
+  const legacy = applySrcEvent(legacyState, { type: 'tool/call', data: { callId: 'legacy-call', name: 'src_update_intent', arguments: JSON.stringify({ intentId: intent.value.id, status: 'running' }) } });
   assert.equal(legacy.nodes.find(r => r.id === intent.value.id).status, 'running', 'old callId-bearing history is still replayable');
   const fake = await h.run('src_recon', { intentId: 'intent-999', description: 'bad', prompt: 'fixture' });
   assert.equal(fake.isError, true);
@@ -203,6 +204,7 @@ test('host Skill recommendation -> read -> real dispatch -> evidence; no duplica
   await fs.writeFile(path.join(h.home, 'capabilities/index.json'), JSON.stringify({ capabilities: [{ id: 'clown-src-playbook', kind: 'skill', dir: root, status: 'installed' }] }));
   await h.run('src_add_goal', { target: 'fixture.test', objective: 'zfixturetoken' });
   const intent = await h.run('src_add_intent', { title: 'zfixturetoken' });
+  assert.equal(intent.isError,false,JSON.stringify(intent));
   let skillCalls = 0, actualRequests = 0;
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('/decide')) {
@@ -350,6 +352,11 @@ test('research records for different findings do not overwrite each other', asyn
  await h.run('src_record_research', { intentId:intent.id, category:'authz', hypothesis:'second hypothesis', findingId:second.id, status:'testing' });
  const state = (await h.run('src_state',{})).value;
  assert.equal(state.research.filter(row => row.category === 'authz').length, 2);
+ const evidenceRead = await h.run('src_get_evidence', {ids: [state.research.find(row => row.category === 'authz').id]});
+ assert.equal(evidenceRead.isError, false);
+ assert.match(evidenceRead.content[0].text, /intentId=intent-1/);
+ assert.match(evidenceRead.content[0].text, /findingId=finding-1/);
+ assert.match(evidenceRead.content[0].text, /结论\/停止原因/);
  assert.deepEqual(new Set(state.research.filter(row => row.category === 'authz').map(row => row.findingId)), new Set([first.id, second.id]));
 });
 

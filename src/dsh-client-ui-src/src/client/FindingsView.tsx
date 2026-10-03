@@ -81,7 +81,9 @@ export function FindingsView({ src, t, runCommand }: FindingsViewProps) {
     setBusyId(findingId)
     setFeedback(null)
     try {
-      const result = await runCommand(`/src-reject ${findingId} ${trimmed}`)
+      const fingerprint = (findings.find(f=>f.id===findingId) as {fingerprint?:string} | undefined)?.fingerprint
+      if (!fingerprint) throw new Error('尚未取得权威漏洞指纹，请刷新后重试')
+      const result = await runCommand('/src-reject-checked ' + JSON.stringify({findingId,fingerprint,reason:trimmed}))
       setFeedback(result.kind === 'success'
         ? `已打回 ${findingId}（理由：${trimmed.slice(0, 60)}${trimmed.length > 60 ? '…' : ''}），等待 agent 处理…`
         : `命令返回错误：${result.text}`)

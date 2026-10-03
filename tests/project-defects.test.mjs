@@ -7,6 +7,76 @@ import { classifyHttpRequest } from "../lib/src/security.js";
 import { keylessSearchProvider } from "../lib/src/web-search-provider.js";
 import { patternShapeError } from "../lib/src/lessons.js";
 import { layaDecide } from "../lib/src/decision/laya-client.js";
+import { sanitizeEvidence, renderScan } from "../lib/src/evidence-output.js";
+
+test("scan output exposes all accepted rows and distinguishes omitted inputs", () => {
+ const rows = Array.from({length:100}, (_,i)=>({path:`/row-${i}`,status:404,length:682,sampleBytes:682,bodySampleSha256:'abc',title:'Not Found'}));
+ const text = renderScan({}, {requested:100,responses:100,hints:0,results:rows,scanInput:{supplied:103,invalid:1,duplicates:1,accepted:100,omittedPaths:['/not-executed']}})[0].text;
+ assert.match(text,/\/row-99 → 404/);
+ assert.match(text,/length=682 evidence=none sampleBytes=682 sampleHash=abc/);
+ assert.match(text,/未执行路径.*\/not-executed/);
+ assert.match(text,/未命中字典不证明目标没有部署应用/);
+ assert.doesNotMatch(text,/缩小 paths 批次读取/);
+});
+import { reserveRequestStart } from "../lib/src/request-rate.js";
+import { applyCommittedCoverage } from "../lib/src/coverage-projection.js";
+import { explainApproval } from "../src/dsh-client-ui-src/src/client/approval-explanation.ts";
+
+test("approval explanation describes actual operation without endorsing model promises", () => {
+ const put = explainApproval({method:'PUT',url:'https://fixture.invalid/settings',body:'{}',justification:'仅修改开关，无任何副作用，立即可逆',layaAdvice:JSON.stringify({risk:'high',effect:'write',verdict:'pending'})});
+ assert.match(put.operation,/替换/);
+ assert.match(put.consequences.join(' '),/整体替换.*清空其他配置/);
+ assert.match(put.recovery,/未提供经过验证/);
+ assert.match(put.decision,/高风险/);
+ assert.match(put.purpose,/无任何副作用/); // Kept as explicitly attributed model intent, not system guarantee.
+ const get = explainApproval({method:'GET',url:'https://fixture.invalid/wms?sld_body='+encodeURIComponent('<!ENTITY xxe SYSTEM "file:///test">'),layaAdvice:JSON.stringify({risk:'low',effect:'read',verdict:'pending'})});
+ assert.match(get.consequences.join(' '),/外部实体/);
+ assert.match(get.decision,/低风险.*仍要求人工/);
+ assert.match(explainApproval({method:'DELETE',url:'https://fixture.invalid/'}).operation,/删除/);
+ assert.match(explainApproval({method:'GET',url:'bad',layaAdvice:'{'}).target,/无法解析/);
+ assert.match(explainApproval({method:'ASSET',url:'https://fixture.invalid'}).consequences.join(' '),/子域/);
+ assert.match(explainApproval({method:'RUN',url:'capability://fixture/script'}).consequences.join(' '),/修改文件/);
+ const external = explainApproval({method:'GET',url:'https://fixture.invalid/',layaAdvice:JSON.stringify({effect:'external',fallback:true})});
+ assert.match(external.decision,/未取得有效结果/);
+ assert.match(external.consequences.join(' '),/费用/);
+ assert.ok(explainApproval({method:'POST',url:'https://fixture.invalid/',justification:'long '.repeat(200)}).purpose.length < 220);
+});
+
+test("committed coverage replaces provisional IDs and restores calculated counts", () => {
+ const provisional = {id:'coverage-1',phase:'api',category:'read',status:'running'};
+ const colliding = {id:'coverage-7',phase:'recon',category:'legacy',status:'completed'};
+ const authoritative = {id:'coverage-7',sessionId:'fixture',phase:'api',category:'read',status:'completed',evidence:['observation-1'],limitation:'',endpointsTotal:20,endpointsTested:1,endpointsSkipped:[],updatedAt:123};
+ const expected = [authoritative];
+ assert.deepEqual(applyCommittedCoverage([provisional,colliding],authoritative),expected);
+ assert.deepEqual(applyCommittedCoverage(expected,authoritative),expected);
+ const event={type:'tool/call',data:{name:'src_coverage_committed',arguments:JSON.stringify(authoritative)}};
+ const state=applySrcEvent({...srcInitialState,coverage:[provisional,colliding]},event);
+ assert.deepEqual(state.coverage,expected);
+ assert.deepEqual(applySrcEvent(state,event).coverage,expected);
+});
+
+test("rate limiter shares start slots across concurrent callers", async () => {
+  const starts = [];
+  await Promise.all(Array.from({ length: 8 }, () => reserveRequestStart('parallel-fixture', 25).then(() => starts.push(Date.now()))));
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 24, 'starts must be spaced, not burst by worker count');
+  const controller = new AbortController();
+  await reserveRequestStart('abort-fixture', 50);
+  const waiting = reserveRequestStart('abort-fixture', 50, controller.signal);
+  controller.abort(new Error('cancelled fixture'));
+  await assert.rejects(waiting, /cancelled fixture/);
+  await reserveRequestStart('abort-fixture', 50);
+});
+
+test("fd2a audit: URL credential redaction never consumes adjacent JSON fields", () => {
+  const value = { global: { settings: { onlineResource: "http://fixture.invalid" }, jai: { enabled: true, operations: { "@class": "sorted-set", values: ["one", "two"] } } } };
+  const raw = JSON.stringify(value);
+  assert.equal(sanitizeEvidence(raw), raw);
+  assert.deepEqual(JSON.parse(sanitizeEvidence(raw)), value);
+  const credentialUrl = JSON.stringify({ url: "https://fixture-user:fixture-password@example.invalid/path", next: { "@class": "retained" } });
+  const sanitized = sanitizeEvidence(credentialUrl);
+  assert.doesNotMatch(sanitized, /fixture-password/);
+  assert.deepEqual(JSON.parse(sanitized), { url: "https://<stored>@example.invalid/path", next: { "@class": "retained" } });
+});
 
 test("project defect guard: body words and endpoint patches cannot waive approval", () => {
   assert.equal(classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: '{"method":"tools/list"}' }).require, false);
@@ -78,7 +148,11 @@ test("project defect guard: failed finding tool result rolls back only this call
   state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_intent", arguments: JSON.stringify({ goalId: "goal-1", title: "intent" }) } });
   state = applySrcEvent(state, call("call-1", "old finding"));
   state = applySrcEvent(state, call("call-2", "new finding"));
-  assert.equal(state.nodes.filter((node) => node.kind === "finding").length, 2);
+  assert.equal(state.nodes.filter((node) => node.kind === "finding").length, 0, "in-flight calls are not findings");
+  state = applySrcEvent(state, { type: "tool/result", data: { message: { content: [{ toolCallId: "call-1", isError: false, content: [{ type: "text", text: "Recorded finding finding-1 [low] old finding (edge edge-2)." }] }] } } });
   state = applySrcEvent(state, { type: "tool/result", data: { message: { content: [{ toolCallId: "call-2", isError: true }] } } });
   assert.deepEqual(state.nodes.filter((node) => node.kind === "finding").map((node) => node.title), ["old finding"]);
+  state = applySrcEvent(state, call("call-3", "retry finding"));
+  state = applySrcEvent(state, { type: "tool/result", data: { message: { content: [{ toolCallId: "call-3", isError: false, content: [{ type: "text", text: "Recorded finding finding-2 [low] retry finding (edge edge-3)." }] }] } } });
+  assert.deepEqual(state.nodes.filter((node) => node.kind === "finding").map((node) => node.id), ["finding-1", "finding-2"]);
 });

@@ -5,6 +5,21 @@ const readRule={require:false,category:'放行',reason:'read'};
 const genericPost={require:true,category:'未授权删改',reason:'POST unknown'};
 const context={method:'OPTIONS',path:'/api/user',rule:readRule};
 const low={fallback:false,action:'allow',risk:'low',effect:'read'};
+
+test('actual DELETE and conflicting PUT/PATCH cannot inherit read-only authorization', () => {
+ for (const method of ['DELETE', 'PUT', 'PATCH']) {
+  const decision = httpDecisionPolicy(genericPost, low, 'on', {method, path:'/'});
+  assert.equal(decision.require, true);
+  assert.match(decision.reason, /可能/);
+  assert.match(decision.reason, /恢复/);
+  assert.match(decision.reason, /未发出/);
+ }
+ for (const effect of ['read','compute','write','auth','external']) {
+  assert.equal(httpDecisionPolicy(readRule, {...low, effect}, 'on', {method:'DELETE',path:'/'}).require,true);
+ }
+ assert.equal(httpDecisionPolicy(readRule, low, 'on', {method:'GET',path:'/'}).require,false);
+ assert.equal(httpDecisionPolicy(genericPost, {...low,effect:'compute'}, 'on', {method:'POST',path:'/'}).require,false);
+});
 test('Jev execution contract: low impact allows generic POST; errors/high/unknown/contradiction require human even for GET',()=>{
  assert.equal(httpDecisionPolicy(genericPost,low,'on',context).authority,'jev-low-risk');
  assert.match(httpDecisionPolicy(readRule,{...low,action:'pending'},'on',context).reason,/OPTIONS \/api\/user/);

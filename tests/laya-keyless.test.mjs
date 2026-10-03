@@ -53,7 +53,7 @@ test('local.100 keyless search provider supports Bing and Baidu parser shapes', 
   try {
     globalThis.fetch = async (url) => {
       seen.push(String(url));
-      if (String(url).includes('bing.com')) return new Response('<li class="b_algo"><h2><a href="https://bing.example/result">Bing result</a></h2></li>', { status: 200 });
+      if (String(url).includes('bing.com')) return new Response('<li class="b_algo"><h2><a href="https://bing.example/result">Bing engine fallback result</a></h2></li>', { status: 200 });
       if (String(url).includes('baidu.com')) return new Response('<h3><a href="https://baidu.example/result">Baidu result</a></h3>', { status: 200 });
       return new Response('<html>no parseable results</html>', { status: 200 });
     };
@@ -68,7 +68,7 @@ test('local.101 keyless search provider honors an explicit engine without fallba
   try {
     globalThis.fetch = async (url) => {
       seen.push(String(url));
-      return new Response('<li class="b_algo"><h2><a href="https://bing.example/only">Only Bing</a></h2></li>', { status: 200 });
+      return new Response('<li class="b_algo"><h2><a href="https://bing.example/only">Only Bing explicit</a></h2></li>', { status: 200 });
     };
     const result = await keylessSearchProvider.search({ query: 'explicit', engine: 'bing', maxResults: 3 });
     assert.equal(result.engine, 'bing');
@@ -107,7 +107,7 @@ test('local.100 keyless search provider fails over from blocked engine', async (
     globalThis.fetch = async (url) => {
       calls++;
       if (String(url).includes('duckduckgo')) return new Response('blocked', { status: 403 });
-      return new Response('<a href="https://example.test/result">Result</a>', { status: 200 });
+      return new Response('<a href="https://example.test/result">Fallback result</a>', { status: 200 });
     };
     const result = await keylessSearchProvider.search({ query: 'fallback', maxResults: 3 });
     assert.ok(calls >= 2);

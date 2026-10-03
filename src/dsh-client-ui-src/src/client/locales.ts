@@ -70,6 +70,7 @@ export const zh = {
      tests 里的「报告节完整性闸」会对比两侧集合；改服务端节标题时必须同步这里。 */
   'report.sec.findings': '漏洞发现',
   'report.sec.scope': '测试范围与限制',
+  'report.sec.evidence': '证据与未验证边界',
   'report.stHypothesis': '假设',
   'finding.affected': '影响资产',
   'finding.steps': '可复现步骤',
@@ -180,6 +181,7 @@ export const en = {
   /* [local.32] Section headers (report.sec.*): zh values must match the server buildReport titles verbatim. */
   'report.sec.findings': 'Findings',
   'report.sec.scope': 'Scope & Limitations',
+  'report.sec.evidence': 'Evidence & Unverified Boundaries',
   'report.stHypothesis': 'Hypothesis',
   'finding.affected': 'Affected asset',
   'finding.steps': 'Reproducible steps',

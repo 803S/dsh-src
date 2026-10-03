@@ -8,24 +8,9 @@
 
 ### 0.1 只使用可信源码基线
 
-当前不能把 `/Users/lihua-dis/Software/dsh-src` 当成可构建基线。以下文件存在 merge conflict 残留：
+**2026-10-02/03 更新**：仓库已收拢到唯一工作树 `/Users/lihua-dis/Software/dsh-src`、唯一分支 `main`。旧 `dsh-src-jev` 和临时评测工作树已移除，不再使用。部署副本仍位于 `$DSH_HOME/profiles/{web,headless}/node_modules/@lihua_dis/dsh-src`。
 
-- `package.json`
-- `package-lock.json`
-- `lib/src.js`
-- `lib/src/tools/index.js`
-- `scripts/deploy.mjs`
-
-工作区当前 `git status` 仍有 `UU`、`AA` 状态。禁止在这些冲突未解决前运行部署、发布或覆盖用户数据。
-
-最近实际运行的是：
-
-- 源码基线：`/Users/lihua-dis/Software/dsh-src-jev`
-- 版本：`0.1.0-local.107`
-- 部署副本：`/Users/lihua-dis/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src`
-- 现有文档：`docs/jev-service-local106.md`、`docs/audit-2026-10-01-session-3291bab8.md`
-
-后续所有修改必须先明确选择一个唯一基线。推荐先以 `dsh-src-jev` 为临时发布基线，在单独分支中解决主工作区冲突，再决定是否合并。
+local.108 修复与真实测试结果见 [implementation-2026-10-02-session-quality-repair.md](implementation-2026-10-02-session-quality-repair.md)，会话证据见 [audit-2026-10-02-session-fd2c50eb.md](audit-2026-10-02-session-fd2c50eb.md)。下文 Phase 1 涉及宿主/provider 的建议仅为独立后续工作，不属于本轮 SRC 修改范围；本轮不改压缩、上游协议或通用 retry。实现状态以该执行记录与测试证据为准，本文任务列表不是完成声明。
 
 ### 0.2 只读审计与修改任务分开
 
@@ -217,7 +202,7 @@ Jev: risk=high, verdict=reject
 
 ### 执行步骤
 
-1. 在 `/Users/lihua-dis/Software/dsh-src-jev` 记录当前 commit、版本号和关键文件 hash。
+1. 在唯一工作树 `/Users/lihua-dis/Software/dsh-src` 记录当前 commit、版本号和关键文件 hash。
 2. 对 `/Users/lihua-dis/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src` 做只读 hash 对照。
 3. 在启动日志中输出：`packageVersion`、`gitCommit`、`sourceRoot`、`profileRoot`、`configHash`。
 4. 在 `scripts/deploy.mjs` 增加发布前检查：
@@ -229,7 +214,7 @@ Jev: risk=high, verdict=reject
 
 ### 禁止事项
 
-- 不从 `/Users/lihua-dis/Software/dsh-src` 直接部署。
+- 不从旧 linked worktree、临时目录或未解决冲突的源码部署。
 - 不用“当前工作区能启动”代替构建验证。
 - 不把部署副本的手工修改当成源码修复。
 

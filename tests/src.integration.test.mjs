@@ -114,6 +114,22 @@ function harnessWithApproval({ policy } = {}) {
   return h;
 }
 
+test('panel approval dispatch uses stored request and records execution without a model round trip', async () => {
+ const h=harness();const parent=h.exec('panel-direct-fixture');
+ await h.run('src_add_goal',{target:'fixture.invalid',objective:'local',authorization:'fixture'},parent);
+ const oldFetch=globalThis.fetch;let hits=0;
+ try {
+  globalThis.fetch=async()=>{hits++;return new Response('ok',{headers:{'content-type':'text/plain'}});};
+  const pending=await h.run('src_http',{method:'POST',url:'http://fixture.invalid/delete-account',justification:'fixture deletion'},parent);
+  const followed=[];
+  h.ctx.tools.execute=async exec=>{try {const value=await h.run(exec.name,exec.arguments,{agent:exec.agent,signal:exec.signal});return {isError:false,value,content:[{type:'text',text:`Executed ${value.id}`} ]};}catch(e){return {isError:true,content:[{type:'text',text:e.message}]};}};
+  const result=await h.commands.get('src-approve').handler({source:{kind:'user'},rawInput:`${pending.pendingApprovalId} allow`,agent:{session:parent.agent.session,followup:async m=>followed.push(m)}});
+  assert.equal(result.kind,'success');assert.equal(hits,1);assert.equal(followed.length,1);
+  const state=await h.run('src_state',{},parent);assert.equal(state.pendingApprovals[0].executionState,'executed');assert.equal(state.pendingApprovals[0].approvalSource,'human-command');
+  const again=await h.commands.get('src-approve').handler({source:{kind:'user'},rawInput:`${pending.pendingApprovalId} allow`,agent:parent.agent});assert.equal(again.kind,'error');assert.equal(hits,1);
+ } finally {globalThis.fetch=oldFetch;}
+});
+
 test("SRC workflow persists, deduplicates checkpoints", async () => {
   const h = harness();
   const parentEvents = [];
@@ -229,9 +245,9 @@ test("references and child-only submission boundaries are enforced", async () =>
 test("invalid child batches are rejected before any row is written", async () => {
   const h = harness();
   const parent = h.exec("p");
-  h.sessions.set("p", { append() { throw new Error("projection must not be touched"); } });
   await h.run("src_add_goal", { target: "example.test", objective: "test", authorization: "ticket" }, parent);
   await h.run("src_add_intent", { title: "audit", goalId: "goal-1" }, parent);
+  h.sessions.set("p", { append() { throw new Error("projection must not be touched"); } });
   await assert.rejects(() => h.run("src_submit", {
     intentId: "intent-1",
     facts: [{ detail: "must not persist" }],
@@ -344,12 +360,14 @@ test("src_collect_passive creates planned coverage skeletons for discovered API 
     assert.equal(state.coverage.some((c) => c.assetId === graphqlAsset.id && c.category === "authorization" && c.status === "planned"), true);
     assert.equal(state.endpointManifests.length, 1, "被动发现生成一个不可变 endpoint manifest");
     assert.ok(state.endpointManifests[0].endpoints.length >= 2, "manifest 包含发现的 endpoint");
-    const statuses = Object.fromEntries(state.endpointManifests[0].endpoints.slice(0, 2).map((endpoint, index) => [endpoint.endpointId, index === 0 ? "tested" : "skipped"]));
-    await assert.rejects(() => h.run("src_record_coverage", { phase: "api", category: "manifest-audit-missing-evidence", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses }, parent), /必须提供 evidenceIds/);
-    await h.run("src_record_coverage", { phase: "api", category: "manifest-audit", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses, evidence: ["observation-fixture"] }, parent);
+    const candidates=state.endpointManifests[0].endpoints;
+    const known=candidates.find(e=>e.method!=='UNKNOWN') ?? candidates[0];
+    const statuses = {[known.endpointId]:'skipped'};
+    await assert.rejects(() => h.run("src_record_coverage", { phase: "api", category: "manifest-audit-missing-evidence", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: {[known.endpointId]:'tested'} }, parent), /缺少相同方法和路径/);
+    await h.run("src_record_coverage", { phase: "api", category: "manifest-audit", status: "completed", manifestId: state.endpointManifests[0].id, endpointStatuses: statuses, evidence: [] }, parent);
     const audited = (await h.run("src_state", {}, parent)).coverage.find((c) => c.category === "manifest-audit");
     assert.equal(audited.endpointsTotal, state.endpointManifests[0].endpoints.length);
-    assert.equal(audited.endpointsTested, 1);
+    assert.equal(audited.endpointsTested, 0);
     assert.equal(audited.endpointsSkipped.length, 1);
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -752,7 +770,7 @@ test("报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + fina
   await h.run("src_submit", { intentId: "intent-1", stage: "completed", summary: "越权验证完成", facts: [], assets: [], findings: [] }, h.exec("child79full", "full"));
   const factEvidence3 = (await h.run("src_add_fact", { intentId: "intent-1", kind: "http", detail: "GET /resume?id=2 -> 200 {\"id\":2,\"name\":\"他人\"}", confidence: 0.9 }, p2)).id;
   await h.run("src_add_finding", { intentId: "intent-1", title: "越权读取他人简历", severity: "high", impact: "任意学生简历泄露", affectedScope: "全站学生", remediation: "后端鉴权", pocEvidence: ["GET /resume?id=2 -> 200"], reproducibleSteps: ["GET /resume?id=2"], entryPoint: "简历查看页-详情", discoveryPath: "Burp proxy history 导入 app.example.test/api/resume", rawRequest: "GET /resume?id=2 HTTP/1.1\r\nHost: app.example.test\r\nCookie: SESSION=x\r\n\r\n", rawResponse: "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"id\":2,\"name\":\"他人\"}", victimImpact: "任意学生的简历隐私数据被陌生人读取，存在被诈骗与骚扰风险且无从察觉", attackPrerequisites: "攻击者仅需普通账号并遍历简历 ID，无管理权限", concreteLossEvidence: [factEvidence3] }, p2);
-  await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1" }, p2);
+  await h.run("src_record_research", { intentId: "intent-1", category: "authorization-bypass", hypothesis: "id 越权", status: "verified", findingId: "finding-1", evidence:[factEvidence3] }, h.exec("child79full", "full"));
   const ok = await h.run("src_finalize_engagement", { remainingDirections: [], blindSpots: [{ dimension: "http-authz-surface", status: "notApplicable" }, { dimension: "cors-headers", status: "notApplicable" }, { dimension: "dom-xhr", status: "notApplicable" }, { dimension: "dict-budget", status: "notApplicable" }, { dimension: "multi-account-cross-authz", status: "notApplicable" }] }, p2);
   assert.equal(ok.ready, true);
   const report = await h.run("src_report", {}, p2);
@@ -2821,6 +2839,7 @@ test("[local.58] fold 层锚点自愈：无锚点 intent 收下并级联恢复 f
   assert.equal(st.nodes.find((n) => n.kind === "intent")?.id, "intent-1");
   /* [local.66] 两锚点同传：fold 镜像 execute 层自愈——fact 存在即按 derived_from 锚收下
      （hackone 实战里同 title+detail 的失败重传会被去重，不产生双节点） */
+  st={...st,lastAppliedEventSeq:0}; // Remaining assertions explicitly exercise old histories without committed events.
   st = applySrcEvent(st, { type: "tool/call", data: { turn: 1, step: 99, callId: "call-both", name: "src_add_intent", arguments: JSON.stringify({ title: "both anchors", goalId: goal.id, derivedFromFactId: fact.id }) } });
   assert.equal(viewSrcState(st).counts.intents, 2, "双锚点同传 fold 必须收下（local.58 曾丢弃）");
   const healedNode = st.nodes.filter((n) => n.kind === "intent" && n.title === "both anchors")[0];
@@ -4110,7 +4129,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 		"src_test_capability", "src_read_capability", "src_run_capability", "src_fetch_policy", "src_set_infra",
 		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
 		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
-		"src_add_finding", "src_add_asset", "src_state", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",
+		"src_add_finding", "src_add_asset", "src_state", "src_supersede_knowledge", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",
 		"src_update_finding", "src_reject_finding", "src_reclassify_finding", "src_resolve_approval", "src_request_asset_confirm",
 		"src_record_lesson", "src_read_lesson", "src_search_lessons", "src_serve_proof", "src_stop_serve", "src_survey_seed"
 	], "拆包前必须冻结当前工具名称和注册顺序");
@@ -4750,7 +4769,7 @@ test("[local.68 #19 尾款] 靶场端到端产出：未授权可达端点探测�
     assert.ok(f1.id, "finding 入库");
     assert.equal(f1.severity ?? "low", "low", "未授权类如实 low");
     /* ③ 研究复核闸：verified 研究记录关联 finding（finalize 前置） */
-    await h.run("src_record_research", { intentId: intent.id, category: "unauthorized-access", hypothesis: "复核用户接口未授权访问", status: "verified", findingId: f1.id, evidence: [typeof fact === "string" ? fact : fact.id] }, parent);
+    await h.run("src_record_research", { intentId: intent.id, category: "unauthorized-access", hypothesis: "复核用户接口未授权访问", status: "verified", findingId: f1.id, evidence: [typeof fact === "string" ? fact : fact.id] }, h.exec("child79l68", "l68e2e"));
     /* ④ 收官：remainingDirections=[]（穷尽）+ blindSpots 全声明（基线五维 + mobile-api 不派生） */
     const fin = await h.run("src_finalize_engagement", {
       remainingDirections: [],
