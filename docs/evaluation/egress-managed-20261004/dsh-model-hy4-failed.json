@@ -1,0 +1,71 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-session-itxNqk",
+  "exit": 2,
+  "completion": {
+    "status": "error",
+    "stopped": "",
+    "steps": 1,
+    "calls": 1,
+    "tokens": 0,
+    "model": {
+      "provider": "newapi",
+      "model": "hy4"
+    },
+    "sessions": [
+      "session-1d34813c-b088-4acf-b874-90a20f5f6c3f"
+    ],
+    "error": "400: {\"message\":\"unknown provider for model hy4-preview\",\"type\":\"invalid_request_error\",\"param\":\"model\",\"code\":\"model_not_found\"}"
+  },
+  "arrivals": [],
+  "events": [
+    {
+      "at": 1791126306413,
+      "type": "provider",
+      "name": "SrcBashExecutor"
+    },
+    {
+      "at": 1791126306506,
+      "type": "tool-result",
+      "sessionId": "session-1d34813c-b088-4acf-b874-90a20f5f6c3f",
+      "name": "src_egress_plan",
+      "arguments": {
+        "entries": [
+          {
+            "request": {
+              "url": "http://127.0.0.1:57134/read",
+              "method": "GET",
+              "headers": [],
+              "bodyBase64": ""
+            },
+            "maxRequests": 1
+          }
+        ],
+        "maxRequests": 1,
+        "minIntervalMs": 250,
+        "lifetimeMs": 120000,
+        "purpose": "real DSH fixture exact one-read plan"
+      },
+      "isError": false,
+      "text": "{\"id\":\"0dd9bf43-4fc1-4017-88c0-0cdca7d630b7\",\"digest\":\"3ab6a4b4e380c3eec55e9703c16ad592f0d798040f7983687f72e6fbddf6dd52\",\"state\":\"active\",\"expiresAt\":1791126426505,\"reason\":\"bounded-low-risk-plan\"}",
+      "value": {
+        "id": "0dd9bf43-4fc1-4017-88c0-0cdca7d630b7",
+        "digest": "3ab6a4b4e380c3eec55e9703c16ad592f0d798040f7983687f72e6fbddf6dd52",
+        "state": "active",
+        "expiresAt": 1791126426505,
+        "reason": "bounded-low-risk-plan"
+      }
+    },
+    {
+      "at": 1791126306613,
+      "type": "turn-end",
+      "sessionId": "session-1d34813c-b088-4acf-b874-90a20f5f6c3f",
+      "reason": {
+        "kind": "error",
+        "error": {
+          "message": "400: {\"message\":\"unknown provider for model hy4-preview\",\"type\":\"invalid_request_error\",\"param\":\"model\",\"code\":\"model_not_found\"}",
+          "code": "INVALID_REQUEST"
+        }
+      }
+    }
+  ]
+}

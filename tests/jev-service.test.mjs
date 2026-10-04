@@ -93,3 +93,31 @@ test('Jev Browser candidate seam uses selected endpoint; none/off/shadow never c
  await saveDecisionSettings({browserMode:'off'});assert.equal((await chooseBrowserCandidate(input,exec)).fallback,true);assert.equal(calls,3);
 });
 
+
+test('scan-plan evaluates every exact entry once, strips credentials/body secrets, returns risk contract', async t => {
+ await fixture(t);
+ await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://advisor.invalid/v1/systemone',apiKey:'provider-fixture-secret'});
+ let calls=0;
+ globalThis.fetch=async (_url,init)=>{
+  calls++;
+  const p=JSON.parse(init.body);
+  assert.equal(p.state.plan.entries.length,2);
+  assert.equal(p.state.plan.maxRequests,7);
+  assert.equal(p.state.plan.minIntervalMs,500);
+  assert.ok(!init.body.includes('business-fixture-secret'));
+  assert.ok(!init.body.includes('body-private-secret'));
+  assert.ok(!init.body.includes('bodyBase64'));
+  assert.match(p.questions.decision.instructions,/每个请求/);
+  const result=answer('read',Object.keys(p.questions.decision.criteria));
+  result.answers.risk={choice:'low',confidence:.98,probabilities:{low:1,high:0,unknown:0}};
+  result.answers.verdict={choice:'allow',confidence:.98,probabilities:{allow:1,pending:0}};
+  return new Response(JSON.stringify(result));
+ };
+ const plan={entries:[
+  {request:{method:'GET',url:'https://fixture.invalid/a',headers:[['authorization','Bearer business-fixture-secret']],bodyBase64:''},maxRequests:3},
+  {request:{method:'POST',url:'https://fixture.invalid/b',headers:[],bodyBase64:Buffer.from('{"password":"body-private-secret"}').toString('base64')},maxRequests:4}
+ ],maxRequests:7,minIntervalMs:500,expiresAt:Date.now()+1000};
+ const result=await jevDecide({taskType:'scan-plan',plan,scopeChecked:true},exec);
+ assert.equal(result.fallback,false);assert.equal(result.action,'allow');assert.equal(result.effect,'read');assert.equal(result.mode,'on');assert.equal(calls,1);
+ assert.ok(plan.entries[1].request.bodyBase64,'advisor must not mutate caller request');
+});

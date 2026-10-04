@@ -1,0 +1,271 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-extended-aVQkiB",
+  "rows": [
+    {
+      "name": "baseline-tls-direct",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/baseline\",\"body\":\"\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "baseline-admin",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "SYNTHETIC_ADMIN",
+      "stderr": "",
+      "targetArrivals": 0,
+      "adminArrivals": 1,
+      "unixArrivals": 0
+    },
+    {
+      "name": "baseline-unix",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "SYNTHETIC_UNIX",
+      "stderr": "",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 1
+    },
+    {
+      "name": "tls-proxy-get",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/read\",\"body\":\"\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "tls-proxy-body",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/compute\",\"body\":\"{\\\"x\\\":1}\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "tls-xml-blocked",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "FIXTURE_BLOCKED_NOT_SENT",
+      "stderr": "",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "tls-redirect-recheck",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "FIXTURE_BLOCKED_NOT_SENT",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "tls-untrusted-ca",
+      "mode": "workspace-write",
+      "exit": 60,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (60) SSL certificate problem: unable to get local issuer certificate\nMore details here: https://curl.se/docs/sslcerts.html\n\ncurl failed to verify the legitimacy of the server and therefore could not\nestablish a secure connection to it. To learn more about this situation and\nhow to fix it, please visit the web page mentioned above.\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "tls-direct-blocked",
+      "mode": "workspace-write",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49954 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "admin-blocked",
+      "mode": "workspace-write",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49955 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "unix-blocked",
+      "mode": "workspace-write",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to localhost port 80 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "network-only-secret-readable",
+      "mode": "workspace-write",
+      "exit": 0,
+      "signal": null,
+      "stdout": "SYNTHETIC_ONLY_NOT_A_REAL_SECRET",
+      "stderr": "",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "protected-secret-blocked",
+      "mode": "workspace-write",
+      "exit": 1,
+      "signal": null,
+      "stdout": "",
+      "stderr": "cat: /var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-extended-aVQkiB/control/approval-secret: Operation not permitted\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "full-access-native-direct",
+      "mode": "danger-full-access",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/full-baseline\",\"body\":\"\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "full-access-guard-direct",
+      "mode": "danger-full-access",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49954 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "full-access-guard-proxy",
+      "mode": "danger-full-access",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/read\",\"body\":\"\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "full-access-local-outside-workspace",
+      "mode": "danger-full-access",
+      "exit": 0,
+      "signal": null,
+      "stdout": "outside-ok",
+      "stderr": "",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "read-only-local-denied",
+      "mode": "read-only",
+      "exit": 1,
+      "signal": null,
+      "stdout": "",
+      "stderr": "bash: /var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-extended-aVQkiB/work/read-only.txt: Operation not permitted\n",
+      "targetArrivals": 0,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    },
+    {
+      "name": "read-only-network-proxy",
+      "mode": "read-only",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"path\":\"/read\",\"body\":\"\"}",
+      "stderr": "",
+      "targetArrivals": 1,
+      "adminArrivals": 0,
+      "unixArrivals": 0
+    }
+  ],
+  "target": [
+    {
+      "method": "GET",
+      "path": "/baseline",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/read",
+      "body": ""
+    },
+    {
+      "method": "POST",
+      "path": "/compute",
+      "body": "{\"x\":1}"
+    },
+    {
+      "method": "GET",
+      "path": "/redirect",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/full-baseline",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/read",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/read",
+      "body": ""
+    }
+  ],
+  "admin": [
+    "/baseline"
+  ],
+  "unix": [
+    "/baseline"
+  ],
+  "checks": {
+    "baseline_reachable": true,
+    "tls_get_body_visible": true,
+    "xml_not_sent": true,
+    "redirect_rechecked": true,
+    "untrusted_ca_rejected": true,
+    "direct_and_ipc_blocked": true,
+    "network_only_not_secret_boundary": true,
+    "secret_protection_effective": true,
+    "full_access_network_separate": true,
+    "native_file_modes_preserved": true,
+    "read_only_proxy_available": true
+  },
+  "passed": true
+}

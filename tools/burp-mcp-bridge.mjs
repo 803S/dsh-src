@@ -32,7 +32,7 @@ import path from "node:path";
 /* 插件在 src_http/src_run_capability 挂起高危审批时把 {id,method,url,host,path,category} 写入
    ~/.dsh/storages/src-approval-locks.json，解决（allow/reject）时清除。桥每次转发 send_http1/2_request
    前读锁比对 host+pathname：命中即拒绝转发（isError 工具结果），从机制上封死「审批挂起时用 Burp
-   直发绕过授权闸」的旁路（中通 approval-6 实锤）。锁文件缺失/损坏视为空；DSH_HOME 惰性求值。 */
+   直发绕过授权闸」的旁路（中通 approval-6 实锤）。锁文件缺失视为空；损坏拒绝发送。DSH_HOME 惰性求值。此兼容锁不是目标出口授权依据。 */
 function approvalLocksPath() {
 	const home = (process.env.DSH_HOME ?? "").trim() !== "" ? path.resolve(process.env.DSH_HOME.trim()) : path.join(homedir(), ".dsh");
 	return path.join(home, "storages", "src-approval-locks.json");
@@ -41,9 +41,11 @@ function approvalLocksPath() {
 async function readApprovalLocks() {
 	try {
 		const parsed = JSON.parse(await readFile(approvalLocksPath(), "utf8"));
-		return Array.isArray(parsed) ? parsed : [];
-	} catch {
-		return [];
+		if(!Array.isArray(parsed))throw new Error('approval lock file invalid');
+		return parsed;
+	} catch (error) {
+		if(error.code==='ENOENT')return [];
+		throw new Error('Approval lock unavailable; request not forwarded');
 	}
 }
 
@@ -68,7 +70,7 @@ function parseBurpRequestTarget(args) {
 async function approvalBypassGuard(params) {
 	if (params?.name !== "send_http1_request" && params?.name !== "send_http2_request") return null;
 	const target = parseBurpRequestTarget(params.arguments);
-	if (target === null) return null;
+	if (target === null) throw new Error('Cannot inspect target request; request not forwarded');
 	const locks = await readApprovalLocks();
 	const hit = locks.find((lock) => typeof lock?.host === "string" && lock.host !== "" && lock.host === target.host && typeof lock?.path === "string" && lock.path !== "" && lock.path === target.path);
 	if (hit === undefined) return null;

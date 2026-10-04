@@ -1,0 +1,1 @@
+{"passed":true,"commands":["/src-egress-scope [\"https://example.com\",\"https://api.example.com:8443\"]","/src-egress-status","/src-egress-review approval-7","/src-egress-reconcile approval-7 cancel-never-sent 测试人员已核对目标日志与实际对象状态，确认该请求从未发送。"],"scope":"actual React component, isolated mock command transport; not whole production UI"}

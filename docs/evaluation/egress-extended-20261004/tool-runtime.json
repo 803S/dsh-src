@@ -1,0 +1,134 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-session-VOIFTm",
+  "selection": {
+    "provider": "newapi",
+    "model": "hy4"
+  },
+  "execution": "real DSH ToolRuntime, no model request",
+  "origin": "https://127.0.0.1:50246",
+  "proxy": "http://127.0.0.1:50248",
+  "limits": {
+    "seconds": 120,
+    "steps": 8,
+    "calls": 12
+  },
+  "scope": "real DSH full-access + independent egress guard + mitmproxy TLS fixture; no Jev/human approval",
+  "exit": 0,
+  "completion": {
+    "status": "completed",
+    "stopped": "",
+    "steps": 0,
+    "calls": 8,
+    "tokens": 0,
+    "model": {
+      "provider": "newapi",
+      "model": "hy4"
+    },
+    "sessions": [
+      "session-e0584033-ae9c-4787-99a0-4a58f56c11a3"
+    ]
+  },
+  "actualConfineCount": 8,
+  "toolResults": [
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "{\"fixture\":true,\"path\":\"/read\",\"body\":\"\"}"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "{\"fixture\":true,\"path\":\"/compute\",\"body\":\"{\\\"x\\\":1}\"}"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "FIXTURE_BLOCKED_NOT_SENT"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "FIXTURE_BLOCKED_NOT_SENT"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "[stderr]\ncurl: (7) Failed to connect to 127.0.0.1 port 50246 after 0 ms: Couldn't connect to server\n[exit code: 7]"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "[stderr]\ncurl: (7) Failed to connect to 127.0.0.1 port 50247 after 0 ms: Couldn't connect to server\ncurl: (7) Failed to connect to localhost port 80 after 0 ms: Couldn't connect to server\n[exit code: 7]"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "[stderr]\ncat: /var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-session-VOIFTm/control/approval-secret: Operation not permitted\n[exit code: 1]"
+    },
+    {
+      "name": "bash",
+      "isError": false,
+      "text": "outside-ok"
+    }
+  ],
+  "targetRequests": [
+    {
+      "method": "GET",
+      "path": "/read",
+      "body": ""
+    },
+    {
+      "method": "POST",
+      "path": "/compute",
+      "body": "{\"x\":1}"
+    },
+    {
+      "method": "GET",
+      "path": "/redirect",
+      "body": ""
+    }
+  ],
+  "gatewayRequests": [
+    {
+      "method": "GET",
+      "url": "https://127.0.0.1:50246/read",
+      "body": "",
+      "allow": true
+    },
+    {
+      "method": "POST",
+      "url": "https://127.0.0.1:50246/compute",
+      "body": "{\"x\":1}",
+      "allow": true
+    },
+    {
+      "method": "PUT",
+      "url": "https://127.0.0.1:50246/settings",
+      "body": "<settings><enabled>true</enabled></settings>",
+      "allow": false
+    },
+    {
+      "method": "GET",
+      "url": "https://127.0.0.1:50246/redirect",
+      "body": "",
+      "allow": true
+    },
+    {
+      "method": "GET",
+      "url": "https://127.0.0.1:50246/delete",
+      "body": "",
+      "allow": false
+    }
+  ],
+  "adminRequests": [],
+  "unixRequests": [],
+  "checks": {
+    "real_tool_calls": true,
+    "no_model_calls": true,
+    "target_only_expected": true,
+    "ipc_not_reached": true,
+    "xml_body_inspected": true,
+    "local_write_succeeded": true
+  },
+  "passed": true
+}

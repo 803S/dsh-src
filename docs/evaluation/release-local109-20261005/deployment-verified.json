@@ -1,0 +1,376 @@
+{
+  "version": "0.1.0-local.109",
+  "profiles": [
+    "web",
+    "headless"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "lib/index.js",
+      "sha256": "e4454e82a79dec7637f233a8dbec289ab68c043a5a15fcbd39918ecc70472cee"
+    },
+    {
+      "file": "lib/invariant.js",
+      "sha256": "1349cbab8a510fb067d164c19fa3cdf06ad8c0d5f5529dbaff3116ffb6f0f8ff"
+    },
+    {
+      "file": "lib/preset-root.js",
+      "sha256": "851818f0596f179e2c369779537315e22dd5af413f812c268f2a17734be2cdaf"
+    },
+    {
+      "file": "lib/src-bash-executor.js",
+      "sha256": "2ef42cb683844c86f0078f7f3cdf0840a81d059661f08e41c91343e2d84e5f32"
+    },
+    {
+      "file": "lib/src-domain-admin.js",
+      "sha256": "2dcb3060444b53f9206b13f6680d3b9630109f2610478bd058cd49b86ab0e101"
+    },
+    {
+      "file": "lib/src-egress.js",
+      "sha256": "bdc93c1ded5fa81367053964ba709402a079b79735c4351178d6c2ce16ca651c"
+    },
+    {
+      "file": "lib/src-subagent.js",
+      "sha256": "99e7ad3fccba324b379603473a114db9853a302064dc2849384ff4aadc7478b2"
+    },
+    {
+      "file": "lib/src.js",
+      "sha256": "d557237b2c68a6179caa2f35e77ffd79a8d480b755596207e51d72e24d344f9e"
+    },
+    {
+      "file": "lib/src/approval-grants.js",
+      "sha256": "9203ce33beaa2c2bc27540c09fef8ec069c3c38eecfd2d768dc649bb44bf7487"
+    },
+    {
+      "file": "lib/src/approval-locks.js",
+      "sha256": "e2cd266f81b2d031b5910c315311a9a1515232fd6d818e96ad145ab8f24a5865"
+    },
+    {
+      "file": "lib/src/artifact-manifest.js",
+      "sha256": "cfd0cb8de8f6a21b0ab457e42ad98fe0a6490d728f24ae2fa63bcf3791c31f4b"
+    },
+    {
+      "file": "lib/src/artifacts.js",
+      "sha256": "2b6a7560650f1872eba6917d6c3516cf9d104a85e17d5970a5c643f8e0da459d"
+    },
+    {
+      "file": "lib/src/bounded-transport.js",
+      "sha256": "cf777902b0e7f1d12a76eb0d6e6e47220178968919c2b55d3a5cbd21b0a42c44"
+    },
+    {
+      "file": "lib/src/capability-loader.js",
+      "sha256": "8207fac57e38256745224741652523cf5a11033556ac6792161932fc3ad7566f"
+    },
+    {
+      "file": "lib/src/child-outcome.js",
+      "sha256": "912a08b07d313fb4bddbb0be2717546b1b237c7d4a6d246a99c2a85d1650af90"
+    },
+    {
+      "file": "lib/src/child-routing.js",
+      "sha256": "9ec663c9956742c70d099d977dd08995b73613e31aceb679235b70af3a2af398"
+    },
+    {
+      "file": "lib/src/committed-state.js",
+      "sha256": "b6834fd5b8d08cab31361f0778e4455515e1ac02eb7a6360c1a558c7df92352b"
+    },
+    {
+      "file": "lib/src/context.js",
+      "sha256": "487fbd390dd3b05c6f99949a09dc27e3730f413597903b830b7e2bf0fd815ea7"
+    },
+    {
+      "file": "lib/src/coverage-projection.js",
+      "sha256": "a6f4fb3b40d635f89c43f71a34836917e378689a711408ec3619efeb6b103b93"
+    },
+    {
+      "file": "lib/src/credentials.js",
+      "sha256": "7cd21437b12fe66804c2a89bfa536b70393bf39a13176020eb4b01692607c4a7"
+    },
+    {
+      "file": "lib/src/decision/browser-loop.js",
+      "sha256": "0458ce65c0da6a039fe104b106c8642946aa93bdf5742f8167d1e095f8d09703"
+    },
+    {
+      "file": "lib/src/decision/http-policy.js",
+      "sha256": "d3ccb42eff7a3a08e36d700c2dd821da6f091d1ea554278a2f86b02581692c53"
+    },
+    {
+      "file": "lib/src/decision/jev-client.js",
+      "sha256": "64ad234bb15d738ae53911c7b3a191a3d5d3bf67af8455c5ef0e33aac0cc6aa7"
+    },
+    {
+      "file": "lib/src/decision/knowledge-recall.js",
+      "sha256": "7caf2a4eecc015b75bf13c6720f5e0cfeab2125b6cda490b741390562345b299"
+    },
+    {
+      "file": "lib/src/decision/laya-client.js",
+      "sha256": "aa0f99a5bf620ef24872b9c7dee8357acd2c40d2ca664e05e61f1e0bef7215b3"
+    },
+    {
+      "file": "lib/src/decision/service-commands.js",
+      "sha256": "5f4a0c6ceb4ac83b61b53e76aa1d1f3895a137238365b701fc11b6e08bf93141"
+    },
+    {
+      "file": "lib/src/decision/service-settings.js",
+      "sha256": "7f20edd743ab746957cd663185e9709a72e198726e43a44c0fdcd3f3c300b0d0"
+    },
+    {
+      "file": "lib/src/decision/skill-recall.js",
+      "sha256": "316147f232b84dfc6fa49d427cc96c99a370df63ab12c06c5cdf8c11b3f930e4"
+    },
+    {
+      "file": "lib/src/domain-data.js",
+      "sha256": "b411f65b0df2bc8d1a2c10d94066ce757fb7aaf746ea4bdd033f7c4e82fd15aa"
+    },
+    {
+      "file": "lib/src/egress/broker.js",
+      "sha256": "15d9309918dc5e80df9e1fd110806548df90851bc2f6cda408ecb5cfb8a04ca6"
+    },
+    {
+      "file": "lib/src/egress/capability-executor.js",
+      "sha256": "655c4415e03c691c6d32970f6ff17432705e08a09a6129d0f9d5be0ef4a0cb7c"
+    },
+    {
+      "file": "lib/src/egress/control-server.js",
+      "sha256": "0959651445e0a48b85bd061bd9498fc43c4588c2d357d776b098253085cc8270"
+    },
+    {
+      "file": "lib/src/egress/evidence.js",
+      "sha256": "82a4b931899d8f55e011591a9be7a286fc54f3861daf912efdb1b93ca73299d7"
+    },
+    {
+      "file": "lib/src/egress/executor.js",
+      "sha256": "7212950c00fbb33d6a202dc37e41c1a715a434f023146aefbfc58a4d09b37108"
+    },
+    {
+      "file": "lib/src/egress/file-tools.js",
+      "sha256": "e84229f3f00d58f70be738094d33efde3269a3af61a70b37ce5ee1afb043ffb4"
+    },
+    {
+      "file": "lib/src/egress/host-integration.js",
+      "sha256": "88de0f1d622b389b7ac934edd65ab9c2902c91b164fe9aceaddb43cdeda37774"
+    },
+    {
+      "file": "lib/src/egress/http-dispatch.js",
+      "sha256": "bcf93dd958d25c2866fcd5da4e56bb2df21d1f87d92b064b41fa6ebef032266f"
+    },
+    {
+      "file": "lib/src/egress/ledger.js",
+      "sha256": "9fde8945656183919e549e79dde7004dfe1650de4dea7bc0f2066c85953a6790"
+    },
+    {
+      "file": "lib/src/egress/manager.js",
+      "sha256": "1a685597f4eb5c0511fb4055ad19c9ef120eea7f4691cf284528786c959e548f"
+    },
+    {
+      "file": "lib/src/egress/mitm-addon.py",
+      "sha256": "1dc14cb97c51e2a148306a0c1799310fdda14b83cb06b79c736598da3694223e"
+    },
+    {
+      "file": "lib/src/egress/plan-presentation.js",
+      "sha256": "27f8826d21b710be647f00bb4b02e23c2b9862bc116b0fcfc7f1698863582dd5"
+    },
+    {
+      "file": "lib/src/egress/plan.js",
+      "sha256": "50b5474e78a6f3e08717c19a354dace33ba0f46ed67f8202131f2fba1648372b"
+    },
+    {
+      "file": "lib/src/egress/proxy-process.js",
+      "sha256": "d50ffd3d9c0212526588645f4f956d3e2999271c8f51dcf705bb377aff9efaf6"
+    },
+    {
+      "file": "lib/src/egress/public-lookup.js",
+      "sha256": "533847c6ccde612b641c7cdf9f4feea17dbb3c660d48c0e988597cd8181da47e"
+    },
+    {
+      "file": "lib/src/egress/runtime.js",
+      "sha256": "7ffedabd963fc0d93f1055f84bb2ae0da74c2d585c2deb0bc2ecd60f3b762544"
+    },
+    {
+      "file": "lib/src/egress/safety-plan.js",
+      "sha256": "4e9f748de7e6ecafdb9c6de4c7b7d056ee10b4c65f81b5e84d8852b9dcf9c8af"
+    },
+    {
+      "file": "lib/src/egress/scan-plan.js",
+      "sha256": "6ea31a3c554b9d97d2e106bb94ef53f4b59385326546be1bbb2eef06ec95598a"
+    },
+    {
+      "file": "lib/src/egress/scope.js",
+      "sha256": "d2459df22d34a96bc6796a8d40c8e616484270a3779b2a6641cff597f2bfcbb9"
+    },
+    {
+      "file": "lib/src/egress/task-tool.js",
+      "sha256": "cb4d5f2c70d2949dac0f3737daef04d1be0c60167fe5ee7ebf7e81b85b260503"
+    },
+    {
+      "file": "lib/src/egress/user-commands.js",
+      "sha256": "da1cfc6a118ec13cce2a8ad191f98a951c9176274f682a12ef886ef3dcd0f664"
+    },
+    {
+      "file": "lib/src/endpoint-manifest.js",
+      "sha256": "daeb3099cd3f28773bdd849668e6dd4ffaae3a8bd8e1acb260114647a6c8789f"
+    },
+    {
+      "file": "lib/src/event-store.js",
+      "sha256": "e31fce7e3d52e500a647301317576697cbfc4a87f7e1bb9479c7b92c925d1838"
+    },
+    {
+      "file": "lib/src/evidence-output.js",
+      "sha256": "094bae5ffbea0e7fa3b62f68ffa7229a9da045eaed83dc4050dc0c18c4b327c9"
+    },
+    {
+      "file": "lib/src/flags.js",
+      "sha256": "9d7e6af9e9afde6b4351db0bf116c2ed953807cd27c6e56b03c3e6de2ec13f29"
+    },
+    {
+      "file": "lib/src/http-output.js",
+      "sha256": "84a8feea638a723eb301ee571156b355805194da4587732b56d040d6d8ccf183"
+    },
+    {
+      "file": "lib/src/knowledge-revisions.js",
+      "sha256": "a9ff5d6752085fdb671047868a68f2822891f8f7144d078bbf728ac447b0b593"
+    },
+    {
+      "file": "lib/src/lessons.js",
+      "sha256": "9a57e6e0d3e4b32398ce6b72a19e6e647f664463d9bb476d6660ca612e749876"
+    },
+    {
+      "file": "lib/src/mutations.js",
+      "sha256": "67b2d149a8f73f146a9eb8404dff1f92d6ca615c62cc836d7c5e7a3511509f6e"
+    },
+    {
+      "file": "lib/src/openapi-index.js",
+      "sha256": "faa079fe177d74b24c786e44445452d5042ee6f43428455208b5546654d3eaf3"
+    },
+    {
+      "file": "lib/src/orchestrator/queue.js",
+      "sha256": "a7a2184d463f63b0af0060a9dbf1a57c62d28c6eb1168cb2f19ee73969a87192"
+    },
+    {
+      "file": "lib/src/orchestrator/recovery.js",
+      "sha256": "2c5e72ab26d0e32ddfe2cb159ace66cfd7c7567fb684d4f63bdcdbd9ff11a1e4"
+    },
+    {
+      "file": "lib/src/orchestrator/scheduler.js",
+      "sha256": "449f7b19815171ca2fbbfbee6664ff564c65be72c338fbee705905dea1bc0318"
+    },
+    {
+      "file": "lib/src/orchestrator/transitions.js",
+      "sha256": "9661d22215c86f212a4b03d58e42d929592c00a2ac7bf1398e7731b1daff22a1"
+    },
+    {
+      "file": "lib/src/playbooks.js",
+      "sha256": "212f8b3494aeaa75fd7fd33f0b481de38cf50ae175003ede780cd092be03899d"
+    },
+    {
+      "file": "lib/src/protocol.js",
+      "sha256": "eedf7964efe7e714054759482cd6abddf6c39ad88bde509ff1bd25e21e8179b6"
+    },
+    {
+      "file": "lib/src/repeat-guard.js",
+      "sha256": "d7ffb4a088a62e861feb015b8458ec01136f96d2b6f501b813a99e6fc404c38c"
+    },
+    {
+      "file": "lib/src/reporting.js",
+      "sha256": "130dad189967703771fd9917e5c507587c57348fcdc1e11ab6bbdcb9261882d7"
+    },
+    {
+      "file": "lib/src/request-rate.js",
+      "sha256": "d0157e5d764ba55a148b39d3ed18526ec2a21b2a7bee2d9f942816b44cfbdbe0"
+    },
+    {
+      "file": "lib/src/security.js",
+      "sha256": "baf65b5d6d96e0600aa66b0b803d508c127e84740847ec9f50e95e9ec160fad3"
+    },
+    {
+      "file": "lib/src/state.js",
+      "sha256": "71e99e8fde4b309bb36600093622cfb5902b3236783e6b30b85b43a833919f8e"
+    },
+    {
+      "file": "lib/src/store-projection.js",
+      "sha256": "4cd991f211a94536826220e2e668933b8337ea4bffbf6565d6aaf0c9e2b5e3d0"
+    },
+    {
+      "file": "lib/src/store.js",
+      "sha256": "6e231fe306ddbac9c9adfa5453dce176668b52e48a43e10f5e90b9b6945402f0"
+    },
+    {
+      "file": "lib/src/survey.js",
+      "sha256": "9565001e0464b65bbc5e575b90eaa9579951800c802a1ab53c9c2fffe07d60d5"
+    },
+    {
+      "file": "lib/src/telemetry/budget.js",
+      "sha256": "6f42dea2cc0adbfe4ce1572215dad1c74fa7af13182d494f92bfded85b2263d2"
+    },
+    {
+      "file": "lib/src/telemetry/events.js",
+      "sha256": "7d13a8fdb472be22c02ebab1c18f73cc7a93970e8597d77a3cc45bf312ea0f27"
+    },
+    {
+      "file": "lib/src/telemetry/sink.js",
+      "sha256": "78f6b6e423bfdeac34af9fffb899290c0a1bdeede8d0b77d9f2a240c90f63d70"
+    },
+    {
+      "file": "lib/src/tools/index.js",
+      "sha256": "6f5f1cecf9f11d87ebd2591a208df9f04be3e00ac81d1ccd7ed86e2e660cbbda"
+    },
+    {
+      "file": "lib/src/verification.js",
+      "sha256": "16b8abe632e96593b6f052be1c083abcae1f481ae908a564b11a7199a35c9a8c"
+    },
+    {
+      "file": "lib/src/web-search-provider.js",
+      "sha256": "fd6d147eeec6a25a7c47f7db718797201f78c8ce8a0abfd834af1e283b263925"
+    },
+    {
+      "file": "lib/src/write-executor.js",
+      "sha256": "a2242d0d94d40897bdccf756d8d4d588a8f5a9330244df3f53c2c51abf2aee17"
+    },
+    {
+      "file": "lib/src/write-safety.js",
+      "sha256": "14448e099b49f77eaac025f4ab9efe4fed19502e740a12e388d9f3e22b092705"
+    },
+    {
+      "file": "lib/storage-sqlite.js",
+      "sha256": "7dd8c406916793b0899d35b5885292fc168a094cc138fb80febf00da74329c52"
+    },
+    {
+      "file": "lib/types/index.js",
+      "sha256": "efc34ad8007e99f20dd342805dace7a25ea68d00c17f2c625b0f7d3224db9d81"
+    },
+    {
+      "file": "lib/types/invariant.js",
+      "sha256": "10b8f131b4fd789f266dc8dd93eee1457204eabd28a43adf14071559456890d4"
+    },
+    {
+      "file": "lib/ui-src.client.js",
+      "sha256": "e4db354f1bf7bb486cddfcd45edc2c0edf4c965fc0432a202b8d25197e639dda"
+    },
+    {
+      "file": "lib/ui-src.js",
+      "sha256": "a46945e906876b2222751f39e737018a2ebb8786af51ee7006241a0775281299"
+    },
+    {
+      "file": "package.json",
+      "sha256": "6bd80d1de582fd9dca5d55e8162b7870649a44a3745d50f4db0c4371a931d815"
+    },
+    {
+      "file": "cordis.patch.yml",
+      "sha256": "175c6db0f9b380755a1f4602be62b85a8b3b030dba62601dfd0a7212ea99e6ff"
+    },
+    {
+      "file": "preset/src-hunter/agent.cordis.yml",
+      "sha256": "bbda349f9ff0d45952407420456ea917803a4ebbf3605b02be42f52c49511361"
+    },
+    {
+      "file": "scripts/start-dsh-web.sh",
+      "sha256": "fd06c49a5457a1b5dc3df080cdc600b1dc93d5cea07f5f148d81765a9a0afa83"
+    }
+  ],
+  "productionStatus": {
+    "commandId": "cmd-934ecca2-1",
+    "result": {
+      "kind": "success",
+      "text": "{\"scope\":null,\"proxy\":{\"activeWorkerSlots\":0,\"maxWorkers\":4,\"reservedSessionPorts\":0,\"idleStopMs\":120000}}"
+    }
+  }
+}

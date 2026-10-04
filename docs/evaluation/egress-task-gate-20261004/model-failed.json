@@ -1,0 +1,46 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-session-vuQU2X",
+  "selection": {
+    "provider": "newapi",
+    "model": "hy4"
+  },
+  "execution": "real DSH model prompt",
+  "origin": "https://127.0.0.1:53346",
+  "proxy": "http://127.0.0.1:53348",
+  "limits": {
+    "seconds": 120,
+    "steps": 8,
+    "calls": 12
+  },
+  "scope": "task gate + real DSH shell + HTTPS; synthetic advisor and synthetic human decision",
+  "taskGate": {
+    "assessments": 1,
+    "claims": 0,
+    "finishes": 0,
+    "events": [],
+    "realJev": false,
+    "realHumanUI": false
+  },
+  "exit": 0,
+  "completion": {
+    "status": "completed",
+    "stopped": "",
+    "steps": 1,
+    "calls": 0,
+    "tokens": 0,
+    "model": {
+      "provider": "newapi",
+      "model": "hy4"
+    },
+    "sessions": [
+      "session-4581c8a7-2f9f-4b93-99d5-7f4b7bf703fa"
+    ]
+  },
+  "actualConfineCount": 0,
+  "toolResults": [],
+  "targetRequests": [],
+  "gatewayRequests": [],
+  "adminRequests": [],
+  "unixRequests": [],
+  "evaluationResult": "failed: provider rejected configured model hy4-preview (400 model_not_found); zero tool calls is not a gate pass"
+}

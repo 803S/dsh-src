@@ -1,0 +1,85 @@
+{
+  "passed": true,
+  "tls": true,
+  "metrics": {
+    "startupMs": 783,
+    "rssKiB": 86912
+  },
+  "assessments": 1,
+  "arrivals": [
+    {
+      "method": "GET",
+      "url": "/read",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "/jump",
+      "body": ""
+    }
+  ],
+  "evidence": [
+    {
+      "session": "probe",
+      "url": "https://127.0.0.1:57544/read",
+      "status": 200
+    },
+    {
+      "session": "probe",
+      "url": "https://127.0.0.1:57544/jump",
+      "status": 302
+    }
+  ],
+  "results": [
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '' -x 'http://127.0.0.1:57545' --cacert '/private/tmp/src-egress-ca-BjOBNs/ca.pem' -H 'User-Agent:' -H 'Accept:' 'https://127.0.0.1:57544/read'",
+      "status": 0,
+      "output": "HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 200 OK\r\nDate: Sun, 04 Oct 2026 15:10:21 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 9\r\n\r\nsynthetic"
+    },
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '' -x 'http://127.0.0.1:57545' --cacert '/private/tmp/src-egress-ca-BjOBNs/ca.pem' -H 'User-Agent:' -H 'Accept:' 'https://127.0.0.1:57544/read'",
+      "status": 0,
+      "output": "HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-src-gate: not-sent\r\nx-src-gate-reason: SRC_GATE_BUDGET_EXHAUSTED\r\ncontent-length: 25\r\n\r\nSRC_GATE_BLOCKED_NOT_SENT"
+    },
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '' -x 'http://127.0.0.1:57545' --cacert '/private/tmp/src-egress-ca-BjOBNs/ca.pem' -H 'User-Agent:' -H 'Accept:' -X DELETE 'https://127.0.0.1:57544/read'",
+      "status": 0,
+      "output": "HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-src-gate: not-sent\r\nx-src-gate-reason: SRC_GATE_REQUEST_NOT_APPROVED\r\ncontent-length: 25\r\n\r\nSRC_GATE_BLOCKED_NOT_SENT"
+    },
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '' -x 'http://127.0.0.1:57545' --cacert '/private/tmp/src-egress-ca-BjOBNs/ca.pem' -H 'User-Agent:' -H 'Accept:' -L 'https://127.0.0.1:57544/jump'",
+      "status": 0,
+      "output": "HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 302 Found\r\nlocation: /unapproved\r\nDate: Sun, 04 Oct 2026 15:10:21 GMT\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\nHTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\nx-src-gate: not-sent\r\nx-src-gate-reason: SRC_GATE_REQUEST_NOT_APPROVED\r\ncontent-length: 25\r\n\r\nSRC_GATE_BLOCKED_NOT_SENT"
+    },
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '*' 'https://127.0.0.1:57544/direct'",
+      "status": 7,
+      "output": "curl: (7) Failed to connect to 127.0.0.1 port 57544 after 0 ms: Couldn't connect to server\n"
+    },
+    {
+      "command": "/usr/bin/python3 -c 'import socket;s=socket.socket();s.connect((\"127.0.0.1\",57544))'",
+      "status": 1,
+      "output": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nPermissionError: [Errno 1] Operation not permitted\n"
+    },
+    {
+      "command": "/usr/bin/osascript -e 'tell application \"System Events\" to count processes'",
+      "status": 1,
+      "output": "36:51: execution error: 发生“-10827”类型错误。 (-10827)\n"
+    },
+    {
+      "command": "cat '/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/src-manager-probe-zPRLJu/control/src-egress/binding-key'",
+      "status": 1,
+      "output": "cat: /var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/src-manager-probe-zPRLJu/control/src-egress/binding-key: Operation not permitted\n"
+    },
+    {
+      "command": "printf first > local.txt; printf second > local.txt; rm local.txt; test ! -e local.txt",
+      "status": 0,
+      "output": ""
+    },
+    {
+      "command": "/usr/bin/curl --max-time 3 -sS -D - --noproxy '' -x 'http://127.0.0.1:57545' --cacert '/private/tmp/src-egress-ca-BjOBNs/ca.pem' -H 'User-Agent:' -H 'Accept:' 'https://127.0.0.1:57544/read'",
+      "status": 7,
+      "output": "curl: (7) Failed to connect to 127.0.0.1 port 57545 after 0 ms: Couldn't connect to server\n"
+    }
+  ]
+}

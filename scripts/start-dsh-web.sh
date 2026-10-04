@@ -31,22 +31,54 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 if lsof -ti tcp:3080 -sTCP:LISTEN >/dev/null 2>&1; then
   node "$SCRIPT_DIR/check-web-idle.mjs" || { echo "无法确认Web空闲，停止重启" >&2; exit 1; }
 fi
-# 幂等：旧进程在就杀掉（仅限本脚本拉起的）
-if [ -f "$PIDFILE" ]; then
-  OLD=$(sed 's/PID //' "$PIDFILE" 2>/dev/null)
-  [ -n "${OLD:-}" ] && kill "$OLD" 2>/dev/null && sleep 1
+# Only stop the verified DSH listener. A stale PID file is not process identity.
+OLD=$(lsof -ti tcp:3080 -sTCP:LISTEN 2>/dev/null | sort -u)
+if [ -n "$OLD" ]; then
+  COMMAND=$(ps -p "$OLD" -o command=)
+  case "$COMMAND" in
+    *dsh/lib/bin.js*web*) kill "$OLD" ;;
+    *) echo "3080 listener is not the expected DSH process; refusing to kill" >&2; exit 1 ;;
+  esac
+  for i in $(seq 1 40); do
+    lsof -ti tcp:3080 -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 0.25
+  done
+  if lsof -ti tcp:3080 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "DSH did not stop; refusing overlapping startup" >&2; exit 1
+  fi
 fi
-# 兜底：3080 端口残留进程
-lsof -ti tcp:3080 -sTCP:LISTEN 2>/dev/null | xargs kill 2>/dev/null; sleep 1
 
 # local.106: browser-index decisions use the global Jev service. Do not auto-start
 # or terminate unrelated legacy localdecide processes here; MCP execution is unchanged.
 
 cd ~/.dsh/profiles/web
-nohup dsh web > "$LOG" 2>&1 &
-NEW=$!
+# A detached session survives the invoking terminal/agent process group closing.
+NEW=$(node --input-type=module - "$LOG" <<'JS'
+import { spawn } from 'node:child_process';
+import { openSync, closeSync } from 'node:fs';
+const fd=openSync(process.argv[2],'w');
+const child=spawn('dsh',['web','--no-open'],{detached:true,stdio:['ignore',fd,fd],env:process.env});
+child.once('error',error=>{console.error(error.message);process.exitCode=1;});
+child.once('spawn',()=>{console.log(child.pid);child.unref();closeSync(fd);});
+JS
+) || exit 1
 echo "PID $NEW" > "$PIDFILE"
-sleep 4
-CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3080/management.html)
+CODE=000
+for i in $(seq 1 40); do
+  CODE=$(curl --max-time 2 -s -o /dev/null -w "%{http_code}" http://localhost:3080/management.html) || CODE=000
+  [ "$CODE" = 200 ] && break
+  kill -0 "$NEW" 2>/dev/null || { echo "DSH exited during startup; see $LOG" >&2; exit 1; }
+  sleep 0.5
+done
+[ "$CODE" = 200 ] || { echo "DSH readiness timed out; see $LOG" >&2; exit 1; }
+# Static HTML can be ready before the RPC router finishes mounting.
+API_READY=0
+for i in $(seq 1 40); do
+  if node "$SCRIPT_DIR/check-web-idle.mjs" >/tmp/dsh-web-health.log 2>&1; then API_READY=1; break; fi
+  kill -0 "$NEW" 2>/dev/null || break
+  sleep 0.5
+done
+[ "$API_READY" = 1 ] || { cat /tmp/dsh-web-health.log >&2; echo "DSH API health check failed" >&2; exit 1; }
+cat /tmp/dsh-web-health.log
 echo "event_store=$DSH_SRC_EVENT_STORE telemetry=$DSH_SRC_TELEMETRY state=$DSH_SRC_STATE_VERSION orch=$DSH_SRC_ORCHESTRATOR route_v2=$DSH_SRC_ROUTE_V2"
 echo "http://localhost:3080/management.html -> $CODE (PID $NEW, log $LOG)"

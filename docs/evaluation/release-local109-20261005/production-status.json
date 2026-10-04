@@ -1,0 +1,17 @@
+{
+  "sessionId": "session-631181cd-b423-47d6-923f-dec9762019af",
+  "names": [
+    "src-approve",
+    "src-egress-reconcile",
+    "src-egress-review",
+    "src-egress-scope",
+    "src-egress-status"
+  ],
+  "status": {
+    "commandId": "cmd-d623bf34-1",
+    "result": {
+      "kind": "success",
+      "text": "{\"scope\":null,\"proxy\":{\"activeWorkerSlots\":0,\"maxWorkers\":4,\"reservedSessionPorts\":0,\"idleStopMs\":120000}}"
+    }
+  }
+}

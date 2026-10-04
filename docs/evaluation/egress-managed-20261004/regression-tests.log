@@ -1,0 +1,476 @@
+npm notice run @lihua_dis/dsh-src@0.1.0-local.108 test
+npm notice run node --test tests/egress-gate.test.mjs tests/src.integration.test.mjs tests/browser-loop.test.mjs tests/blind-eval.test.mjs tests/laya-keyless.test.mjs tests/project-defects.test.mjs tests/laya-wait.test.mjs tests/laya-repair.test.mjs tests/jev-service.test.mjs tests/jev-policy.test.mjs tests/quality-contracts.test.mjs
+✔ blind fixture: discoverable navigation separates private response, public data and 200 negative (33.833917ms)
+✔ blind guard: deny shell, filesystem, external origin, other loopback ports and auto-approval (0.449208ms)
+✔ blind scoring: timeout is unevaluated, never a negative vulnerability verdict (0.298167ms)
+✔ browser adapter creates conservative indexed candidates from snapshot (0.78425ms)
+✔ browser adapter extracts MCP content and keeps fingerprints stable (0.738917ms)
+✔ browser hard guard rejects stale and illegal actions (0.40725ms)
+✔ browser adapter uses the existing Playwright MCP names (0.102709ms)
+✔ browser telemetry is lossless enough and sink failures do not block (2.452709ms)
+✔ browser loop delegates every action to the host executor and falls back safely (0.408917ms)
+✔ browser loop reports action errors without pretending success (0.143416ms)
+✔ browser loop stops on snapshot errors without executing an action (0.212875ms)
+✔ canonical requests preserve query, body bytes and every semantic header (1.251292ms)
+✔ scope and budgets cannot be widened or default to unlimited (0.356083ms)
+✔ Jev plan decision is conservative: {} (1.636791ms)
+✔ Jev plan decision is conservative: {"mode":"off"} (0.509375ms)
+✔ Jev plan decision is conservative: {"mode":"shadow"} (1.331417ms)
+✔ Jev plan decision is conservative: {"fallback":true} (0.472ms)
+✔ Jev plan decision is conservative: {"risk":"unknown"} (0.373083ms)
+✔ Jev plan decision is conservative: {"risk":"high"} (0.327333ms)
+✔ Jev plan decision is conservative: {"effect":"write"} (0.329125ms)
+✔ Jev plan decision is conservative: {"action":"pending"} (0.326709ms)
+✔ Jev plan decision is conservative: {"confidence":0.89} (0.305125ms)
+✔ Jev plan decision is conservative: {"confidence":null} (0.315709ms)
+✔ Jev errors become pending; mutation of advisor/input/returned views cannot change a grant (0.87425ms)
+✔ hard boundary overrides Jev: {"url":"https://fixture.invalid/%64elete?id=1"} (0.338459ms)
+✔ hard boundary overrides Jev: {"url":"https://fixture.invalid/run?operation=reset"} (0.261ms)
+✔ hard boundary overrides Jev: {"method":"DELETE"} (0.252666ms)
+✔ hard boundary overrides Jev: {"method":"PUT","bodyBase64":"PHgvPg=="} (0.25125ms)
+✔ hard boundary overrides Jev: {"method":"POST"} (0.237958ms)
+✔ hard boundary overrides Jev: {"headers":[["Authorization","Bearer secret"]]} (0.333959ms)
+✔ one plan assessment, exact checks on every send; no redirected path/body/header inheritance (1.098125ms)
+✔ rate/concurrency shared across tasks and sessions; failure does not refund budget (0.938125ms)
+✔ human decision bound to session + task + immutable digest, one use, no self approval API (1.81925ms)
+✔ human reject cannot be laundered through an existing or new automatic task (1.995792ms)
+✔ authorization invalidation: expires (1.335125ms)
+✔ authorization invalidation: scope (1.015375ms)
+✔ authorization invalidation: credentials (0.545167ms)
+✔ authorization invalidation: origins (0.336167ms)
+✔ authorization invalidation: revoke (0.336ms)
+✔ scope changes during Jev do not authorize stale plan; cancellation never grants (0.510208ms)
+✔ crash/restart invalidates tasks, preserves uncertain request denial; DB has no secrets (3.445542ms)
+✔ unknown outcome freezes task and blocks same request in later task (0.605709ms)
+✔ full-access final spawn still network-confined; native file profile preserved; unsupported platform fails closed (0.25325ms)
+✔ human click cannot bypass missing write backup/recovery executor integration (0.388875ms)
+✔ proxy control API binds session/task on server, cannot approve or finish another proxy dispatch (44.202667ms)
+✔ manager low read sends once; spent grant never triggers reassessment/replay (23.038375ms)
+✔ manager human single read executes frozen bytes once; rejects model replay (24.072583ms)
+✔ manager dangerous single cannot be clicked through without safety; supersession never reassesses (17.454625ms)
+✔ manager scope changes invalidate pending execution but review remains actionable (30.58875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ manager shutdown during assessment publishes no approval and sends nothing (17.635083ms)
+✔ host/child shared store closes only after last owner; later owner reopens (0.366625ms)
+✔ hazardous GET cannot become a scan grant through human batch approval (0.507584ms)
+✔ local file adapter confinement opens no network port and needs no TLS proxy (0.051583ms)
+✔ proxy idle eligibility preserves unspent live tasks but not exhausted or expired leases (0.51825ms)
+✔ cold restart invalidates approval; reconciliation cannot restore automatic authority (17.448083ms)
+✔ uncertain host execution is one-shot; user reconciliation requires evidence and fresh approval (269.152625ms)
+✔ expired unused active task can be reconciled without reviving its grant (0.653666ms)
+✔ IPv6 scope rejects special/tunnel/documentation ranges including expanded notation (1.277541ms)
+✔ actual DELETE and conflicting PUT/PATCH cannot inherit read-only authorization (1.070042ms)
+✔ Jev execution contract: low impact allows generic POST; errors/high/unknown/contradiction require human even for GET (0.348459ms)
+✔ Jev settings are global, private, atomic, mask keys, and require key on provider-origin change (28.700166ms)
+✔ Jev direct Skill mapping, remote credential removal, warm cache, config/key/model invalidation (17.444959ms)
+✔ Jev one-shot errors remain neutral; no automatic retry or Laya fallback (10.443875ms)
+✔ Jev timeout/cancellation returns neutral and explicit remote operation classification never grants execution (1008.03175ms)
+✔ Jev refuses redirects so authorization cannot leak to a second endpoint (21.6495ms)
+✔ Jev control-plane commands suppress input recording and never return keys (2.380916ms)
+✔ Jev Browser candidate seam uses selected endpoint; none/off/shadow never clicks (4.851084ms)
+✔ scan-plan evaluates every exact entry once, strips credentials/body secrets, returns risk contract (2.348459ms)
+✔ local.100 keyless search provider parses public result pages without API key (15.129625ms)
+✔ Laya does not perform high-level next-action planning (0.779709ms)
+✔ local.100 browser-index uses laya-browser-agent System One endpoint shape (0.396083ms)
+✔ local.100 keyless search provider supports Bing and Baidu parser shapes (0.596375ms)
+✔ local.101 keyless search provider honors an explicit engine without fallback (0.157ms)
+✔ local.101 keyless search reports per-engine diagnostics (0.236333ms)
+✔ local.101 OpenAPI index extracts bounded routes without exposing the full document (0.620791ms)
+✔ local.100 keyless search provider fails over from blocked engine (0.298334ms)
+✔ host dispatch: advisory shadow/on never becomes execution; spawn uses effective route; explicit recovery preserves lineage (158.193458ms)
+✔ knowledge library loads real files; document version/source identity; failures not cached; Chinese semantics retained (49.372542ms)
+✔ Laya strict output, raw local inputs, cancellation and exact advisory cache isolation (48.414542ms)
+✔ host Skill recommendation -> read -> real dispatch -> evidence; no duplicate inference and no Laya approval bypass (849.559458ms)
+✔ host child lifecycle: failure is not completed; real checkpoint supersedes lifecycle notifications (113.2675ms)
+✔ Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, pending cannot replay itself (641.485041ms)
+✔ regression 3291: child credential evidence goes to engagement; bad IDs and asset enums are actionable (2015.91675ms)
+✔ regression 3291: resident child turn error marks failed before subagent/end (96.72875ms)
+✔ research records for different findings do not overwrite each other (67.751042ms)
+✔ rejected findings are excluded from finalize verification and report (91.461292ms)
+✔ Laya waits past the former 800ms cap and does not skip requests after failures (1135.890375ms)
+✔ scan output exposes all accepted rows and distinguishes omitted inputs (1.056834ms)
+✔ approval explanation describes actual operation without endorsing model promises (0.93675ms)
+✔ committed coverage replaces provisional IDs and restores calculated counts (2.537208ms)
+✔ rate limiter shares start slots across concurrent callers (231.308791ms)
+✔ fd2a audit: URL credential redaction never consumes adjacent JSON fields (0.626417ms)
+✔ project defect guard: body words and endpoint patches cannot waive approval (0.533292ms)
+✔ project defect guard: search parser rejects generic Google feedback navigation (1.558625ms)
+✔ project defect guard: pattern shape permits abstract terms but rejects target paths (0.386167ms)
+✔ project defect guard: Laya risk prompt sees actual api-key auth headers (0.679041ms)
+✔ project defect guard: failed approval resolution restores pending projection (0.1765ms)
+✔ project defect guard: human approval grant is scoped and one-shot (0.185042ms)
+✔ project defect guard: identical unchanged tool calls stop after bounded retries (0.174917ms)
+✔ project defect guard: failed finding tool result rolls back only this call's finding (5.970416ms)
+✔ guarded JSON write validates freshness, reads back once and never retries on readback failure (16.818458ms)
+✔ committed store IDs survive concurrent facts, coverage, failures and cold replay (17.060833ms)
+✔ manifest canonical IDs, evidence binding and cross-method negatives (0.465542ms)
+✔ restricted original snapshots survive redaction and reject partial PUT/cross-session reuse (8.650708ms)
+✔ approval decision is durable, actual execution once, uncertain failure never blind-replays (1.460625ms)
+✔ knowledge supersession keeps original evidence but removes false current recall (3.205833ms)
+✔ independent review invalidates when a finding changes (0.1415ms)
+✔ artifact verification hashes actual files and detects later corruption (14.219083ms)
+✔ unrelated search snippets are not accepted as successful CVE retrieval (0.212375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ panel approval dispatch uses stored request and records execution without a model round trip (51.936334ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ SRC workflow persists, deduplicates checkpoints (71.829791ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ goal records scope details in objective (9.256583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ finalize engagement reports blockers and supports documented interruption (84.052625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ asset observations, research matrix, and coverage survive state and report (35.209583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ finding delivery requires complete SRC report fields (28.183209ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ references and child-only submission boundaries are enforced (18.46725ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ invalid child batches are rejected before any row is written (23.211459ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ surface scanning stops before paths when protection is detected (316.473458ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_passive records passive hints and coverage (3347.171292ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_passive promotes OpenAPI and GraphQL metadata into endpoint assets (2931.73675ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_passive creates planned coverage skeletons for discovered API endpoints (3054.829167ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ finalize engagement warns on discovered API endpoints with no follow-up (3104.459ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_passive stops on protection before collection (18.980625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_test_bypass performs a bounded baseline→variant differential and records evidence (2041.497709ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_test_bypass stops on protection without commander force (1997.169875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ session state remains isolated and goal reset clears only its owner (58.634209ms)
+✔ projection replay mirrors semantic deduplication (2.5115ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ full SRC engagement end-to-end: scope → passive → research → coverage → bypass → finalize → report (5754.829333ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ finalize allowIncomplete without reason throws; reason lands in report declaration (48.884375ms)
+✔ legacy src_record_recon/src_record_asset_observation events still replay in projection after tool removal (1.5095ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ finalize downgrades info/low-only findings to warning (SRC accepts real-harm low findings) (42.447666ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_test_credential performs bounded credential verification and records hit (3840.126708ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_test_credential stops on captcha unless bypass noted (1998.426084ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_record_observation and src_user_todo lifecycle (46.524083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_dorks generates five-category queries and records facts (25.278084ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_dorks rejects out-of-scope domains (19.865416ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_import_traffic parses HAR, records full auth profiles and skips out-of-scope (22.022417ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_import_traffic mcp mode consumes pre-fetched flows (16.100917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ 报告输出 7 字段含 entryPoint/discoveryPath/raw 请求/响应 + finalize rawRequest 门禁 (122.233ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_collect_passive 识别 AI 站点并落 ai-surface 资产 + 研究骨架 (2973.457583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ checkpoint 记录 decision 决策理由（时间线决策字段） (26.011458ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ projection 回放 observation/user_todo 并在 view 输出（UI 数据面） (22.9625ms)
+✔ [local.56] 存量缺键事件不再炸历史加载：无凭据挂起审批过 srcProjectionSchema (2.555291ms)
+✔ [local.33] fold src_auth_budget：计数落 state，非法参数忽略，跨 goal 保留 (0.13875ms)
+✔ [local.33] fold src_domain_notes_snapshot：快照替换 domainNotes，脏行过滤 (0.094125ms)
+✔ /src-todo feedback parser validates id/status and keeps note (0.16375ms)
+✔ [local.26] /src-reject panel command: validates findingId/reason and relays to agent via followup (mirror of /src-todo) (1.415916ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.9] parseGoalHost: dirty target normalized at src_add_goal and all URL tools (8.261917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.9] parseGoalHost rejects unparseable targets with actionable error; src_set_goal_target fixes in place (22.771542ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.9] src_record_coverage treats empty assetId as absent instead of throwing (7.421542ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.9] src_state output includes observations/userTodos/infra without schema rejection (7.307708ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.9] infra settings: defaults, setInfra validation, projection fold and view resolution (8.169458ms)
+✔ observation projection carries truncated response headers/snippet for the timeline (0.128792ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.11] panel commands: /src-infra direct-writes storage + synthetic event; probes registered; burp TCP pre-check gates the AI relay (6.444625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.13] burp SSE handshake probe: closed port fails fast; live SSE endpoint passes without AI (9.893417ms)
+✔ [local.13] src_fetch_policy fetches and strips HTML; finalize warns on pending todos and thin impact (40.50775ms)
+✔ [local.14] /src-infra-copy copies latest other session's infra overrides; no source -> friendly message (1.937833ms)
+✔ [local.15] finalize 受限完成声明后 src_state/src_graph 输出仍是 lossless JSON（undefined 属性被剥离） (37.265291ms)
+✔ [local.15] 智能代理路由：非名单域名直连、名单域名走代理 (3.490167ms)
+(node:88074) Warning: Setting the NODE_TLS_REJECT_UNAUTHORIZED environment variable to '0' makes TLS connections and HTTPS requests insecure by disabling certificate verification.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:88074) [DEP0123] DeprecationWarning: Setting the TLS ServerName to an IP address is not permitted by RFC 6066. This will be ignored in a future version.
+✔ [local.64] legacy TLS 重协商降级：报错后自动用 SSL_OP_LEGACY_SERVER_CONNECT 重试一次 (4151.894917ms)
+✔ [local.64] 投影待办 id 与 store 同源：合成事件带真实 id；无 id 新建回退 userTodo- 前缀；更新按 id 命中不再静默丢失 (0.587042ms)
+✔ src_recover_child 无 checkpoint 仍可唤醒；入队不冒充恢复成功 (52.642875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.16] src_update_finding 重写字段：store 直写 + fold 投影同步 + 标题冲突拒绝 (7.417208ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.25→67 #11b] finding 准入闸：low 未授权可达+PoC 即入库（三要素降为升危依据），medium+ 仍要三要素 (6.847125ms)
+✔ [Phase 0.5] 子代理路径：src_submit 提交三要素全缺的 low finding 入库（#11b 语义贯通） (4.452167ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [Phase 2] src_state v2 结构化视图 + src_get_evidence：索引化省 token，finding 证据永不裁剪 (13.285042ms)
+✔ [local.16] buildReport 双视角呈现：有 victimImpact 输出两行；缺失时给占位提示；finalize 缺 victimImpact 警告 (8.515666ms)
+✔ [Phase 8] pattern lesson 四列、形态校验、同型去重与目标特征召回 (7.005375ms)
+✔ [local.16] src_record_lesson/read/search：沉淀合并更新 + goal 索引注入 + finalize 未沉淀警告 (13.342ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.16] src_serve_proof/src_stop_serve 生命周期：HTTP 托管 + 访问日志 + TTL 上限 + 跨会话隔离 (7.884959ms)
+✔ [local.16] src_update_finding 投影折叠：UI 视角（viewSrcState）字段重写/校验拒绝/asset 关联解除 (0.319083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.17] 委派子代理执行类工具沿 parentSession 链解析 goal/infra/intent（fork 场景修复） (1015.079666ms)
+✔ [local.17] 无链上 goal 时报错文案保持不变（orphan 子代理） (3.568625ms)
+✔ local.17: src_submit 省略 findings/assets 不再报 invalid arguments (13.929084ms)
+✔ [capability] src_list_capabilities 读取清单并对照 patch 接线区段 (17.17975ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [capability] parseCapsYamlSubset 容错与折叠块 (3.072333ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.20] finalize 收官三闸：blocked 无待办拦截 + 待办关联豁免 + 报告不含待办（local.82 瘦身后） (13.997875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.20/68] finalize remainingDirections 必填：缺失抛错、非空逐条警告（#6 折中后不拦截）、空数组零噪音 (12.354708ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.22] blindSpots 覆盖维度声明闸：缺项/无证据/信号派生/报告渲染 (12.4525ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.22] blindSpots schema 校验：非法 status 被框架拒绝 (3.949459ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.23/54] testAccounts 列表：登记/去重/投影/凭证库引用/向后兼容单值 (3.743167ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.23] 认证预算：src_test_bypass 计数 + budgetExhausted 软信号 + 401 连发 sessionLikelyExpired (2020.029791ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.24] 域笔记：登记/去重/跨会话积累 + src_add_goal priorContext briefing (21.662417ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.24] 域笔记查看通道：src_list_domain_notes 只读清单 + src_state 投影 (7.442ms)
+✔ [local.26] classifyHttpRequest 拦截红线：closeAccount GET+token+他人 id → 破坏性写入挂 (0.455833ms)
+✔ [local.26] classifyHttpRequest 越权：有 token + 写方法 + 他人资源 id → 越权删改挂 (0.207875ms)
+✔ [local.26] classifyHttpRequest 未授权删改：无 token + 写方法 + 非读语义 path → 挂 (0.051792ms)
+✔ [local.26] classifyHttpRequest 放行：自己 token + 自己资源 id 的小写写不误报越权仍挂（代价可接受） (0.0475ms)
+✔ [local.26] classifyHttpRequest 放行：强读语义 path + 未授权探测 → 放行（白名单） (0.084291ms)
+✔ [local.26] classifyHttpRequest 不误伤：preset 不命中 reset、enclose 不命中 close (0.046459ms)
+✔ [local.26] classifyHttpRequest 破坏性词作为 GET 也挂：cancelOrder/deleteUser (0.059917ms)
+✔ [local.26] classifyHttpRequest SMS 发包（软约束）：GET + 无 token + 读语义放行（设计可接受） (0.042875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.26] src_http 放行读请求直接转发到本地 mock 服务器 (8.209125ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.26/31] src_http 破坏性请求挂起待审——拒绝则不发出（mock 收不到请求） (15.881541ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.26/31] src_http 越权删改挂起——批准后才转发（mock 收到一次） (19.484625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.26/31] src_http 无审批服务仍能挂起为 pending（异步队列不依赖 ctx.approval） (7.620959ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.54] src_http credentialRef：放行请求注入认证头 + 挂起待审脱敏存储 + 批准重放凭据重注入 (520.186916ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.26] src_http 目标越界（非授权 host）抛错 (10.220666ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.43] 资产清单即许可：src_add_asset 登记后探测放行（含子域/URL 形态值），excluded 不放行 (615.261667ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.43] src_state 输出 assetScope（schema 同步）+ 资产大小写不敏感合并升状态 + dorks 双向覆盖 + lossless (24.646666ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.44] src_request_asset_confirm：挂队待审 + 同域去重 + goal 内/已覆盖/已否决跳过 + lossless (7.225083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed 闸放行 / reject→excluded），src_resolve_approval 工具禁自批 (140.784208ms)
+✔ [local.44] assetScope.byStatus 状态分布 + finalize 未决归属确认软警告 (22.976584ms)
+✔ [local.45] domain() 打开失败后自愈：清实例级 rejected promise，下次调用重新 open（不永久卡死） (3.181333ms)
+✔ [local.45] legacy 资产 method 归一化：domain open 能加载旧版自由文本记录（active→authorized-active） (0.722542ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事件 callId 唯一 (9.723ms)
+✔ [local.57] 子代理 src_add_asset 实时合成父投影事件：fold 父日志与 store 资产对齐 (8.751333ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [capability] 收编链路：wx-minapp-recon 清单可见 + SKILL.md 可读含登录待办引导 (5.745833ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.57] src_fetch_policy SPA 空壳/短响应给出能力清单引导，正常正文不给提示 (4.167667ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.57] src_add_intent 锚点缺失自动锚到当前 goal，无 goal 指路 src_add_goal (10.195625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.58] fold 层锚点自愈：无锚点 intent 收下并级联恢复 fact，两锚点同传/无 goal 仍丢弃 (4.8045ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.58] attackPrerequisites schema 可选：漏传不再被宿主拦截，由 store 准入闸给出指导性报错 (4.24425ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.58] 子代理挂起/解决审批实时合成父投影事件 (10.737375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.58] finalize blindSpots 误用 category 键自动映射为 dimension (7.332167ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.57] src_add_goal 返回 capabilities 盘点（无清单时缺省） (6.995917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.47] 域往返：全流程落库记录全部通过开盘 schema（ASSET 待审行含 method=ASSET） (3.657208ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.31] src_http 同请求去重复用既有 pending（不堆队列） (8.386792ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.31] src_http 挂起发 src_record_pending_approval 合成事件→投影出现待审节点 (6.498375ms)
+✔ [local.31] src_resolve_approval 幂等：已 approved/rejected 不可重复审批 (13.044125ms)
+✔ [local.26] src_reject_finding 置 status=rejected + 备注；相似 title 二次提交被闸拒绝 (8.105833ms)
+✔ [local.26] src_update_finding 补 attackChain；报告渲染攻击链叙事节 (5.572709ms)
+✔ [local.27] pocScript 以代码块渲染保留缩进；rawRequest 代码块保留缩进 (4.607334ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.30] 垂直攻击链①到⑤ + app 资产应用下载行 + 前端功能点（纯 mock） (4.32725ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.32] 报告节完整性：UI reportOf 与服务端 buildReport 节标题集合一致（双渲染漂移闸） (3.04775ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.32] src_http 软速率帽：连续放行请求发送间隔 ≥250ms 且不拒绝 (261.474917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.32] src_add_goal 默认沿用上次会话基础设施（显式设置不被覆盖） (18.911666ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.32] scan_surface 遇 401 不算风控：继续扫完且 protectionSignal 不置真 (211.325083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.33] src_test_bypass 认证请求后发 src_auth_budget 合成事件 (3030.590042ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.33] src_add_goal / src_record_domain_note 推送域笔记快照事件（跨会话可见） (13.661917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.34] 工具输出 schema 一致性闸：零参工具输出键 ⊆ 声明属性（fresh + 含待审/笔记/待办的会话） (25.528667ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.35] finalize 域笔记沉淀闸：有目标特有信号零笔记 → 警告；记过/无信号 → 无警告 (23.245583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_state flags orphan running intents (no checkpoint / stale progress) with actionable hints (7.486334ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ src_state does not flag fresh progress checkpoints as orphans (7.057208ms)
+✔ src_state orphanIntents renders actionable guidance (4.031917ms)
+✔ [local.41] caps-sync v2: skill 型安装 + index.json 生成 + patch 只接 mcp 型 + 校验 (249.821833ms)
+✔ [local.41] src_list_capabilities 读 index.json 并渲染 skill 状态与白名单 (2.930208ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.41] src_run_capability：goal 闸/mcp 拒绝/白名单闸/挂起待审/同参去重 (13.403917ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.41] src_resolve_approval allow 执行 RUN 脚本返回 runOutput；reject 不执行；超时 SIGKILL (461.260041ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.41] src_read_capability：docs 探测/指定文件/穿越拒绝/未安装拒绝 (8.887875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.42] intent priority：建链带优先级、单独调整、src_state 输出行携带 P 标记 (11.661125ms)
+✔ [local.42] deprecated：planned 可废弃；completed 拒绝；finalize 不阻塞且出警告 (10.686ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.42] lossless 边界：src_list_capabilities（skill+mcp 条目）输出零 undefined 键 (3.5135ms)
+✔ [local.42] lossless 边界：src_state 孤儿巡检（无 checkpoint 分支）输出零 undefined 键 (6.566666ms)
+✔ [local.48] caps-sync run(): 超时 SIGTERM 返回 code -2/timedOut，正常命令不受影响 (313.855583ms)
+✔ [local.48] serializeCapabilityEntry/appendCapabilityEntry：序列化、守卫重解析、重复 id、垃圾清单 (1.828958ms)
+✔ [local.48] deriveCapId/resolveFrom：显式直通、离线回退 git、npm 包名、非法输入 (2.430792ms)
+✔ [local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 重试安全、proxy 持久化、lossless、清单可见 (284.263375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ 合成投影事件白名单闸 [local.49] (1.117667ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ 子代理状态观察：运行时目录优先、checkpoint 兼容回退 (9.465375ms)
+✔ clown-src 专题自动路由：intent/store/projection/state 四处一致 (4.792459ms)
+✔ 单一 mutation API 保持 store/event/projection 三账本一致 [local.50b] (0.124458ms)
+✔ [local.101] credentialHeaders 支持 api-key/x-api-key 审批重放头 (0.072166ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.54] credentials 模块：指纹写入/读回校验/脱敏/头解析 (1.418292ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.54] snapshot 深层 undefined 剥离 + 域笔记渲染不出现 undefined (5.954333ms)
+✔ [local.54] src_set_infra testAccount 明文自动入凭证库（infra 只存 credentialRef） (2.943375ms)
+✔ 工具清单与注册顺序冻结 [local.50a 前置闸] (1.089875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ 测试会话 id 规范 [local.49] (0.613292ms)
+✔ [local.60] 投影分级裁剪：finding/intent 不裁、fact 超 500 裁最老、edges 同步清理 (8.895916ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.60] src_user_todo 更新模式不再强制 title（schema+execute+fold 三层） (3.189167ms)
+✔ [local.60] src_http 挂起写审批锁，resolve 清锁 (13.905042ms)
+✔ [local.60] burp 桥审批绕行硬闸：命中锁拒绝转发，未命中放行 (30.826667ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.68 #1] 触发器引擎已拆：旧触发器声明在场也不自动挂待办、无 orchestration 输出 (3.482834ms)
+✔ [local.62] 决策点经验注入：lesson triggers → src_add_intent/finalize 返回带 lessonHints (8.332083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.62] src_record_lesson 声明触发器 → meta 落盘 → 后续决策点可命中 (5.238625ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.65] goal 创建不再机械挂覆盖待办（枚举归 agent，待办归真用户动作） (3.736208ms)
+✔ [local.63] src_state assetGaps：核心四类机械缺口（对照已登记资产） (2.490709ms)
+✔ [local.63] scope 确认经验：关键词命中注入（工具不命中零噪音） (2.17325ms)
+✔ [local.66] recon/audit toolFilter 不得 deny src_scan_surface（prompt 与工具面对齐） (0.228208ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 靶场] 基建烟测：四类端点行为符合设计（415/写入回读删除/敏感返回/大响应） (3.901834ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #17-④] Content-Type 自动补全硬闸：JSON body 未带头自动补（放行 200），非 JSON 不补（415 保留） (262.488375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #17] 响应体透传：敏感端点 body 可见 + 截断 2KB + full 强制完整 + 二进制只回长度 (768.467083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #17] 响应哈希去重：同 host+method+path 完全相同响应第二次只回 hash；full:true 强制；不同响应不误吞 (1021.931541ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #17] 凭证掩码：echo 回显的认证头值与 Bearer 形态均打 <stored>，不落会话明文 (268.402083ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #17] 重放透传（主修点）：未授权写挂起→allow 重放→responseBody 可见+落库+投影同步 (27.881458ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #18] negative/blocked 落盘返回值强制带自查清单；hypothesis/testing 不带 (16.421209ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.67 #12] src_state 事实分级：只出最近 24 条与 P≥8 意图下的，其余计数+src_graph 指引；finding 素材永不省略 (13.902667ms)
+✔ [local.82] src_report 交付物瘦身：事实 dump 不进报告（探索链路节已撤，#12 预算分级随之作废） (10.677916ms)
+✔ [local.67 #10] 防再膨胀预算：协议 ≤8k 字符 + 工具级 description 合计 ≤15k + 小节名查重 (1.412541ms)
+✔ [local.68] lesson hook：有 hook 的内置经验渲染一句话打法钩子，沉淀经验保持原格式 (3.598833ms)
+✔ [local.68] lessons 防再膨胀预算：内置合计 ≤20k 且逐篇 ≤ 预算 (0.832583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.68 #20] scan_surface 前缀分簇：多簇+跨前缀提示触发多后端注脚；单簇零噪音 (1775.902ms)
+✔ [local.68 #19 尾款] 靶场端到端产出：未授权可达端点探测→finding≥1（未授权类）→verify→finalize 全链路 (27.318791ms)
+✔ [opt Phase 0] 优化开关：默认值正确、非法值回落、env 惰性求值 (0.339708ms)
+✔ [opt Phase 1] telemetry 模块：预算截断、emit 永不抛（循环引用）、off 不落盘、sink 失败被吞、惰性目录 (0.616875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [opt Phase 1] telemetry wiring：route/evidence/submit.checkpoint/intent.completed/finalize 全链路落 JSONL (181.724125ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [opt Phase 1] telemetry：src_http http.request（直发+审批重放）/approval.waiting/resolved (349.274208ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [opt Phase 1] telemetry：skill.read（capability-doc）+ capability.requested/outcome (113.767666ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [opt Phase 1] telemetry：sink 目录不可写不阻塞工具路径（观测旁路红线） (14.55875ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [opt Phase 1] telemetry：DSH_SRC_TELEMETRY=off 完全不落盘 (33.190917ms)
+✔ [opt Phase 3] transitions 状态机：表外迁移拒绝、终态零出边、非法输入拒绝 (0.371417ms)
+✔ [opt Phase 3] scheduler/recovery 纯函数：五类建议、幂等去重、orphan 30min 规则 (0.841708ms)
+✔ [local.85] intent 收尾自动落 coverage 行 + 审批批准后自动建推进待办 (9.1375ms)
+✔ [local.86] B1 悬空项回注：先前会话 pending/abandoned 待办+planned intent 进 priorContext.pendingItems 且封顶≤10 (18.060709ms)
+✔ [opt Phase 3] src_state 观测点：shadow 发建议事件 + orchestration 视图附 shadowSuggestions；off 零开销 (29.373542ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.73 Phase 4] contract test：finding/approval/finalize/scope 四类冲突服务端 gate 优先（不依赖 prompt 文本） (8.856333ms)
+✔ [local.75 Phase 5] manifest 17 路由完整元数据 + score 打分 + v2 与 legacy keys 一致 (0.55825ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.75 Phase 5] route shadow evaluator：人工标注集 precision/recall + telemetry candidates 落盘 (51.977875ms)
+✔ [local.76 Phase 6] capability-loader 拆分完整导出 + prompt token 占比 −40% 验收 (0.7575ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.77 §10] 事件落盘先 append 后快照 + 幂等键去重 + off 零新增写入 (14.324375ms)
+✔ [local.77 §10] reducer 纯函数：同序列 fold 两次 hash 相同 + duplicate eventId 不重复追加（§10.2） (0.62325ms)
+✔ [local.77 §10] 五条一致性断言（§10.3）：active finding/pending approval/completed intent/evidence link/projection id (0.218667ms)
+[dsh-src] src_events duplicate key suppressed: intent-1:1:intent.appended
+[dsh-src] src_events duplicate key suppressed: edge-1:1:edge.appended
+[dsh-src] src_events duplicate key suppressed: edge-2:2:edge.appended
+[dsh-src] src_events duplicate key suppressed: checkpoint-1:1:checkpoint.appended
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.77 §10] src_state 观测点 shadow 发 projection.divergence + 工作流端到端五断言零违例 (6.429375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.78 接口对账] endpointsTotal/Tested 入库 + finalize 对账闸（声明与 observations 对不上即 blocker） (10.247583ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.79] finalize 闸一：completed intent 无 completed checkpoint 为 blocker；src_submit 补后消失 (14.113417ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.79] finalize 闸二B：goal 域外 candidate 主机型资产无范围待办 → warning；建扩范围待办后消失 (6.900375ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.79] finalize 闸二A：confirmed 资产零 coverage 零提及 → warning；补含 host 的 fact 后消失 (6.76925ms)
+✔ [local.79] finalize 闸三：coverage 有对账数字但 observations 稀疏 → 通道收归 warning (8.209792ms)
+✔ [local.81] T1 注册闸：flag off 无 src_survey_seed；shadow 后新 harness 有该工具 (2.163125ms)
+✔ [local.81] T2 生命周期：add 去重 → next 弹 active → complete → done；list 计数 (2.858583ms)
+✔ [local.81] T3 一种子闭环闸：active 未处置活面时 next 拒绝；补 coverage 后放行 (2.810584ms)
+✔ [local.81] T4 存活分类（纯函数）：401/403/登录页 alive；停车页 parked；超时 dead (0.235709ms)
+✔ [local.81] T5 FOFA 降级：无 key fofa action 降级不 throw；锁面模式拒绝 (2.829625ms)
+✔ [local.81] T6 零污染：flag off 全程 survey_seeds 表零写入 (5.97ms)
+✔ [local.81] T7 开盘往返：survey seed 行通过 srcDomainSpec 开盘 schema (2.611125ms)
+✔ [local.83] T8 CT 两腿串行：agniops/certspotter 纯函数降级 + fetchImpl 注入解析 + 锁面跨域待办 (0.357833ms)
+✔ [local.83] T9 CT 工具层：跨域新根域不自动入队，建 src_user_todo 交用户确认 (7910.423042ms)
+✔ [local.87] artifacts：src_add_goal 起手建齐五子夹+README（幂等）；artifactsDir 返回且隔离 DSH_HOME (20.245375ms)
+✔ Skill Selector 召回真实 skill 源 + 污染闸 + 提醒去重 (1.649542ms)
+✔ emitLayaDecision 按 taskType 分派 flag (0.320042ms)
+✔ [local.99] HTTP 模型可见响应与自动证据：脱敏、去重不丢原证据、父子读取、投影 (272.205917ms)
+✔ [local.101] SRC HTTP 证据在唯一 active intent 时自动归属 intent (21.605208ms)
+✔ Jev 高置信读取建议不越过审批；统一注入认证/Content-Type；重放留证 (305.194625ms)
+✔ [local.99] submit ID 映射、部分失败保留父投影、受限复核写回 (18.488417ms)
+✔ [local.99] state/playbook/scan/bypass 的模型内容包含决策字段 (10.652417ms)
+✔ [local.99] 自动证据写失败明确已执行；请求体敏感字段脱敏；会话间不吞响应 (11.759042ms)
+✔ [local.99] 并发自动证据不覆盖、同毫秒不同ID不丢投影、无intent开局可留证 (5.53125ms)
+✔ [local.99] 证据分页可读尾部、总预算有界、HTTP证据可用于覆盖声明 (7.572459ms)
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+[dsh-src] domain 'src' already open elsewhere — reusing the shared open promise to avoid double-open.
+✔ [local.103] 域数据面板：确认/运行闸、精确清理、共享凭证、失败重试、冷投影 (13.886084ms)
+✔ [local.99] Pattern 实际工具接线与 blocked 历史不误记证伪 (8.14475ms)
+ℹ tests 329
+ℹ suites 0
+ℹ pass 329
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 60309.083208

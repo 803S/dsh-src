@@ -1,0 +1,71 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-probe-Z7PQ0c",
+  "origin": "http://127.0.0.1:49174",
+  "proxy": "http://127.0.0.1:49175",
+  "rows": [
+    {
+      "name": "baseline-direct",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"method\":\"GET\",\"path\":\"/baseline\"}",
+      "stderr": "",
+      "targetArrivals": 1
+    },
+    {
+      "name": "direct-blocked",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49174 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0
+    },
+    {
+      "name": "proxy-read",
+      "exit": 0,
+      "signal": null,
+      "stdout": "{\"fixture\":true,\"method\":\"GET\",\"path\":\"/read\"}",
+      "stderr": "",
+      "targetArrivals": 1
+    },
+    {
+      "name": "proxy-write-blocked",
+      "exit": 0,
+      "signal": null,
+      "stdout": "FIXTURE_BLOCKED_NOT_SENT",
+      "stderr": "",
+      "targetArrivals": 0
+    },
+    {
+      "name": "child-direct",
+      "exit": 7,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49174 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0
+    },
+    {
+      "name": "python-direct",
+      "exit": 1,
+      "signal": null,
+      "stdout": "",
+      "stderr": "col, protocol +\n  File \"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/request.py\", line 494, in _call_chain\n    result = func(*args)\n  File \"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/request.py\", line 1375, in http_open\n    return self.do_open(http.client.HTTPConnection, req)\n  File \"/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/request.py\", line 1349, in do_open\n    raise URLError(err)\nurllib.error.URLError: <urlopen error [Errno 1] Operation not permitted>\n",
+      "targetArrivals": 0
+    },
+    {
+      "name": "background-direct",
+      "exit": 0,
+      "signal": null,
+      "stdout": "",
+      "stderr": "curl: (7) Failed to connect to 127.0.0.1 port 49174 after 0 ms: Couldn't connect to server\n",
+      "targetArrivals": 0
+    },
+    {
+      "name": "local-files",
+      "exit": 0,
+      "signal": null,
+      "stdout": "local-ok",
+      "stderr": "",
+      "targetArrivals": 0
+    }
+  ]
+}

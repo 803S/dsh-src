@@ -5257,7 +5257,7 @@ test("[local.73 Phase 4] contract test：finding/approval/finalize/scope 四类�
     const srcJs = readFileSync(resolve(root, "lib/src.js"), "utf8");
     const pStart = srcJs.indexOf("const SRC_INSTRUCTIONS = `\\") + "const SRC_INSTRUCTIONS = `\\".length;
     const proto = srcJs.slice(pStart, srcJs.indexOf("`;", pStart));
-    assert.ok(proto.includes("禁止绕行") && proto.includes("资产清单即许可"), "收敛后 prompt 仍保留四类不可编码原则的索引句");
+    assert.ok(proto.includes("强制出口") && proto.includes("资产登记用于归属和线索，不等于出口授权"), "收敛后 prompt 仍保留四类不可编码原则的索引句");
     assert.ok(proto.length <= 5000, "SRC_INSTRUCTIONS 收敛后 ≤5k（Phase 4 目标区间）");
   } finally {
     if (prevHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = prevHome;

@@ -1,0 +1,71 @@
+{
+  "home": "/var/folders/tm/w6j1dw9d203gbh50qpt2psc00000gn/T/dsh-egress-session-NSDnNB",
+  "exit": 2,
+  "completion": {
+    "status": "error",
+    "stopped": "",
+    "steps": 1,
+    "calls": 1,
+    "tokens": 0,
+    "model": {
+      "provider": "newapi",
+      "model": "minimax-m2.5"
+    },
+    "sessions": [
+      "session-e72ffd54-9ddf-4fbf-872f-abe722f60d6d"
+    ],
+    "error": "400: {\"message\":\"unknown provider for model minimax-m2.5\",\"type\":\"invalid_request_error\",\"param\":\"model\",\"code\":\"model_not_found\"}"
+  },
+  "arrivals": [],
+  "events": [
+    {
+      "at": 1791126348091,
+      "type": "provider",
+      "name": "SrcBashExecutor"
+    },
+    {
+      "at": 1791126348188,
+      "type": "tool-result",
+      "sessionId": "session-e72ffd54-9ddf-4fbf-872f-abe722f60d6d",
+      "name": "src_egress_plan",
+      "arguments": {
+        "entries": [
+          {
+            "request": {
+              "url": "http://127.0.0.1:57202/read",
+              "method": "GET",
+              "headers": [],
+              "bodyBase64": ""
+            },
+            "maxRequests": 1
+          }
+        ],
+        "maxRequests": 1,
+        "minIntervalMs": 250,
+        "lifetimeMs": 120000,
+        "purpose": "real DSH fixture exact one-read plan"
+      },
+      "isError": false,
+      "text": "{\"id\":\"5a99b9bc-0e00-4502-b44d-c860f3298075\",\"digest\":\"8f603e76f65e497e1bb51d33b5ff410b32cef942e6edbde8726531c5bbb2e299\",\"state\":\"active\",\"expiresAt\":1791126468186,\"reason\":\"bounded-low-risk-plan\"}",
+      "value": {
+        "id": "5a99b9bc-0e00-4502-b44d-c860f3298075",
+        "digest": "8f603e76f65e497e1bb51d33b5ff410b32cef942e6edbde8726531c5bbb2e299",
+        "state": "active",
+        "expiresAt": 1791126468186,
+        "reason": "bounded-low-risk-plan"
+      }
+    },
+    {
+      "at": 1791126351037,
+      "type": "turn-end",
+      "sessionId": "session-e72ffd54-9ddf-4fbf-872f-abe722f60d6d",
+      "reason": {
+        "kind": "error",
+        "error": {
+          "message": "400: {\"message\":\"unknown provider for model minimax-m2.5\",\"type\":\"invalid_request_error\",\"param\":\"model\",\"code\":\"model_not_found\"}",
+          "code": "INVALID_REQUEST"
+        }
+      }
+    }
+  ]
+}

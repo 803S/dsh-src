@@ -65,3 +65,16 @@
 - id: web
   config:
     searchProvider: src-keyless-search
+
+# SRC host gate owns the final bash spawn boundary, including full-access mode.
+# The provider preserves native behavior for non-SRC sessions.
+- insert:
+    - id: src-egress
+      name: '@lihua_dis/dsh-src/src-egress'
+
+# `name` on a patch is an identity assertion, not a replacement field.
+- id: bash-sandbox
+  disabled: true
+- insert:
+    - id: src-bash-executor
+      name: '@lihua_dis/dsh-src/src-bash-executor'
