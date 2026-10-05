@@ -25,7 +25,7 @@ export async function configureTaskGate({ control, origin }) {
   } });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(socket, resolve); });
   return { addon: fileURLToPath(new URL('../../lib/src/egress/mitm-addon.py', import.meta.url)),
-    options: ['--set', 'rawtcp=false', '--set', 'body_size_limit=64k'],
+    options: ['--set', 'rawtcp=false', '--set', 'body_size_limit=8m'],
     env: { PYTHONDONTWRITEBYTECODE: '1', SRC_GATE_CONTROL_SOCKET: socket, SRC_GATE_CONTROL_TOKEN: token }, protectedPaths: [dir],
     report: () => ({ assessments, claims, finishes, events, realJev: false, realHumanUI: false }),
     async close() { await new Promise(resolve => server.close(resolve)); broker.close(); await rm(dir, { recursive: true, force: true }); },

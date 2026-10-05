@@ -8,7 +8,8 @@
  * 子进程退出时重连，僵尸状态无法自愈。
  *
  * 本桥策略：持久会话 + 懒自愈。任何请求失败（流断/POST 失败/超时/会话过期）→
- * 丢弃当前会话 → 下次调用自动开全新 SSE 会话（重新 initialize）并重试一次。
+ * 丢弃当前会话 → 下次调用自动开全新 SSE 会话（重新 initialize）。
+ * 仅发现/只读历史可重试；任何可能发包或修改状态的 tools/call 绝不自动重放。
  * 对上层完全透明；服务端通知（如 tools/list_changed）照常转发下游。
  *
  * 协议：stdin/stdout 换行分隔 JSON-RPC（MCP StdioClientTransport 约定）；
@@ -49,8 +50,13 @@ async function readApprovalLocks() {
 	}
 }
 
-/** 从 send_http1/2_request 参数解析 {method, host, path}；解析不出返回 null（放行，交上游报错）。 */
+/** 兼容旧挂起锁；解析不出返回 null，由调用者拒绝转发。完整审批由 DSH 执行前闸负责。 */
 function parseBurpRequestTarget(args) {
+	if (args?.pseudoHeaders && typeof args.pseudoHeaders === "object") {
+		const pseudo=args.pseudoHeaders;
+		if(typeof pseudo[':method']!=='string'||typeof pseudo[':path']!=='string'||!pseudo[':path'].startsWith('/')||typeof args.targetHostname!=='string'||!args.targetHostname)return null;
+		return {method:pseudo[':method'].toUpperCase(),host:args.targetHostname.toLowerCase(),path:pseudo[':path'].split('?')[0]};
+	}
 	const content = String(args?.content ?? "");
 	if (content === "") return null;
 	const requestLine = content.split(/\r?\n/, 1)[0] ?? "";
@@ -75,7 +81,7 @@ async function approvalBypassGuard(params) {
 	const hit = locks.find((lock) => typeof lock?.host === "string" && lock.host !== "" && lock.host === target.host && typeof lock?.path === "string" && lock.path !== "" && lock.path === target.path);
 	if (hit === undefined) return null;
 	return {
-		content: [{ type: "text", text: `⛔ 已拦截（审批绕行硬闸）：请求 ${target.method} ${target.host}${target.path} 与挂起中的高危审批 ${hit.id}${hit.category ? `（${hit.category}）` : ""} 同目标。审批挂起期间禁止经任何通道发送该请求——请等待用户在 SRC 面板批准或拒绝（或 agent 调 src_resolve_approval id=${hit.id} action=allow|reject）后再继续；也可以直接换其他资产/方向，不要尝试用其他工具重发同一目标。` }],
+		content: [{ type: "text", text: `⛔ 已拦截（审批绕行硬闸）：请求 ${target.method} ${target.host}${target.path} 与挂起中的高危审批 ${hit.id}${hit.category ? `（${hit.category}）` : ""} 同目标。请求未发送，请等待用户在 SRC 面板处理；模型不能自行批准，也不要换工具或重发同一目标。` }],
 		isError: true
 	};
 }
@@ -258,9 +264,10 @@ function dropSession(reason) {
 	session = null;
 }
 
-/** 转发一个请求；失败时关会话换新会话重试一次（自愈核心）。 */
+/** Discovery/read-only history may heal and retry; active calls may already have run. */
 async function forwardWithHeal(method, params) {
-	for (let attempt = 1; attempt <= 2; attempt++) {
+	const attempts=method!=='tools/call'||HISTORY_TOOLS.has(params?.name)?2:1;
+	for (let attempt = 1; attempt <= attempts; attempt++) {
 		if (session === null || session.closed) {
 			try { await openSession(); } catch (error) {
 				dropSession(error?.message ?? "open failed");
@@ -271,7 +278,7 @@ async function forwardWithHeal(method, params) {
 			return await session.request(method, params);
 		} catch (error) {
 			dropSession(error?.message ?? "request failed");
-			if (attempt === 2) throw error;
+			if (attempt === attempts) throw error;
 			log("info", `retrying ${method} on a fresh session`);
 		}
 	}

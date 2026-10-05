@@ -537,7 +537,9 @@ if (!dryRun && caps.length > 0) {
 	for (const c of caps) {
 		const kind = c.kind ?? "mcp";
 		const enabled = c.enabled !== false;
+		// Preserve the configured local MCP entry for offline capability probes.
 		const base = { id: c.id, kind, from: c.from, ref: c.ref ?? null, enabled, when: typeof c.when === "string" ? c.when : "", docs: kind === "skill" ? (typeof c.docs === "string" && c.docs !== "" ? c.docs : null) : null, scripts: kind === "skill" ? (Array.isArray(c.scripts) ? c.scripts : []) : [], env: c.env && Object.keys(c.env).length > 0 ? c.env : null };
+		if (kind === "mcp" && typeof c.entry === "string") base.entry = c.entry;
 		if (!enabled) { indexItems.push({ ...base, status: "disabled" }); continue; }
 		if (notReady.has(c.id)) { indexItems.push({ ...base, status: "failed" }); continue; }
 		if (kind === "skill") {
@@ -545,7 +547,8 @@ if (!dryRun && caps.length > 0) {
 			const installed = existsSync(dir) && (existsSync(path.join(dir, ".caps-src")) || existsSync(path.join(dir, "package.json")));
 			indexItems.push({ ...base, status: installed ? "installed" : "failed", ...(installed ? { dir } : {}) });
 		} else {
-			indexItems.push({ ...base, status: "installed" });
+			const dir = path.join(capsDir, c.id);
+			indexItems.push({ ...base, status: "installed", ...(existsSync(dir) ? { dir } : {}) });
 		}
 	}
 	await mkdir(capsDir, { recursive: true });

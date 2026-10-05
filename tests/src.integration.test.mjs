@@ -1841,6 +1841,9 @@ test("[local.16] src_serve_proof/src_stop_serve 生命周期：HTTP 托管 + 访
   // stop → 日志回传 + 端口关闭
   const stopped = await h.run("src_stop_serve", { serveId: started.serveId }, parent);
   assert.equal(stopped.stopped, true);
+  const visibleProof = h.tools.get("src_serve_proof").output.render({}, started).map(block => block.text ?? "").join("\n");
+  assert.ok(visibleProof.includes(JSON.stringify({serveId:started.serveId})), "model must see the exact stop handle, not just URL");
+  assert.equal(res.headers.get("content-type"), "text/html; charset=utf-8", "default MIME must not be the string undefined");
   assert.equal(stopped.hits.length, 2, "two hits logged");
   assert.ok(stopped.hits[0].at && stopped.hits[0].ua !== void 0, "hit fields (time + UA)");
   assert.ok(stopped.hits.some((hit) => hit.path === "/probe?x=1"), "probe path recorded");
@@ -1855,9 +1858,31 @@ test("[local.16] src_serve_proof/src_stop_serve 生命周期：HTTP 托管 + 访
   const cross = await h.run("src_stop_serve", { serveId: s2.serveId }, parent);
   assert.equal(cross.stopped, false, "cross-session stop rejected");
   await h.run("src_stop_serve", { serveId: s2.serveId }, other);
-  // [local.16 自查] goal 重置（initGoal 二次调用）自动关闭本会话服务
+  // Use a still-live server: the first one was already explicitly stopped.
+  const live = await h.run("src_serve_proof", { payload: "before reset", contentType: "text/plain" }, parent);
+  assert.equal(await (await fetch(live.url)).text(), "before reset");
   await h.run("src_add_goal", { target: "example.test", objective: "restart" }, parent);
-  await assert.rejects(() => fetch(started.url), "server closed on goal reset");
+  await assert.rejects(() => fetch(live.url), "live server closed on goal reset");
+});
+
+test('proof reset closes a genuinely live server including incomplete request sockets',async t=>{
+ const {closeProofServersOfSession,__resetSharedDomainOpensForTests}=await import('../lib/src.js');
+ const {connect}=await import('node:net');
+ __resetSharedDomainOpensForTests();const h=harness(),owner=h.exec('proof-slow-reset');
+ t.after(()=>closeProofServersOfSession('proof-slow-reset'));
+ await h.run('src_add_goal',{target:'fixture.test',objective:'proof lifecycle'},owner);
+ const serve=await h.run('src_serve_proof',{payload:'synthetic proof',contentType:'text/plain'},owner);
+ const socket=connect({host:'127.0.0.1',port:Number(new URL(serve.url).port)});
+ t.after(()=>socket.destroy());await new Promise((resolve,reject)=>{socket.once('connect',resolve);socket.once('error',reject);});
+ socket.write('GET /slow HTTP/1.1\r\nHost: fixture\r\n');
+ await new Promise(resolve=>setTimeout(resolve,50));
+ const closed=new Promise(resolve=>socket.once('close',resolve));
+ let timeout;
+ try{
+  await Promise.race([Promise.all([h.run('src_add_goal',{target:'fixture.test',objective:'reset active server'},owner),closed]),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('Reset blocked on incomplete HTTP request')),1000);})]);
+ }finally{clearTimeout(timeout);socket.destroy();}
+ await closed;
+ await assert.rejects(fetch(serve.url));
 });
 
 test("[local.16] src_update_finding 投影折叠：UI 视角（viewSrcState）字段重写/校验拒绝/asset 关联解除", async () => {
@@ -1907,6 +1932,21 @@ test("[local.17] 委派子代理执行类工具沿 parentSession 链解析 goal/
   const grandchild = h.exec("grandchild", "child-fork");
   const surface2 = await h.run("src_scan_surface", { intentId: intent.id, baseUrl: "https://example.test", paths: ["/robots.txt"] }, grandchild);
   assert.ok(surface2, "two-level chain still resolves the engagement session");
+});
+
+test("delegated SRC goal writes cannot shadow inherited scope or change the parent target", async () => {
+  const h = harness(), parent = h.exec('owner'), child = h.exec('member', 'owner');
+  const goal = await h.run('src_add_goal', {target:'https://example.test',objective:'Parent-owned engagement'}, parent);
+  const before = await h.run('src_state', {detail:'summary'}, child);
+  assert.equal(before.goal.id, goal.id);
+  for (const [name,args] of [['src_add_goal',{target:'https://other.test',objective:'Must not shadow'}],['src_set_goal_target',{target:'https://other.test'}]]) {
+    await assert.rejects(()=>h.run(name,args,child), {code:'SRC_DELEGATED_ENGAGEMENT_OWNER_REQUIRED'});
+  }
+  const after = await h.run('src_state', {detail:'summary'}, child);
+  assert.deepEqual(after.goal,before.goal);
+  assert.deepEqual((await h.run('src_state',{detail:'summary'},parent)).goal,before.goal);
+  await h.run('src_set_goal_target',{target:'https://root-change.test'},parent);
+  assert.equal((await h.run('src_state',{detail:'summary'},child)).goal.target,'root-change.test');
 });
 
 test("[local.17] 无链上 goal 时报错文案保持不变（orphan 子代理）", async () => {
@@ -2815,6 +2855,40 @@ test("[local.57] src_add_intent 锚点缺失自动锚到当前 goal，无 goal �
    中通 session-9864adca 实测 11 条 intent 全部被 fold 丢弃，级联蒸发 fact/finding/checkpoint/research/approval
    （面板 intents/facts/findings 全灭而 assets/todos 幸存）。fold 必须与 execute 同样自愈：两锚点全漏且当前
    goal 存在 → 锚到该 goal；两锚点同传仍丢弃；无 goal 仍丢弃。stateVersion 10→11 让宿主重算存量会话投影。 */
+test('bare host:port goal does not invent HTTP scope; explicit HTTPS origin is preserved', async () => {
+ const h=harness();
+ await h.run('src_add_goal',{target:'127.0.0.1:54321',objective:'scope parse'},h.exec('bare-origin-goal'));
+ await h.run('src_add_goal',{target:'https://127.0.0.1:54321',objective:'scope parse'},h.exec('explicit-origin-goal'));
+ const {SrcStore}=await import('../lib/src.js');
+ const store=new SrcStore(h.ctx);
+ try{
+  assert.equal((await store.getGoal('bare-origin-goal')).scopeOrigin,undefined);
+  assert.equal((await store.getGoal('explicit-origin-goal')).scopeOrigin,'https://127.0.0.1:54321');
+ }finally{await store.dispose();}
+});
+
+test("intent blank optional anchors do not mask a valid goal or fabricate a fact", async () => {
+  const h = harness(), exec = h.exec('blank-anchor-onboarding');
+  const goal = await h.run('src_add_goal', { target: 'example.test', objective: 'blank anchors' }, exec);
+  for (const [index, anchors] of [
+    { goalId: goal.id, derivedFromFactId: '' },
+    { goalId: '', derivedFromFactId: '  ' },
+    { goalId: ' \t', derivedFromFactId: '' }
+  ].entries()) {
+    const input = Object.freeze({ title: `blank case ${index}`, ...anchors });
+    const result = await h.run('src_add_intent', input, exec);
+    assert.equal(result.edgeKind, 'spawns');
+    assert.equal(result.sourceId, goal.id);
+    assert.deepEqual(input, { title: `blank case ${index}`, ...anchors });
+  }
+  await assert.rejects(() => h.run('src_add_intent', {
+    title: 'nonempty invalid fact', goalId: goal.id, derivedFromFactId: 'none'
+  }, exec), /unknown fact/);
+  await assert.rejects(() => h.run('src_add_intent', {
+    title: 'blank without goal', goalId: '', derivedFromFactId: ''
+  }, h.exec('blank-anchor-no-goal')), /src_add_goal/);
+});
+
 test("[local.58] fold 层锚点自愈：无锚点 intent 收下并级联恢复 fact，两锚点同传/无 goal 仍丢弃", async () => {
   const h = harness();
   const parent = h.exec("l58fold");
@@ -3539,6 +3613,7 @@ test("[local.41] caps-sync v2: skill 型安装 + index.json 生成 + patch 只�
     const skill = index.capabilities.find((c) => c.id === "miniskill");
     assert.equal(mcp.kind, "mcp");
     assert.equal(mcp.status, "installed");
+    assert.equal(mcp.entry, "index.js", "configured MCP entry survives inventory generation");
     assert.equal(skill.kind, "skill");
     assert.equal(skill.status, "installed");
     assert.deepEqual(skill.scripts, ["scripts/run.sh"]);

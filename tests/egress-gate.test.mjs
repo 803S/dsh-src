@@ -6,7 +6,12 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonicalRequest, normalizePlan, requiresHuman } from '../lib/src/egress/plan.js';
 import { createEgressBroker } from '../lib/src/egress/broker.js';
+import { createAssessmentQueue } from '../lib/src/egress/assessment-queue.js';
 import { constrainSpawnSpec } from '../lib/src/egress/executor.js';
+import {execFileSync} from 'node:child_process';
+test('proxy strips only benign single-hop persistence headers before both claim and send',()=>{
+  execFileSync('python3',[new URL('./egress-hop-headers.py',import.meta.url).pathname],{timeout:10000});
+});
 const scope = { origins: ['https://fixture.invalid'], revision: 'user-scope-1', credentialRevision: 'account-1' };
 const low = { fallback: false, mode: 'on', action: 'allow', effect: 'read', risk: 'low', confidence: .98 };
 const request = (patch = {}) => ({ url: 'https://fixture.invalid/catalog', method: 'GET', headers: [], bodyBase64: '', ...patch });
@@ -42,7 +47,7 @@ test('scope and budgets cannot be widened or default to unlimited', () => {
   assert.throws(() => normalizePlan(input(), { ...scope, revision: '' }), code('UNTRUSTED_SCOPE'));
 });
 
-for (const patch of [{}, { mode: 'off' }, { mode: 'shadow' }, { fallback: true }, { risk: 'unknown' }, { risk: 'high' }, { effect: 'write' }, { action: 'pending' }, { confidence: .89 }, { confidence: NaN }]) {
+for (const patch of [{}, { mode: 'off' }, { mode: 'shadow' }, { fallback: true }, { risk: 'unknown' }, { risk: 'high' }, { effect: 'write' }, { action: 'pending' }, { confidence: -1 }, { confidence: 1.1 }, { confidence: NaN }]) {
   test(`Jev plan decision is conservative: ${JSON.stringify(patch)}`, async t => {
     const f = fixture(t, { assess: () => ({ ...low, ...patch }) });
     const plan = await f.broker.propose('s1', input());
@@ -61,7 +66,7 @@ test('Jev errors become pending; mutation of advisor/input/returned views cannot
   assert.ok(f.broker.dataPlane.claim('s1', plan.id, request()).dispatchId);
 });
 
-for (const patch of [{ url: 'https://fixture.invalid/%64elete?id=1' }, { url: 'https://fixture.invalid/run?operation=reset' }, { method: 'DELETE' }, { method: 'PUT', bodyBase64: Buffer.from('<x/>').toString('base64') }, { method: 'POST' }, { headers: [['Authorization', 'Bearer secret']] }]) {
+for (const patch of [{ url: 'https://fixture.invalid/%64elete?id=1' }, { url: 'https://fixture.invalid/run?operation=reset' }, { method: 'DELETE' }, { method: 'PUT', bodyBase64: Buffer.from('<x/>').toString('base64') }, { method: 'POST' }]) {
   test(`hard boundary overrides Jev: ${JSON.stringify(patch)}`, async t => {
     const f = fixture(t);
     const planInput = input({ entries: [{ request: request(patch), maxRequests: 3 }] });
@@ -143,7 +148,7 @@ test('crash/restart invalidates tasks, preserves uncertain request denial; DB ha
   const f = fixture(t, { file, key });
   const secretRequest = request({ headers: [['authorization', 'Bearer synthetic-private-secret']] });
   const plan = input({ entries: [{ request: secretRequest, maxRequests: 3 }] });
-  const a = await f.broker.propose('s1', plan); f.broker.commandPlane.decide('s1', a.id, a.digest, 'allow');
+  const a = await f.broker.propose('s1', plan); assert.equal(a.state,'active');
   f.broker.dataPlane.claim('s1', a.id, secretRequest); f.broker.close();
   assert.equal(readFileSync(file).includes(Buffer.from('synthetic-private-secret')), false);
   const g = fixture(t, { file, key });
@@ -176,6 +181,16 @@ test('human click cannot bypass missing write backup/recovery executor integrati
   f.broker.commandPlane.decide('s1', a.id, a.digest, 'reject');
 });
 
+test('native basename sandbox runner merges policies without nesting or PATH lookup', () => {
+  const native='(version 1) (allow default) (deny file-write* (subpath "/tmp/fixture-read-only"))';
+  const out=constrainSpawnSpec({argv:['sandbox-exec','-p',native,'/bin/bash','-c','true']}, {proxyPort:18080,protectedPaths:['/private/tmp/fixture-control']});
+  assert.equal(out.argv[0],'/usr/bin/sandbox-exec');
+  assert.ok(out.argv[2].startsWith(native));
+  assert.match(out.argv[2],/deny network/);
+  assert.deepEqual(out.argv.slice(3),['/bin/bash','-c','true']);
+  assert.throws(()=>constrainSpawnSpec({argv:['sandbox-exec','-f','profile','true']},{proxyPort:18080,protectedPaths:['/private/tmp/fixture-control']}),{code:'SRC_GATE_UNKNOWN_SANDBOX_PROFILE'});
+});
+
 test('proxy control API binds session/task on server, cannot approve or finish another proxy dispatch', async t => {
   const { createProxyControlServer } = await import('../lib/src/egress/control-server.js');
   const token = randomBytes(32).toString('hex'); let claimed = 0, finished = 0;
@@ -203,7 +218,7 @@ async function managerFixture(t, {advice=low,home,send}={}) {
   const directory=home??mkdtempSync(path.join(tmpdir(),'egress-manager-'));
   const rows=new Map(); let calls=0, sends=0;
   const store={
-    async addPendingApproval(session,row){const value={...row,id:`approval-${rows.size+1}`,session};rows.set(value.id,value);return value;},
+    async addPendingApproval(session,row){const value={...row,status:'pending',id:`approval-${rows.size+1}`,session};rows.set(value.id,value);return value;},
     async getPendingApproval(session,id){const row=rows.get(id);return row?.session===session?row:undefined;},
     async updateApprovalExecution(session,id,patch){const row=await this.getPendingApproval(session,id);assert.ok(row);Object.assign(row,patch);},
   };
@@ -214,11 +229,25 @@ async function managerFixture(t, {advice=low,home,send}={}) {
   return {manager,store,rows,home:directory,calls:()=>calls,sends:()=>sends};
 }
 
-test('manager low read sends once; spent grant never triggers reassessment/replay',async t=>{
+test('manager new implicit read gets a fresh assessment after success, never automatic replay',async t=>{
   const f=await managerFixture(t);
   assert.equal((await f.manager.fetch('s','http://127.0.0.1:49123/catalog')).status,200);
-  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),code('BUDGET_EXHAUSTED'));
   assert.equal(f.calls(),1);assert.equal(f.sends(),1);
+  assert.equal((await f.manager.fetch('s','http://127.0.0.1:49123/catalog')).status,200);
+  assert.equal(f.calls(),2);assert.equal(f.sends(),2);
+});
+test('explicit single-request plan stays exhausted and does not become an implicit renewed grant',async t=>{
+ const f=await managerFixture(t),url='http://127.0.0.1:49123/catalog';
+ await f.manager.propose('s',{entries:[{request:{url,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'explicit finite scan'});
+ await f.manager.fetch('s',url);
+ await assert.rejects(f.manager.fetch('s',url),code('BUDGET_EXHAUSTED'));
+ assert.equal(f.calls(),1);assert.equal(f.sends(),1);
+});
+test('implicit read with uncertain transport outcome cannot be reassessed and silently replayed',async t=>{
+ const f=await managerFixture(t,{send:async()=>{throw new Error('synthetic connection lost after dispatch');}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),/synthetic connection lost/);
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ assert.equal(f.calls(),1);assert.equal(f.sends(),1);
 });
 test('manager human single read executes frozen bytes once; rejects model replay',async t=>{
   const f=await managerFixture(t,{advice:{...low,action:'pending'}});
@@ -306,7 +335,10 @@ test('cold restart invalidates approval; reconciliation cannot restore automatic
  let sends=0;
  const manager=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,assess:async()=>low,directFetch:async()=>{sends++;return new Response('ok');}});
  try{
-  assert.equal((await manager.user.inspect('s',old.id)).state,'stale');
+  // Restart revokes ledger authority; review now reports that durable state
+  // instead of flattening all unavailable tasks into the generic stale label.
+  const view=await manager.user.inspect('s',old.id);
+  assert.equal(view.state,'revoked');assert.equal(view.executable,false);assert.equal(view.sendsRequest,false);
   await assert.rejects(manager.user.decide('s',old.id,'allow'),code('STALE_APPROVAL'));
   const reconciled=await manager.user.reconcile('s',old.id,'cancel-never-sent','Fixture operator checked target logs: this request was never sent.');
   assert.equal(reconciled.requiresFreshHumanApproval,true);
@@ -344,4 +376,129 @@ import {isPublicAddress} from '../lib/src/egress/scope.js';
 test('IPv6 scope rejects special/tunnel/documentation ranges including expanded notation',()=>{
  for(const ip of ['::1','::ffff:127.0.0.1','fc00::1','fe80::1','2001:0000:1::1','2001:20::1','2001:db8::1','2002:7f00:1::1','3ffe::1','3fff::1'])assert.equal(isPublicAddress(ip),false,ip);
  for(const ip of ['2606:4700:4700::1111','2001:4860:4860::8888'])assert.equal(isPublicAddress(ip),true,ip);
+});
+
+test('native tool resume uses approved frozen plan once without new review or expiry renewal',async t=>{
+ const f=fixture(t,{assess:()=>({...low,action:'pending'})}),body=input(),plan=await f.broker.propose('tool-resume',body);
+ assert.throws(()=>f.broker.startToolTask('tool-resume',plan.id,body),code('TASK_NOT_AUTHORIZED'));
+ f.broker.commandPlane.decide('tool-resume',plan.id,plan.digest,'allow');
+ assert.throws(()=>f.broker.startToolTask('other-session',plan.id,body),code('UNKNOWN_TASK'));
+ for(const patch of [{minIntervalMs:500},{maxRequests:2},{entries:[{request:request({url:'https://fixture.invalid/other'}),maxRequests:3}]}])assert.throws(()=>f.broker.startToolTask('tool-resume',plan.id,{...body,...patch}),code('PLAN_CHANGED'));
+ f.tick(1000);
+ const resumed=f.broker.startToolTask('tool-resume',plan.id,body);
+ assert.equal(resumed.expiresAt,plan.expiresAt);assert.equal(f.calls(),1);
+ assert.throws(()=>f.broker.startToolTask('tool-resume',plan.id,body),code('TOOL_TASK_ALREADY_STARTED'));
+ const grant=f.broker.dataPlane.claim('tool-resume',plan.id,request());
+ f.broker.dataPlane.finish('tool-resume',grant.dispatchId,'response_received');
+ assert.equal(f.calls(),1);
+});
+test('native tool cannot resume rejected, expired, scope-changed or already-used plans',async t=>{
+ for(const state of ['rejected','expired','scope-changed','used']){
+  const f=fixture(t),body=input(),plan=await f.broker.propose('tool-'+state,body);
+  if(state==='rejected')f.broker.commandPlane.revoke('tool-'+state,plan.id);
+  if(state==='expired')f.tick(10001);
+  if(state==='scope-changed')f.scope({revision:'new-scope'});
+  if(state==='used'){const grant=f.broker.dataPlane.claim('tool-'+state,plan.id,request());f.broker.dataPlane.finish('tool-'+state,grant.dispatchId,'response_received');}
+  assert.throws(()=>f.broker.startToolTask('tool-'+state,plan.id,body),code({'rejected':'TASK_NOT_AUTHORIZED','expired':'EXPIRED','scope-changed':'SCOPE_CHANGED','used':'TOOL_TASK_ALREADY_STARTED'}[state]));
+ }
+});
+
+test('completed native scan retires unused branches without renewing grants or blocking a fresh read',async t=>{
+ const f=fixture(t),body=input(),plan=await f.broker.propose('tool-close',body);
+ f.broker.startToolTask('tool-close',plan.id,body);
+ const grant=f.broker.dataPlane.claim('tool-close',plan.id,request());
+ assert.throws(()=>f.broker.completeToolTask('tool-close',plan.id),code('DISPATCH_STILL_ACTIVE'));
+ f.broker.dataPlane.finish('tool-close',grant.dispatchId,'response_received');
+ assert.equal(f.broker.completeToolTask('tool-close',plan.id).state,'completed_tool');
+ assert.equal(f.broker.hasActiveTasks('tool-close'),false);assert.equal(f.broker.find('tool-close',request()),undefined);
+ assert.throws(()=>f.broker.startToolTask('tool-close',plan.id,body),code('UNKNOWN_TASK'));
+ assert.throws(()=>f.broker.dataPlane.claim('tool-close',plan.id,request()),code('UNKNOWN_TASK'));
+ const fresh=await f.broker.propose('tool-close',input({maxRequests:1,entries:[{request:request(),maxRequests:1}]}));
+ assert.notEqual(fresh.id,plan.id);assert.equal(f.calls(),2);
+});
+test('native scan cleanup never clears an unknown outcome or another session task',async t=>{
+ const f=fixture(t),body=input(),plan=await f.broker.propose('tool-unknown',body);
+ f.broker.startToolTask('tool-unknown',plan.id,body);
+ assert.throws(()=>f.broker.completeToolTask('other-session',plan.id),code('UNKNOWN_TASK'));
+ const grant=f.broker.dataPlane.claim('tool-unknown',plan.id,request());
+ f.broker.dataPlane.finish('tool-unknown',grant.dispatchId,'outcome_unknown');
+ assert.equal(f.broker.completeToolTask('tool-unknown',plan.id).state,'revoked');
+ assert.equal(f.broker.find('tool-unknown',request()).state,'revoked');
+ await assert.rejects(f.broker.propose('tool-unknown',body),code('PREVIOUSLY_DENIED_OR_UNKNOWN'));
+});
+
+test('ordinary parallel requests queue behind four Jev evaluations instead of failing the fifth',async t=>{
+ let active=0,peak=0,release;const held=new Promise(resolve=>release=resolve);
+ const f=fixture(t,{assess:async()=>{active++;peak=Math.max(peak,active);await held;active--;return low;}});
+ const work=Promise.allSettled(Array.from({length:8},(_,i)=>f.broker.propose('burst',input({entries:[{request:request({url:`https://fixture.invalid/read/${i}`}),maxRequests:1}],maxRequests:1}))));
+ await new Promise(resolve=>setImmediate(resolve));release();const results=await work;
+ assert.equal(results.filter(r=>r.status==='fulfilled'&&r.value.state==='active').length,8,JSON.stringify(results));
+ assert.equal(peak,4);
+});
+
+test('assessment queue is bounded, cancellable, FIFO and closes without stranding waiters',async()=>{
+ const queue=createAssessmentQueue({parallel:1,maxQueued:2}),first=await queue.acquire();
+ const abort=new AbortController(),cancelled=queue.acquire(abort.signal);const rejected=assert.rejects(cancelled,/fixture abort/);
+ const second=queue.acquire();await assert.rejects(queue.acquire(),code('ASSESSMENT_CAPACITY'));
+ abort.abort(new Error('fixture abort'));await rejected;
+ assert.deepEqual(queue.status(),{active:1,queued:1,closed:false});
+ first();first();const release=await second;assert.equal(queue.status().active,1);
+ const waiting=queue.acquire();const closing=assert.rejects(waiting,code('CLOSED'));queue.close();await closing;
+ release();assert.deepEqual(queue.status(),{active:0,queued:0,closed:true});await assert.rejects(queue.acquire(),code('CLOSED'));
+});
+
+test('queued assessment rechecks scope and expiry before contacting Jev',async t=>{
+ for(const mode of ['scope','expiry']){
+  let release;const held=new Promise(resolve=>release=resolve);const f=fixture(t,{assess:async()=>{await held;return low;}});
+  const work=Promise.allSettled(Array.from({length:5},(_,i)=>f.broker.propose('s'+i,input())));
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls(),4);
+  if(mode==='scope')f.scope({revision:'changed'});else f.tick(20000);
+  release();const result=await work;assert.ok(result.every(r=>r.status==='rejected'));assert.equal(f.calls(),4);
+ }
+});
+
+test('queued plans stay frozen, destructive requests remain pending and cancellation grants nothing',async t=>{
+ let release;const held=new Promise(resolve=>release=resolve);const f=fixture(t,{assess:async()=>{await held;return low;}});
+ const starts=Array.from({length:4},(_,i)=>f.broker.propose('s'+i,input()));
+ const frozen=input({entries:[{request:request({url:'https://fixture.invalid/queued'}),maxRequests:1}],maxRequests:1});
+ const queued=f.broker.propose('queued',frozen);frozen.entries[0].request.url='https://fixture.invalid/delete';
+ const danger=f.broker.propose('danger',input({entries:[{request:request({method:'DELETE'}),maxRequests:1}],maxRequests:1}));
+ const abort=new AbortController();const cancelled=assert.rejects(f.broker.propose('cancelled',input(),{signal:abort.signal}),/stop queued/);abort.abort(new Error('stop queued'));
+ release();await Promise.all(starts);await cancelled;
+ const result=await queued;assert.equal(f.broker.commandPlane.inspect('queued',result.id).plan.entries[0].request.url,'https://fixture.invalid/queued');
+ assert.equal((await danger).state,'pending');assert.equal(f.calls(),6);
+});
+
+test('manager admits an ordinary burst into the bounded review queue without dropping later requests',async t=>{
+ let release;const advice=new Promise(resolve=>release=resolve);const f=await managerFixture(t,{advice});
+ const origin='http://127.0.0.1:49123';
+ const work=Promise.allSettled([...Array.from({length:8},(_,i)=>f.manager.fetch('s',origin+'/read/'+i)),f.manager.fetch('s',origin+'/delete',{method:'DELETE'})]);
+ await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.calls(),4);release(low);
+ const results=await work;
+ assert.ok(results.slice(0,8).every(r=>r.status==='fulfilled'&&r.value.status===200),JSON.stringify(results));
+ assert.equal(results[8].status,'rejected');assert.equal(results[8].reason.code,'SRC_GATE_PENDING_OR_REJECTED');
+ assert.equal(f.sends(),8);assert.equal(f.calls(),9);
+});
+
+test('pending history retains actual contradictory Jev classification through host-lane conversion',async t=>{
+ const f=await managerFixture(t,{advice:{...low,risk:'unknown',raw:'private-provider-prose'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),code('PENDING_OR_REJECTED'));
+ const row=[...f.rows.values()][0];
+ assert.match(row.reason,/"risk":"unknown"/);assert.match(row.reason,/"action":"allow"/);
+ assert.match(row.reason,/"hardVeto":false/);assert.ok(!JSON.stringify(row).includes('private-provider-prose'));
+ assert.equal(f.sends(),0);
+ const {reviewSummary}=await import('../lib/src/egress/decision-policy.js');
+ const projected=reviewSummary({effect:'private-secret',risk:'secret',action:'secret',mode:'secret',fallback:false});
+ assert.ok(!JSON.stringify(projected).includes('secret'));assert.equal(projected.risk,'unknown');
+});
+
+test('relay idle allowance covers queued review and the private control deadline without removing bounds',async()=>{
+ const {RESPONSE_SLOT_WAIT_MS,CONTROL_TIMEOUT_MS,RELAY_IDLE_TIMEOUT_MS}=await import('../lib/src/egress/timing.js');
+ const {readFileSync}=await import('node:fs');
+ const addon=readFileSync(new URL('../lib/src/egress/mitm-addon.py',import.meta.url),'utf8');
+ assert.equal(Number(addon.match(/RESPONSE_SLOT_WAIT_SECONDS = (\d+)/)[1])*1000,RESPONSE_SLOT_WAIT_MS);
+ assert.equal(Number(addon.match(/CONTROL_TIMEOUT_SECONDS = (\d+)/)[1])*1000,CONTROL_TIMEOUT_MS);
+ assert.ok(RELAY_IDLE_TIMEOUT_MS>RESPONSE_SLOT_WAIT_MS+CONTROL_TIMEOUT_MS);assert.ok(RELAY_IDLE_TIMEOUT_MS<=300000);
+ const proxy=readFileSync(new URL('../lib/src/egress/proxy-process.js',import.meta.url),'utf8');
+ for(const endpoint of ['client','backend'])assert.ok(proxy.includes(endpoint+'.setTimeout(RELAY_IDLE_TIMEOUT_MS,'));
 });

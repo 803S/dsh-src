@@ -156,3 +156,21 @@ test("project defect guard: failed finding tool result rolls back only this call
   state = applySrcEvent(state, { type: "tool/result", data: { message: { content: [{ toolCallId: "call-3", isError: false, content: [{ type: "text", text: "Recorded finding finding-2 [low] retry finding (edge edge-3)." }] }] } } });
   assert.deepEqual(state.nodes.filter((node) => node.kind === "finding").map((node) => node.id), ["finding-1", "finding-2"]);
 });
+
+test('scope approval explains exact origins without implying a target request or rollback',()=>{
+ const scope=explainApproval({method:'SCOPE',url:'https://fixture.invalid',body:JSON.stringify({origins:['https://fixture.invalid','https://api.fixture.invalid:8443']})});
+ assert.match(scope.operation,/不发送目标请求/);assert.ok(scope.target.includes('https://api.fixture.invalid:8443'));
+ assert.match(scope.consequences.join(' '),/高危和不确定操作仍须另行审核/);assert.match(scope.recovery,/不修改目标资源/);
+ assert.doesNotMatch(scope.operation,/获取信息|探测接口/);
+ assert.match(explainApproval({method:'SCOPE',url:'https://fixture.invalid',body:'bad'}).target,/不要批准/);
+});
+
+test('TASK approval explains the frozen target methods, not the internal task URI as a read',()=>{
+ const entry=(method,url)=>({request:{method,url,headers:{},body:''},maxRequests:1});
+ const scan=explainApproval({method:'TASK',url:'src-egress://task-id',body:JSON.stringify([entry('GET','https://fixture.invalid/robots.txt')]),reason:'最多2次，间隔500ms'});
+ assert.match(scan.operation,/批准本身不发包/);assert.match(scan.target,/https:\/\/fixture.invalid/);assert.doesNotMatch(scan.target,/src-egress/);
+ const deletion=explainApproval({method:'TASK',url:'src-egress://task-id',body:JSON.stringify({entries:[entry('GET','https://fixture.invalid/settings'),entry('DELETE','https://fixture.invalid/settings')],safety:null})});
+ assert.match(deletion.operation,/DELETE/);assert.match(deletion.consequences.join(' '),/可能立即执行/);assert.match(deletion.consequences.join(' '),/可能删除/);assert.match(deletion.recovery,/当前不能执行/);
+ assert.doesNotMatch(deletion.operation,/获取信息|只读/);
+ assert.match(explainApproval({method:'TASK',url:'src-egress://task-id',body:'invalid'}).operation,/不要批准/);
+});

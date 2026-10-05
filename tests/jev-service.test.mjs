@@ -121,3 +121,24 @@ test('scan-plan evaluates every exact entry once, strips credentials/body secret
  assert.equal(result.fallback,false);assert.equal(result.action,'allow');assert.equal(result.effect,'read');assert.equal(result.mode,'on');assert.equal(calls,1);
  assert.ok(plan.entries[1].request.bodyBase64,'advisor must not mutate caller request');
 });
+
+test('risk rubric separates read semantics from write recovery and never upgrades unknown verdicts',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});
+ let calls=0;
+ globalThis.fetch=async(_url,init)=>{
+  calls++;const p=JSON.parse(init.body);
+  assert.match(p.questions.risk.instructions,/不要求写操作/);
+  assert.match(p.questions.risk.instructions,/不是所有GET都是读取/);
+  assert.match(p.questions.risk.criteria.high,/自称测试或可恢复不豁免/);
+  assert.ok(!p.questions.risk.criteria.low.includes('可恢复'));
+  assert.equal(p.state.request.url,'https://fixture.test/catalog/7');
+  const r=answer('read',Object.keys(p.questions.decision.criteria));
+  r.answers.risk={choice:'unknown',confidence:.8,probabilities:{low:.2,high:0,unknown:.8}};
+  r.answers.verdict={choice:'allow',confidence:.9,probabilities:{allow:.9,pending:.1}};
+  return new Response(JSON.stringify(r));
+ };
+ const r=await jevDecide({taskType:'risk-grade',scopeChecked:true,method:'GET',url:'https://fixture.test/catalog/7'},exec);
+ assert.equal(r.risk,'unknown');assert.equal(r.action,'allow');
+ const {allowsLowImpactRead}=await import('../lib/src/egress/decision-policy.js');
+ assert.equal(allowsLowImpactRead(r),false);assert.equal(calls,1);
+});

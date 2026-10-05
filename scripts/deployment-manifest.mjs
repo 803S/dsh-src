@@ -3,6 +3,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 export function runtimeFiles(repo) {
   return readdirSync(join(repo, 'lib'), { recursive: true })
-    .filter(file => /\.(?:js|py)$/.test(file))
+    .filter(file => !file.split(/[\\/]/).includes('__pycache__'))
+    .filter(file => /\.(?:[cm]?js|py)$/.test(file))
     .map(file => `lib/${file}`).sort();
 }

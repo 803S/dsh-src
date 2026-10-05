@@ -3,6 +3,7 @@ export type ApprovalExplanationInput = {
   url: string
   body?: string
   category?: string
+  reason?: string
   justification?: string
   layaAdvice?: string
   safetyPlan?: {backupRef?:string; snapshotVerified?:boolean; recovery?:string; validationError?:string}
@@ -27,6 +28,46 @@ const boundedText = (value: string, limit: number) => {
 // No endpoint-specific allowlists; HTTP method is an operation signal, not proof of safety.
 export function explainApproval(input: ApprovalExplanationInput): ApprovalExplanation {
   const method = input.method.toUpperCase()
+  if (method === 'SCOPE') {
+    let target = '精确范围无法解析，请核对范围单，不要批准'
+    try {
+      const origins: unknown = JSON.parse(input.body ?? '{}').origins
+      if (Array.isArray(origins) && origins.length && origins.every(origin => typeof origin === 'string' && new URL(origin).origin === origin)) target = origins.join('，')
+    } catch { /* Keep malformed scope visibly unconfirmed. */ }
+    return {
+      operation: '仅确认目标出口范围，不发送目标请求', target,
+      purpose: boundedText(input.justification ?? '', 180),
+      consequences: ['后续请求只能使用确认的精确 origins（协议、主机、端口）；不包含其他子域。', '确认范围不等于批准请求；高危和不确定操作仍须另行审核。'],
+      recovery: '本次确认不修改目标资源，无需目标回滚；用户可另行更改出口范围。',
+      decision: '范围来自模型提议，必须由用户核对确认；不依赖模型自行授权。',
+    }
+  }
+  if (method === 'TASK') {
+    try {
+      const stored = JSON.parse(input.body ?? '')
+      const hostExecution = !Array.isArray(stored) && Object.hasOwn(stored, 'safety')
+      const burp = hostExecution && stored.transport?.kind === 'burp'
+      const entries = Array.isArray(stored) ? stored : stored.entries
+      if (!Array.isArray(entries) || !entries.length || entries.some(e => typeof e?.request?.url !== 'string' || typeof e?.request?.method !== 'string' || !['http:', 'https:'].includes(new URL(e.request.url).protocol))) throw new Error('invalid manifest')
+      const methods: string[] = [...new Set<string>(entries.map(e => e.request.method.toUpperCase()))]
+      const mutations = methods.filter(m => !['GET', 'HEAD', 'OPTIONS'].includes(m))
+      const consequences = [hostExecution ? '批准后主机可能立即执行原请求及前置/验证步骤；不要让模型再次发送。' : '本次只授权冻结计划，不立即发包；执行时逐笔匹配精确请求、次数、速率及范围。']
+      if (burp) consequences.push('目标请求由原生 Burp MCP 执行冻结参数；信任已配置的 Burp。审批单列出的前置/后置检查仍使用受控 HTTP，不由 Burp 代发。MCP 返回不等于目标业务成功。')
+      if (methods.includes('DELETE')) consequences.push('冻结清单包含 DELETE：可能删除目标数据或资源，恢复能力必须单独核实。')
+      if (mutations.some(m => m !== 'DELETE')) consequences.push(`冻结清单包含 ${mutations.filter(m => m !== 'DELETE').join('/')}：可能修改配置、创建数据或触发业务动作。`)
+      consequences.push('GET/HEAD 等读取方法也不保证没有业务副作用；摘要不能代替完整请求清单。')
+      if (input.reason) consequences.push(boundedText(input.reason, 300))
+      return {
+        operation: hostExecution ? `由${burp ? '原生 Burp' : '主机'}执行冻结请求（${methods.join('/')}）` : '授权有限扫描计划（批准本身不发包）',
+        target: boundedText(entries.map(e => `${e.request.method} ${e.request.url}`).join('；'), 350),
+        purpose: boundedText(input.justification ?? '', 180), consequences,
+        recovery: hostExecution ? (stored.safety ? `恢复说明需独立核实：${boundedText(String(stored.safety.recovery ?? '未提供'), 250)}` : '缺少有效安全材料，当前不能执行；须先补齐材料并重新审核。') : '未使用额度不能当成后续命令的授权；已发请求无法通过撤销计划收回。',
+        decision: '人工确认不取消出口检查；风险建议不等于执行授权。',
+      }
+    } catch {
+      return { operation: '冻结任务清单无法解析，不要批准', target: '无法确认实际请求目标', purpose: boundedText(input.justification ?? '', 180), consequences: ['不能把 TASK 当作只读 HTTP 方法，也不能推测执行后果。'], recovery: '无法验证安全材料。', decision: '请核对原始审批记录。' }
+    }
+  }
   let target = '目标地址无法解析，请先核对原始请求'
   try {
     const url = new URL(input.url)

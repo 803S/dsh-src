@@ -16,7 +16,7 @@
  *   dsh-src 的）。2026-08-31 证实是死代码：bin.js/plugin chunk 等全部 lib/*.js 零引用
  *   src.js，web 行为验证也只认 profile 副本。该文件留着无害，升级 dsh 时自然恢复。
  *
- * 用法：node scripts/deploy.mjs [额外目标目录 ...]
+ * 用法：node scripts/deploy.mjs [--check] [额外目标目录 ...]
  * 部署后需重启对应 dsh 进程（web / headless）才生效。
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -25,15 +25,18 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
 
+import {preflightCopyPlan} from "./deployment-preflight.mjs";
 import { runtimeFiles } from "./deployment-manifest.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
-/* [local.48] scripts/caps-sync.mjs 一并部署：src_add_capability 动态 import 它的纯函数，
- * 且接线时 spawn 的是【部署副本】里的这份脚本。 [local.60] 补 lib/src/approval-locks.js（审批锁）、
- * lib/ui-src.client.js（UI 产物——此前漏部署靠手动拷，md5 恰好一致）、tools/burp-mcp-bridge.mjs（桥）。 */
-const files = ["lib/src.js", "lib/src-subagent.js", "lib/src/coverage-projection.js", "lib/src/request-rate.js", "lib/src/child-outcome.js", "lib/src/child-routing.js", "lib/src-domain-admin.js", "lib/src/state.js", "lib/src/context.js", "lib/src/protocol.js", "lib/src/playbooks.js", "lib/src/reporting.js", "lib/src/security.js", "lib/src/lessons.js", "lib/src/store.js", "lib/src/domain-data.js", "lib/src/mutations.js", "lib/src/credentials.js", "lib/src/flags.js", "lib/src/decision/http-policy.js", "lib/src/decision/jev-client.js", "lib/src/decision/service-settings.js", "lib/src/decision/service-commands.js", "lib/src/decision/knowledge-recall.js", "lib/src/decision/laya-client.js", "lib/src/decision/skill-recall.js", "lib/src/decision/browser-loop.js", "lib/src/approval-locks.js", "lib/src/approval-grants.js", "lib/src/repeat-guard.js", "lib/src/http-output.js", "lib/src/evidence-output.js", "lib/src/openapi-index.js", "lib/src/web-search-provider.js", "lib/src/telemetry/events.js", "lib/src/telemetry/sink.js", "lib/src/telemetry/budget.js", "lib/src/orchestrator/transitions.js", "lib/src/orchestrator/queue.js", "lib/src/orchestrator/scheduler.js", "lib/src/orchestrator/recovery.js", "lib/src/tools/index.js", "lib/src/capability-loader.js", "lib/src/event-store.js", "lib/src/survey.js", "lib/src/artifacts.js", "lib/ui-src.client.js", "package.json", "cordis.patch.yml", "scripts/caps-sync.mjs", "scripts/laya-decision-daemon.py", "scripts/check-web-idle.mjs", "scripts/start-dsh-web.sh", "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/preset.yml"];
-/* Include leaf modules automatically; partial deployment must not omit new imports. */
-for (const file of runtimeFiles(repo)) if(!files.includes(file)) files.push(file);
+// Runtime discovery is the single source of truth; list only non-lib assets here.
+// caps-sync is imported by src_add_capability and must accompany every profile.
+const files = [
+  ...runtimeFiles(repo),
+  "package.json", "cordis.patch.yml", "scripts/caps-sync.mjs",
+  "scripts/laya-decision-daemon.py", "scripts/check-web-idle.mjs", "scripts/start-dsh-web.sh",
+  "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/preset.yml",
+];
 /* [local.62] 内置经验文件（preset/src-hunter/lessons）：触发器元数据在文件尾部 lesson-meta 里，
  * 改后必须随部署同步——此前不在清单里，部署副本是首装 rsync 的遗留（后续内置经验更新全部丢丢）。 */
 const presetLessonDir = "preset/src-hunter/lessons";
@@ -42,10 +45,12 @@ const presetLessons = readdirSync(join(repo, presetLessonDir)).filter((f) => f.e
 const singleFileAssets = [
   { src: join(repo, "tools/burp-mcp-bridge.mjs"), dest: join(homedir(), ".dsh/tools/burp-mcp-bridge.mjs") },
 ];
+const options=process.argv.slice(2),checkOnly=options.includes('--check');
+if(options.some(option=>option.startsWith('--')&&option!=='--check'))throw new Error('Unknown deployment option');
 const targets = [
   join(homedir(), ".dsh/profiles/web/node_modules/@lihua_dis/dsh-src"),
   join(homedir(), ".dsh/profiles/headless/node_modules/@lihua_dis/dsh-src"),
-  ...process.argv.slice(2),
+  ...options.filter(option=>option!=='--check'),
 ];
 
 const md5 = (p) => createHash("md5").update(readFileSync(p)).digest("hex");
@@ -80,8 +85,8 @@ try {
  * 注意 capabilities.yaml 不在此列：它是运行时入口（src_add_capability 会追加写入），
  * 只收编备份进 git，不做部署覆盖（避免回滚运行时新增的能力条目）。 */
 const dshHomeAssets = [
-  { src: "plugins/dsh-session-history", dest: join(homedir(), ".dsh/plugins/dsh-session-history") },
-  { src: "plugins/dsh-headless-src", dest: join(homedir(), ".dsh/profiles/headless/plugins/dsh-headless-src") },
+  { src: join(repo,"plugins/dsh-session-history"), dest: join(homedir(), ".dsh/plugins/dsh-session-history") },
+  { src: join(repo,"plugins/dsh-headless-src"), dest: join(homedir(), ".dsh/profiles/headless/plugins/dsh-headless-src") },
 ];
 const ASSET_EXCLUDE = new Set([".git", ".venv", "node_modules", "__pycache__", ".DS_Store"]);
 function collectFiles(dir, base = dir) {
@@ -94,6 +99,12 @@ function collectFiles(dir, base = dir) {
   }
   return out;
 }
+// Validate every source and destination before copying any profile or home asset.
+const copies=[...singleFileAssets,
+  ...targets.flatMap(target=>[...files,...presetLessons].map(file=>({src:join(repo,file),dest:join(target,file)}))),
+  ...dshHomeAssets.flatMap(asset=>collectFiles(asset.src).map(file=>({src:file.abs,dest:join(asset.dest,file.rel)})))];
+const preflight=preflightCopyPlan({copies,requiredDirectories:[...targets.map(target=>join(target,'lib')),...dshHomeAssets.map(asset=>asset.dest)]});
+if(checkOnly){console.log(`只读发布预检通过：${preflight.files}个复制项；未修改目标、未部署或重启。`);process.exit(0);}
 console.log("─── dsh-home 资产（repo → ~/.dsh）───");
 for (const a of dshHomeAssets) {
   if (!existsSync(a.src)) { console.error(`✗ 源不存在: ${a.src}`); failed = true; continue; }

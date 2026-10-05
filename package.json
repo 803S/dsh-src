@@ -1,7 +1,7 @@
 {
   "name": "@lihua_dis/dsh-src",
   "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-  "version": "0.1.0-local.109",
+  "version": "0.1.0-local.110",
   "publishConfig": {
     "access": "public"
   },
@@ -26,6 +26,8 @@
   },
   "files": [
     "lib/**/*.js",
+    "lib/**/*.cjs",
+    "lib/**/*.mjs",
     "lib/**/*.py",
     "preset/src-hunter/**",
     "cordis.patch.yml",
@@ -33,10 +35,12 @@
     "images/**",
     "README.md",
     "LICENSE",
-    "scripts/**",
+    "scripts/*.mjs",
+    "scripts/*.py",
+    "scripts/*.sh",
     "tests/blind-range.mjs",
     "capabilities.yaml.example",
-    "docs/**"
+    "docs/*.md"
   ],
   "license": "MIT",
   "dsh": {
@@ -70,7 +74,7 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/deployment.test.mjs tests/egress-gate.test.mjs tests/src.integration.test.mjs tests/browser-loop.test.mjs tests/blind-eval.test.mjs tests/laya-keyless.test.mjs tests/project-defects.test.mjs tests/laya-wait.test.mjs tests/laya-repair.test.mjs tests/jev-service.test.mjs tests/jev-policy.test.mjs tests/quality-contracts.test.mjs",
+    "test": "node --test tests/egress-burp-passive.test.mjs tests/egress-delegation.test.mjs tests/egress-capability-test.test.mjs tests/egress-capability-inventory.test.mjs tests/egress-proof-approval.test.mjs tests/egress-fofa.test.mjs tests/egress-browser-adapter.test.mjs tests/egress-browser-sessions.test.mjs tests/egress-mcp-client.test.mjs tests/egress-web-fetch.test.mjs tests/egress-goal-lifecycle.test.mjs tests/egress-onboarding.test.mjs tests/deployment.test.mjs tests/egress-gate.test.mjs tests/src.integration.test.mjs tests/browser-loop.test.mjs tests/blind-eval.test.mjs tests/laya-keyless.test.mjs tests/project-defects.test.mjs tests/laya-wait.test.mjs tests/laya-repair.test.mjs tests/jev-service.test.mjs tests/jev-policy.test.mjs tests/quality-contracts.test.mjs",
     "eval:blind": "node scripts/run-blind-eval.mjs",
     "ui-src:typecheck": "node src/dsh-client-ui-src/node_modules/typescript/bin/tsc -p src/dsh-client-ui-src/tsconfig.json",
     "ui-src:build": "cd src/dsh-client-ui-src && node node_modules/tsdown/dist/run.mjs && cp dist/index.js ../../lib/ui-src.client.js"
