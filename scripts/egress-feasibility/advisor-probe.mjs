@@ -1,5 +1,7 @@
 // Synthetic advisor contract calibration only: NEVER sends these target requests.
-import {mkdir,writeFile} from 'node:fs/promises';
+import {mkdtemp,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {assessEgressPlan} from '../../lib/src/egress/advisor.js';
 import {requiresHuman} from '../../lib/src/egress/plan.js';
 const cases=[
@@ -23,5 +25,6 @@ for(const [name,method,pathname,expectedLow,purpose,extra=[]] of cases){
  const advice=await assessEgressPlan(plan,{}),hardVeto=requiresHuman(plan);
  rows.push({name,expectedLow,request,hardVeto,advice});console.log(JSON.stringify({name,expectedLow,hardVeto,effect:advice.effect,risk:advice.risk,action:advice.action,confidence:advice.confidence}));
 }
-await mkdir('docs/evaluation/onboarding-repair-20261005',{recursive:true});
-await writeFile('docs/evaluation/onboarding-repair-20261005/advisor-calibration.json',JSON.stringify(rows,null,2));
+const reportPath=join(await mkdtemp(join(tmpdir(),'dsh-advisor-probe-')),'advisor-calibration.json');
+await writeFile(reportPath,JSON.stringify(rows,null,2),{mode:0o600});
+console.log(`测试产物：${reportPath}`);

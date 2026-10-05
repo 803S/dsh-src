@@ -73,3 +73,21 @@ test('test metrics select only the DSH subtree and report RSS without recording 
  assert.equal(summarizeProcessTree(raw,99).rootPresent,false);
  assert.equal(summarizeProcessTree(raw,10,[13]).totalRssKiB,150);
 });
+
+test('评测报告写入独立临时目录，不污染源码或当前工作目录',async t=>{
+ const fs=await import('node:fs');const {tmpdir}=await import('node:os');const path=await import('node:path');const {spawnSync}=await import('node:child_process');
+ const root=fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(),'dsh-report-location-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+ const cwd=path.join(root,'workspace'),home=path.join(root,'home'),output=path.join(root,'output');
+ for(const dir of [cwd,home,output])fs.mkdirSync(dir);
+ // 使用全新且未配置决策服务的DSH_HOME；只验证落盘位置，不访问供应商或目标。
+ for(const [script,count,key,status] of [['scripts/egress-feasibility/advisor-probe.mjs',12,'advice',0],['scripts/check-jev-authorization.mjs',10,'decision',2]]){
+  const child=spawnSync(process.execPath,[path.join(repo,script)],{cwd,env:{...process.env,DSH_HOME:home,TMPDIR:output,TMP:output,TEMP:output},encoding:'utf8',timeout:10000});
+  assert.equal(child.status,status,child.stderr);assert.equal(child.error,undefined);
+  const reportPath=child.stdout.split('\n').find(line=>line.startsWith('测试产物：'))?.slice('测试产物：'.length);
+  assert.ok(reportPath,child.stdout);assert.ok(reportPath.startsWith(output+path.sep));
+  const rows=JSON.parse(fs.readFileSync(reportPath,'utf8'));assert.equal(rows.length,count);
+  assert.ok(rows.every(row=>row[key].errorType==='disabled'),'不得访问真实决策服务');
+  assert.deepEqual(fs.readdirSync(cwd),[],'不能在调用目录创建docs或测试产物');
+  if(process.platform!=='win32')assert.equal(fs.statSync(reportPath).mode&0o777,0o600);
+ }
+});

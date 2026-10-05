@@ -1,5 +1,7 @@
 // Isolated decision calls only: never fetch the described target or replay pending requests.
 import fs from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import { jevDecide } from '../lib/src/decision/jev-client.js';
 import { httpDecisionPolicy } from '../lib/src/decision/http-policy.js';
 import { classifyHttpRequest } from '../lib/src/security.js';
@@ -23,6 +25,8 @@ for(const c of cases){
  const actual=policy.require?'pending':'allow';output.push({case:c,decision:d,policy,actual,passed:actual===c.expected});
  console.log(c.id,actual,'risk='+d.risk,'verdict='+d.action,d.errorType??'');
 }
-await fs.mkdir('docs/evaluation/local107',{recursive:true});await fs.writeFile('docs/evaluation/local107/authorization-check.json',JSON.stringify(output,null,2));
+const reportPath=join(await fs.mkdtemp(join(tmpdir(),'dsh-jev-authorization-')),'authorization-check.json');
+await fs.writeFile(reportPath,JSON.stringify(output,null,2),{mode:0o600});
+console.log(`测试产物：${reportPath}`);
 console.log(JSON.stringify({passed:output.filter(r=>r.passed).length,total:output.length}));
 if(output.some(r=>!r.passed))process.exitCode=2;
