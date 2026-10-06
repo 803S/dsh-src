@@ -91,4 +91,6 @@
 
 原始证据在仓库外：`~/.local/share/dsh-src/evaluation-archive/reaudit-20261006/`，包含成功和失败日志、会话trace、目标到达、逐文件SHA256清单。不把测试会话配置、凭据或运行目录复制进仓库；原有两个无关artifacts未改。
 
-部署与发布回执保存到 `~/.local/share/dsh-src/releases/0.1.0-local.112/`。北京时间15:31已完成本机部署：Web/headless均为local.112，每个profile的112个运行时文件与验收源码一致；Web由PID 29379优雅重启为35561，423个原会话ID完整保留，管理页与会话RPC正常。部署前完整备份：`/Users/lihua-dis/.dsh/backups/src-local112-20261006-153032`；源码配置、绑定密钥、范围及供应商设置均保留。Git推送与公开发行状态待实际发布后补记。
+部署与发布回执保存到 `~/.local/share/dsh-src/releases/0.1.0-local.112/`。北京时间15:31已完成本机部署：Web/headless均为local.112，每个profile的112个运行时文件与验收源码一致；Web由PID 29379优雅重启为35561，423个原会话ID完整保留，管理页与会话RPC正常。部署前完整备份：`/Users/lihua-dis/.dsh/backups/src-local112-20261006-153032`；源码配置、绑定密钥、范围及供应商设置均保留。修复提交`94587cc`和标签`v0.1.0-local.112`已推送。北京时间15:36已发布[正式发行版](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.112)并设为最新，安装包与SHA256SUMS均通过公开链接独立下载核对；189个文件、约2.03MB，解包体积相对local.111增加4402字节，无原始评测产物。安装包全部文件与标签逐字节一致；未执行npm发布。
+
+[远端静态检查](https://github.com/803S/dsh-src/actions/runs/37430621088)已通过。本次后续提交只补中文交付记录，不改已验收运行时、版本标签或发行附件。
