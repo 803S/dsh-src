@@ -6,7 +6,17 @@
 
 ---
 
-## 最新更新：local.110（2026-10-05）
+## 最新更新：local.111（2026-10-06）
+
+- Jev 自动放行授权范围内明确低风险的读取、查询和纯计算，POST 不再被一刀切交给人工。
+- 人工待审无默认时效，原单加密持久化、跨重启保留；扫描执行时长从实际启动/发送开始计算，不含人工等待。
+- 仅挂起对应操作，继续独立工作；批准绑定原请求、原参数，结果不确定不自动重试。人工批准的 bash 计划需显式恢复，不抢占独立 bash。
+- 修复真实 DSH 重启测试发现的 `TASK/SCOPE` 存储 schema 漏项；未新增依赖、数据库表或常驻服务。
+- **验收**：490 项回归通过；真实 DSH + Jev 验证低风险纯计算、挂审后继续独立工作、有限扫描、跨进程恢复及模拟等待 30 天后批准。测试仅使用自建 loopback 靶场。
+- **本机部署**：Web/headless 已更新到 `0.1.0-local.111`，Web 已重启，423 个原会话完整保留。
+- 版本安装包见 [local.111 发行页](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.111)；部署与发布凭据、旧审批兼容限制见[异步审批修复审计](docs/implementation/async-approval-repair-20261006.md)。
+
+## 历史更新：local.110（2026-10-05）
 
 - **审批与正常发包一起验收**：修复普通请求误拦、慢审查与取消、审批失效和跨会话继承问题；bash/curl 保留操作系统网络约束，不能仅靠提示词要求模型遵守。
 - **Burp 轻量接入**：审查并冻结 AI 交给原生 HTTP/1、HTTP/2 工具的参数，复用现有 Jev、范围检查、人工审批和审计链；不另建 Burp 代理或审批服务，主动发送不自动重试。
@@ -69,13 +79,13 @@
 
 完整迁移表与验证结果见 [local.106实施记录](docs/jev-service-local106.md)。
 
-## local.105：Laya 接入与分工修复
+## local.105：Laya 接入与分工修复（历史记录）
 
 - Laya仅提供低层风险、明确任务分工和文档匹配提示；复杂规划、漏洞真假及最终审批仍由主模型/代码/用户负责。
 - 本地输入保留真实请求与任务语义；默认等待120秒，可用 `DSH_SRC_LAYA_TIMEOUT_MS` 配置，无短时熔断。
 - `src_recon/src_audit/src_verify` 显式传 `intentId`，默认继承父会话实际模型；`src_recover_child(inheritParentModel=true)` 可显式沿用父当前模型，默认不改变原子模型。
 - 建议、派发、接管、checkpoint分别记录；Skill按真实文档版本去重。`completionStatus=limited` 表示受限报告，不代表完整验证。
-- 用户审批token为一次性、24小时有效，重启后需用户重新批准。Laya高置信allow不能代批。
+- 当时用户审批 token 为一次性、24 小时有效，重启后需重新批准。这是旧版行为；local.111 的目标外发待审已改为无默认时效、跨重启保留，执行预算另算。Laya 高置信 allow 不能代批。
 - 实施范围、验证证据与未宣称的效果见 [实施记录](docs/implementation-2026-09-29-laya-repair.md)。
 
 ## 环境要求
@@ -274,7 +284,7 @@ agent 会建 goal → 被动侦察收敛资产面 → 拆分 intent 并发委派
 
 ## 数据与隐私
 
-- 所有记录写入本机 `$DSH_HOME/storages/src-sessions.db`（sqlite），不出网。
+- 领域记录写入本机 `$DSH_HOME/storages/src-sessions.db`（sqlite），不自动同步云端。模型上下文会发送到已配置的模型服务；启用 Jev 时，也会向已配置服务提交脱敏后的审核语义。
 - 测试凭据（Cookie/Authorization/密码）另存本地凭证库 `$DSH_HOME/storages/src-credentials/`（内容寻址文件、0700/0600 权限），数据库与会话事件只存 `credential://` 引用，不落明文。
 - 包本身零运行时依赖、零遥测；Google dorks 等被动采集直接从你本机发出。
 

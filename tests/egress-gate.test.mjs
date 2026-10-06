@@ -66,7 +66,7 @@ test('Jev errors become pending; mutation of advisor/input/returned views cannot
   assert.ok(f.broker.dataPlane.claim('s1', plan.id, request()).dispatchId);
 });
 
-for (const patch of [{ url: 'https://fixture.invalid/%64elete?id=1' }, { url: 'https://fixture.invalid/run?operation=reset' }, { method: 'DELETE' }, { method: 'PUT', bodyBase64: Buffer.from('<x/>').toString('base64') }, { method: 'POST' }]) {
+for (const patch of [{ url: 'https://fixture.invalid/%64elete?id=1' }, { url: 'https://fixture.invalid/run?operation=reset' }, { method: 'DELETE' }, { method: 'PUT', bodyBase64: Buffer.from('<x/>').toString('base64') }, { method: 'POST', url:'https://fixture.invalid/delete' }]) {
   test(`hard boundary overrides Jev: ${JSON.stringify(patch)}`, async t => {
     const f = fixture(t);
     const planInput = input({ entries: [{ request: request(patch), maxRequests: 3 }] });
@@ -126,7 +126,7 @@ test('human reject cannot be laundered through an existing or new automatic task
 for (const mutation of ['expires', 'scope', 'credentials', 'origins', 'revoke']) {
   test(`authorization invalidation: ${mutation}`, async t => {
     const f = fixture(t); const a = await f.broker.propose('s1', input());
-    if (mutation === 'expires') f.tick(10000);
+    if (mutation === 'expires') { f.broker.startToolTask('s1',a.id,input()); f.tick(10000); }
     if (mutation === 'scope') f.scope({ revision: 'next' });
     if (mutation === 'credentials') f.scope({ credentialRevision: 'next' });
     if (mutation === 'origins') f.scope({ origins: [] });
@@ -142,7 +142,7 @@ test('scope changes during Jev do not authorize stale plan; cancellation never g
   assert.equal(g.calls(), 0);
 });
 
-test('crash/restart invalidates tasks, preserves uncertain request denial; DB has no secrets', async t => {
+test('crash/restart preserves uncertain request denial; encrypted DB has no secrets', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'src-ledger-')); t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'ledger.sqlite'); const key = randomBytes(32);
   const f = fixture(t, { file, key });
@@ -152,7 +152,7 @@ test('crash/restart invalidates tasks, preserves uncertain request denial; DB ha
   f.broker.dataPlane.claim('s1', a.id, secretRequest); f.broker.close();
   assert.equal(readFileSync(file).includes(Buffer.from('synthetic-private-secret')), false);
   const g = fixture(t, { file, key });
-  assert.throws(() => g.broker.dataPlane.claim('s1', a.id, secretRequest), code('UNKNOWN_TASK'));
+  assert.throws(() => g.broker.dataPlane.claim('s1', a.id, secretRequest), code('TASK_NOT_ACTIVE'));
   await assert.rejects(g.broker.propose('s1', plan), code('PREVIOUSLY_DENIED_OR_UNKNOWN'));
 });
 
@@ -236,6 +236,25 @@ test('manager new implicit read gets a fresh assessment after success, never aut
   assert.equal((await f.manager.fetch('s','http://127.0.0.1:49123/catalog')).status,200);
   assert.equal(f.calls(),2);assert.equal(f.sends(),2);
 });
+
+test('单笔POST纯计算由Jev自动放行，安全说明不强制转人工且实际正文不丢失',async t=>{
+ const sent=[],advice={...low,effect:'compute'};
+ const f=await managerFixture(t,{advice,send:async(url,init)=>{sent.push({url,body:init.body});return new Response('49');}});
+ const body=JSON.stringify({template:'{{7*7}}'}),url='http://127.0.0.1:49123/render';
+ for(const exec of [{},{egressSafetyPlan:{effect:'compute',object:'有界算术渲染',recovery:'无业务持久化副作用'}}]){
+  const response=await f.manager.fetch('s',url,{method:'POST',headers:{'content-type':'application/json'},body},exec);
+  assert.equal(await response.text(),'49');
+ }
+ assert.equal(f.rows.size,0);assert.equal(f.calls(),2);assert.deepEqual(sent,[{url,body},{url,body}]);
+});
+
+test('低风险计算判定不能覆盖真实删除方法、危险路径或语义不明',async t=>{
+ for(const [patch,advice] of [[{method:'DELETE'},{...low,effect:'compute'}],[{method:'POST',path:'/delete'},{...low,effect:'compute'}],[{method:'POST'},{...low,effect:'unknown'}]]){
+  const f=await managerFixture(t,{advice});
+  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123'+(patch.path??'/render'),{method:patch.method,body:'{"template":"{{7*7}}"}'}),code('PENDING_OR_REJECTED'));
+  assert.equal(f.sends(),0);assert.equal(f.rows.size,1);
+ }
+});
 test('explicit single-request plan stays exhausted and does not become an implicit renewed grant',async t=>{
  const f=await managerFixture(t),url='http://127.0.0.1:49123/catalog';
  await f.manager.propose('s',{entries:[{request:{url,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'explicit finite scan'});
@@ -260,8 +279,8 @@ test('manager human single read executes frozen bytes once; rejects model replay
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
   assert.equal(f.sends(),1);
 });
-test('manager dangerous single cannot be clicked through without safety; supersession never reassesses',async t=>{
-  const f=await managerFixture(t);
+test('manager unknown single cannot be clicked through without safety; supersession never reassesses',async t=>{
+  const f=await managerFixture(t,{advice:{...low,effect:'unknown',action:'pending'}});
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/compute',{method:'POST',body:'x'}),code('PENDING_OR_REJECTED'));
   const [row]=f.rows.values();
   await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SAFETY_PLAN_REQUIRED'));
@@ -324,27 +343,25 @@ test('proxy idle eligibility preserves unspent live tasks but not exhausted or e
   assert.equal(f.broker.hasActiveTasks('s1'),false);
   f.broker.dataPlane.finish('s1',grant.dispatchId,'response_received');
   const next=await f.broker.propose('s1',input());assert.equal(next.state,'active');
-  f.tick(10000);assert.equal(f.broker.hasActiveTasks('s1'),false);
+  f.tick(30*86400000);assert.equal(f.broker.hasActiveTasks('s1'),true);
+  f.broker.startToolTask('s1',next.id,input());f.tick(10000);assert.equal(f.broker.hasActiveTasks('s1'),false);
 });
 
-test('cold restart invalidates approval; reconciliation cannot restore automatic authority',async t=>{
+test('人工待审跨三十天与重启保留原编号及冻结请求，人工批准只执行一次',async t=>{
+ let clock=Date.now();
  const f=await managerFixture(t,{advice:{...low,action:'pending'}});
  const url='http://127.0.0.1:49123/catalog';
  await assert.rejects(f.manager.fetch('s',url));
- const [old]=f.rows.values();await f.manager.close();
+ const [old]=f.rows.values();await f.manager.close();clock+=30*86400000;
  let sends=0;
- const manager=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,assess:async()=>low,directFetch:async()=>{sends++;return new Response('ok');}});
+ const manager=await createEgressManager({home:f.home,now:()=>clock,allowLoopbackFixtures:true,storeFor:async()=>f.store,assess:async()=>low,directFetch:async sent=>{assert.equal(sent,url);sends++;return new Response('ok');}});
  try{
-  // Restart revokes ledger authority; review now reports that durable state
-  // instead of flattening all unavailable tasks into the generic stale label.
   const view=await manager.user.inspect('s',old.id);
-  assert.equal(view.state,'revoked');assert.equal(view.executable,false);assert.equal(view.sendsRequest,false);
-  await assert.rejects(manager.user.decide('s',old.id,'allow'),code('STALE_APPROVAL'));
-  const reconciled=await manager.user.reconcile('s',old.id,'cancel-never-sent','Fixture operator checked target logs: this request was never sent.');
-  assert.equal(reconciled.requiresFreshHumanApproval,true);
-  await assert.rejects(manager.fetch('s',url),code('PENDING_OR_REJECTED'));
-  const fresh=[...f.rows.values()].at(-1);assert.notEqual(fresh.id,old.id);assert.equal(sends,0);
-  await manager.user.decide('s',fresh.id,'allow');assert.equal(sends,1);
+  assert.equal(view.state,'pending');assert.equal(view.expires,null);
+  await assert.rejects(manager.fetch('s',url),e=>e.approvalId===old.id);
+  assert.equal(f.rows.size,1);assert.equal(sends,0);
+  await manager.user.decide('s',old.id,'allow');assert.equal(sends,1);
+  await assert.rejects(manager.user.decide('s',old.id,'allow'));assert.equal(sends,1);
  }finally{await manager.close();}
 });
 test('uncertain host execution is one-shot; user reconciliation requires evidence and fresh approval',async t=>{
@@ -363,9 +380,9 @@ test('uncertain host execution is one-shot; user reconciliation requires evidenc
  await f.manager.user.decide('s',fresh.id,'allow');assert.equal(f.sends(),2);
 });
 
-test('expired unused active task can be reconciled without reviving its grant',async t=>{
+test('已开始但未发包的工具执行窗口到期可核对撤销，不续期授权',async t=>{
  const f=fixture(t);const task=await f.broker.propose('s1',input());
- f.tick(10000);
+ f.broker.startToolTask('s1',task.id,input());f.tick(10000);
  assert.throws(()=>f.broker.dataPlane.claim('s1',task.id,request()),code('EXPIRED'));
  const result=f.broker.commandPlane.reconcile('s1',task.id,'cancel-never-sent','Operator verified this expired fixture task did not send any request.');
  assert.equal(result.requiresFreshHumanApproval,true);
@@ -386,7 +403,7 @@ test('native tool resume uses approved frozen plan once without new review or ex
  for(const patch of [{minIntervalMs:500},{maxRequests:2},{entries:[{request:request({url:'https://fixture.invalid/other'}),maxRequests:3}]}])assert.throws(()=>f.broker.startToolTask('tool-resume',plan.id,{...body,...patch}),code('PLAN_CHANGED'));
  f.tick(1000);
  const resumed=f.broker.startToolTask('tool-resume',plan.id,body);
- assert.equal(resumed.expiresAt,plan.expiresAt);assert.equal(f.calls(),1);
+ assert.equal(plan.expiresAt,null);assert.equal(resumed.expiresAt,12000);assert.equal(f.calls(),1);
  assert.throws(()=>f.broker.startToolTask('tool-resume',plan.id,body),code('TOOL_TASK_ALREADY_STARTED'));
  const grant=f.broker.dataPlane.claim('tool-resume',plan.id,request());
  f.broker.dataPlane.finish('tool-resume',grant.dispatchId,'response_received');
@@ -396,10 +413,10 @@ test('native tool cannot resume rejected, expired, scope-changed or already-used
  for(const state of ['rejected','expired','scope-changed','used']){
   const f=fixture(t),body=input(),plan=await f.broker.propose('tool-'+state,body);
   if(state==='rejected')f.broker.commandPlane.revoke('tool-'+state,plan.id);
-  if(state==='expired')f.tick(10001);
+  if(state==='expired'){f.broker.startToolTask('tool-'+state,plan.id,body);f.tick(10001);}
   if(state==='scope-changed')f.scope({revision:'new-scope'});
   if(state==='used'){const grant=f.broker.dataPlane.claim('tool-'+state,plan.id,request());f.broker.dataPlane.finish('tool-'+state,grant.dispatchId,'response_received');}
-  assert.throws(()=>f.broker.startToolTask('tool-'+state,plan.id,body),code({'rejected':'TASK_NOT_AUTHORIZED','expired':'EXPIRED','scope-changed':'SCOPE_CHANGED','used':'TOOL_TASK_ALREADY_STARTED'}[state]));
+  assert.throws(()=>f.broker.startToolTask('tool-'+state,plan.id,body),code({'rejected':'TASK_NOT_AUTHORIZED','expired':'TOOL_TASK_ALREADY_STARTED','scope-changed':'SCOPE_CHANGED','used':'TOOL_TASK_ALREADY_STARTED'}[state]));
  }
 });
 
@@ -447,13 +464,13 @@ test('assessment queue is bounded, cancellable, FIFO and closes without strandin
  release();assert.deepEqual(queue.status(),{active:0,queued:0,closed:true});await assert.rejects(queue.acquire(),code('CLOSED'));
 });
 
-test('queued assessment rechecks scope and expiry before contacting Jev',async t=>{
+test('排队审核仍检查实际范围变更，但等待不消耗执行窗口',async t=>{
  for(const mode of ['scope','expiry']){
   let release;const held=new Promise(resolve=>release=resolve);const f=fixture(t,{assess:async()=>{await held;return low;}});
   const work=Promise.allSettled(Array.from({length:5},(_,i)=>f.broker.propose('s'+i,input())));
   await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls(),4);
   if(mode==='scope')f.scope({revision:'changed'});else f.tick(20000);
-  release();const result=await work;assert.ok(result.every(r=>r.status==='rejected'));assert.equal(f.calls(),4);
+  release();const result=await work;assert.ok(result.every(r=>r.status===(mode==='scope'?'rejected':'fulfilled')));assert.equal(f.calls(),mode==='scope'?4:5);
  }
 });
 
@@ -501,4 +518,126 @@ test('relay idle allowance covers queued review and the private control deadline
  assert.ok(RELAY_IDLE_TIMEOUT_MS>RESPONSE_SLOT_WAIT_MS+CONTROL_TIMEOUT_MS);assert.ok(RELAY_IDLE_TIMEOUT_MS<=300000);
  const proxy=readFileSync(new URL('../lib/src/egress/proxy-process.js',import.meta.url),'utf8');
  for(const endpoint of ['client','backend'])assert.ok(proxy.includes(endpoint+'.setTimeout(RELAY_IDLE_TIMEOUT_MS,'));
+});
+
+test('待审积压不占满内存配额，跨重启恢复密文且绑定原会话与摘要',async t=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'egress-pending-durable-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const file=path.join(dir,'ledger.sqlite'),key=randomBytes(32),f=fixture(t,{file,key,assess:()=>({...low,action:'pending'})});
+ const tasks=[];
+ for(let i=0;i<140;i++)tasks.push(await f.broker.propose('s1',input({entries:[{request:request({url:`https://fixture.invalid/item/${i}`,headers:[['authorization','Bearer frozen-secret']]}),maxRequests:1}],maxRequests:1})));
+ f.broker.close();assert.equal(readFileSync(file).includes(Buffer.from('frozen-secret')),false);
+ const g=fixture(t,{file,key});g.tick(90*86400000);
+ const first=g.broker.commandPlane.inspect('s1',tasks[0].id);assert.equal(first.state,'pending');assert.equal(first.expires,null);
+ assert.equal(first.plan.entries[0].request.headers[0][1],'Bearer frozen-secret');
+ assert.throws(()=>g.broker.commandPlane.inspect('other',tasks[0].id),code('UNKNOWN_TASK'));
+ g.broker.commandPlane.decide('s1',tasks[0].id,tasks[0].digest,'allow');
+ const claim=g.broker.dataPlane.claim('s1',tasks[0].id,first.plan.entries[0].request);g.broker.dataPlane.finish('s1',claim.dispatchId,'response_received');
+ assert.throws(()=>g.broker.dataPlane.claim('s1',tasks[0].id,first.plan.entries[0].request),code('BUDGET_EXHAUSTED'));
+});
+
+test('审批密文篡改、移植与旧版缺少原文不能恢复发送',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ for(const mode of ['tamper','transplant','legacy']){
+  const dir=mkdtempSync(path.join(tmpdir(),'egress-cipher-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const file=path.join(dir,'ledger.sqlite'),key=randomBytes(32),f=fixture(t,{file,key,assess:()=>({...low,action:'pending'})});
+  const a=await f.broker.propose('s1',input()),b=await f.broker.propose('s2',input());f.broker.close();
+  const db=new DatabaseSync(file),manifest=JSON.parse(db.prepare('SELECT manifest FROM gate_tasks WHERE id=?').get(a.id).manifest);
+  if(mode==='tamper')manifest.frozen.data='X'+manifest.frozen.data.slice(1);
+  if(mode==='transplant')manifest.frozen=JSON.parse(db.prepare('SELECT manifest FROM gate_tasks WHERE id=?').get(b.id).manifest).frozen;
+  if(mode==='legacy')delete manifest.frozen;
+  db.prepare('UPDATE gate_tasks SET manifest=? WHERE id=?').run(JSON.stringify(manifest),a.id);db.close();
+  const g=fixture(t,{file,key});assert.throws(()=>g.broker.commandPlane.decide('s1',a.id,a.digest,'allow'),code('FROZEN_PLAN_UNAVAILABLE'));
+ }
+});
+
+test('批准后等待不消耗有限扫描预算，启动时间和已用次数不能经重启重置',async t=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'egress-scan-resume-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
+ const file=path.join(dir,'ledger.sqlite'),key=randomBytes(32),f=fixture(t,{file,key,assess:()=>({...low,action:'pending'})});
+ const task=await f.broker.propose('s1',input());f.tick(7*86400000);f.broker.commandPlane.decide('s1',task.id,task.digest,'allow');f.broker.close();
+ const g=fixture(t,{file,key});g.tick(60*86400000);
+ const started=g.broker.startToolTask('s1',task.id,input());assert.ok(started.expiresAt>60*86400000);
+ const grant=g.broker.dataPlane.claim('s1',task.id,request());g.broker.dataPlane.finish('s1',grant.dispatchId,'response_received');g.broker.close();
+ const h=fixture(t,{file,key});assert.equal(h.broker.commandPlane.history('s1',task.id).used,1);
+ assert.throws(()=>h.broker.startToolTask('s1',task.id,input()),code('TASK_NOT_AUTHORIZED'));
+ assert.throws(()=>h.broker.dataPlane.claim('s1',task.id,request()),code('TASK_NOT_ACTIVE'));
+});
+
+test('同资源待审删除不阻塞Jev明确允许的独立读取，未知POST不能借用读取权限',async t=>{
+ const advice=plan=>({...low,...(plan.entries.some(e=>e.request.method==='POST')?{effect:'unknown',action:'pending'}:{})});
+ const f=fixture(t,{assess:advice}),url='https://fixture.invalid/item';
+ await f.broker.propose('s1',input({entries:[{request:request({url,method:'DELETE'}),maxRequests:1}],maxRequests:1}));
+ const read=await f.broker.propose('s1',input({entries:[{request:request({url}),maxRequests:1}],maxRequests:1}));
+ assert.equal(read.state,'active');const grant=f.broker.dataPlane.claim('s1',read.id,request({url}));f.broker.dataPlane.finish('s1',grant.dispatchId,'response_received');
+ const post=await f.broker.propose('s1',input({entries:[{request:request({url,method:'POST'}),maxRequests:1}],maxRequests:1}));assert.equal(post.state,'pending');
+});
+
+test('明确低风险计算的前置与后置检查真实执行，前提变更不发送正文',async t=>{
+ const {createHash}=await import('node:crypto');const digest=text=>createHash('sha256').update(text).digest('hex');
+ for(const changed of [false,true]){
+  const sends=[],url='http://127.0.0.1:49123/render',state='http://127.0.0.1:49123/state';
+  const f=await managerFixture(t,{advice:{...low,effect:'compute'},send:async(url,init)=>{sends.push([url,init.method]);return new Response(url===state?changed?'changed':'before':'49');}});
+  const check={request:{url:state,method:'GET'},status:200,bodySha256:digest('before')};
+  const work=f.manager.fetch('s',url,{method:'POST',body:'{"template":"{{7*7}}"}'},{egressSafetyPlan:{effect:'compute',precondition:check,verification:check}});
+  if(changed){await assert.rejects(work,code('PRECONDITION_CHANGED'));assert.deepEqual(sends,[[state,'GET']]);}
+  else{assert.equal(await(await work).text(),'49');assert.deepEqual(sends,[[state,'GET'],[url,'POST'],[state,'GET']]);}
+  assert.equal(f.rows.size,0);
+ }
+});
+
+test('显式无效计算检查不能被忽略或发送',async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'compute'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body:'{}'},{egressSafetyPlan:{effect:'compute',precondition:'随便读取即可'}}));assert.equal(f.sends(),0);
+});
+
+test('审计写入失败不消耗原待审单，并发批准也只能发送一次',async t=>{
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}});await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ const [row]=f.rows.values(),update=f.store.updateApprovalExecution;f.store.updateApprovalExecution=async()=>{throw new Error('audit unavailable');};
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow'));assert.equal(f.sends(),0);
+ f.store.updateApprovalExecution=update;const results=await Promise.allSettled([f.manager.user.decide('s',row.id,'allow'),f.manager.user.decide('s',row.id,'allow')]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.sends(),1);
+});
+
+test('待办写入中断后重新读取同请求补齐原任务卡片，不产生无编号永久锁',async t=>{
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}}),add=f.store.addPendingApproval;
+ f.store.addPendingApproval=async()=>{throw new Error('store unavailable');};
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ f.store.addPendingApproval=add;
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),e=>e.approvalId==='approval-1');
+ assert.equal(f.calls(),1);await f.manager.user.decide('s','approval-1','allow');assert.equal(f.sends(),1);
+});
+
+test('域名中的危险词不能把普通读取误判为高危动作',()=>{
+ for(const host of ['mail','payment','upload','command','dropbox'])assert.equal(requiresHuman({entries:[{request:request({url:`https://${host}.fixture.invalid/read`})}]}),false);
+ assert.equal(requiresHuman({entries:[{request:request({url:'https://mail.fixture.invalid/delete'})}]}),true);
+});
+
+test('补材料后发布中断可从旧编号恢复同一新单，正文和安全材料均不重建',async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',action:'pending'}}),url='http://127.0.0.1:49123/render';
+ await assert.rejects(f.manager.fetch('s',url,{method:'POST',body:'{"template":"{{7*7}}"}'}));
+ const [old]=f.rows.values(),add=f.store.addPendingApproval,safety={effect:'compute',object:'原冻结计算',recovery:'不自动重试'};
+ f.store.addPendingApproval=async()=>{throw new Error('storage interrupted');};
+ await assert.rejects(f.manager.preparePending('s',old.id,safety));f.store.addPendingApproval=add;
+ const resumed=await f.manager.preparePending('s',old.id,safety);assert.ok(resumed.approvalId);assert.equal(f.rows.size,2);assert.equal(old.executionState,'superseded');
+ const view=await f.manager.user.inspect('s',resumed.approvalId);assert.equal(view.plan.hostExecution.request.body,'{"template":"{{7*7}}"}');
+ await f.manager.user.decide('s',resumed.approvalId,'allow');assert.equal(f.sends(),1);
+});
+
+test('bash计划待审及人工批准都不抢占独立bash，显式恢复后只绑定一次实际启动',async t=>{
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}}),body={entries:[{request:{url:'http://127.0.0.1:49123/catalog',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:10000,purpose:'有界扫描'};
+ const task=await f.manager.proposeShellTask('s',body,{});assert.equal(task.state,'pending');
+ assert.throws(()=>f.manager.claimShellTask('s',task.id),code('STALE_SHELL_TASK'));
+ const decision=await f.manager.user.decide('s',task.approvalId,'allow');assert.equal(decision.resumeTool,'src_egress_plan');
+ assert.throws(()=>f.manager.claimShellTask('s',task.id),code('STALE_SHELL_TASK'));
+ assert.equal((await f.manager.proposeShellTask('s',body,{},task.id)).id,task.id);assert.equal(f.calls(),1);
+ f.manager.claimShellTask('s',task.id);
+ assert.throws(()=>f.manager.claimShellTask('s',task.id),code('STALE_SHELL_TASK'));
+ await assert.rejects(f.manager.proposeShellTask('s',body,{},task.id),code('TASK_NOT_AUTHORIZED'));
+});
+
+test('范围变更后旧单不能批准，但用户仍能明确拒绝清理待办',async t=>{
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));const [row]=f.rows.values();
+ await f.manager.user.setScope('s',['http://127.0.0.1:49123']);
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SCOPE_CHANGED'));
+ assert.equal((await f.manager.user.decide('s',row.id,'reject')).state,'denied');assert.equal(row.status,'rejected');assert.equal(f.sends(),0);
 });

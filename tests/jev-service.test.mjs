@@ -139,6 +139,19 @@ test('risk rubric separates read semantics from write recovery and never upgrade
  };
  const r=await jevDecide({taskType:'risk-grade',scopeChecked:true,method:'GET',url:'https://fixture.test/catalog/7'},exec);
  assert.equal(r.risk,'unknown');assert.equal(r.action,'allow');
- const {allowsLowImpactRead}=await import('../lib/src/egress/decision-policy.js');
- assert.equal(allowsLowImpactRead(r),false);assert.equal(calls,1);
+ const {allowsLowImpact}=await import('../lib/src/egress/decision-policy.js');
+ assert.equal(allowsLowImpact(r),false);assert.equal(calls,1);
+});
+
+test('复合安全计划发给Jev时所有嵌套请求均脱敏，不残留base64凭据副本',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});
+ const secret='nested-body-secret',request={method:'POST',url:'https://fixture.invalid/compute',headers:[['authorization','Bearer nested-header-secret']],bodyBase64:Buffer.from(JSON.stringify({password:secret,template:'{{7*7}}'})).toString('base64')};
+ globalThis.fetch=async(_url,init)=>{
+  assert.ok(!init.body.includes(secret));assert.ok(!init.body.includes('nested-header-secret'));assert.ok(!init.body.includes('bodyBase64'));assert.ok(!init.body.includes(request.bodyBase64));
+  const p=JSON.parse(init.body);assert.equal(p.state.plan.hostExecution.request.body.includes('{{7*7}}'),true);
+  const value=answer('compute',Object.keys(p.questions.decision.criteria));value.answers.risk={choice:'low',confidence:.99,probabilities:{low:1,high:0,unknown:0}};value.answers.verdict={choice:'allow',confidence:.99,probabilities:{allow:1,pending:0}};
+  return new Response(JSON.stringify(value));
+ };
+ const plan={entries:[{request,maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'计算',hostExecution:{request,safety:{effect:'compute',object:'算术',recovery:'无自动重试'}}};
+ const result=await jevDecide({taskType:'scan-plan',plan,scopeChecked:true},exec);assert.equal(result.effect,'compute');assert.equal(result.fallback,false);
 });

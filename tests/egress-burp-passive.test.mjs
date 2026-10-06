@@ -14,7 +14,7 @@ test('Burp passive tools use an exact catalog and bounded history parameters',()
  assert.deepEqual(passiveBurpArguments('mcp__burp__burp_status',{}),{});
 });
 
-import {inspectBurpRequest,createBurpSender} from '../lib/src/egress/burp-request.js';
+import {inspectBurpRequest,createBurpSender,createBurpRestorer} from '../lib/src/egress/burp-request.js';
 import {createEgressManager} from '../lib/src/egress/manager.js';
 import {withEgressExecution} from '../lib/src/egress/runtime.js';
 import {browserLifecycle} from '../lib/src/egress/browser-lifecycle.js';
@@ -56,22 +56,24 @@ test('Burp cannot hide targets, request bodies, framing or extra invocations in 
  const raw=args2();raw.headers={connection:'close'};assert.throws(()=>inspectBurpRequest(h2,raw));
  assert.throws(()=>inspectBurpRequest('mcp__burp__set_project_options',{}));
 });
-async function setup(t,{assess=()=>low,send,read,home}={}){
- const directory=home??mkdtempSync(path.join(tmpdir(),'burp-gate-')),domain={},rows=new Map(),observations=[],sent=[],reads=[],events=new Map(),effects=[];
+async function setup(t,{assess=()=>low,send,read,home,prior,now}={}){
+ const directory=home??mkdtempSync(path.join(tmpdir(),'burp-gate-')),domain=prior?.domain??{},rows=prior?.rows??new Map(),observations=[],sent=[],reads=[],events=new Map(),effects=[];
  const store={domain:async()=>domain,async addPendingApproval(sessionId,row){const value={...row,sessionId,status:'pending',createdAt:Date.now(),id:'approval-'+(rows.size+1)};rows.set(value.id,value);return value;},
   async getPendingApproval(session,id){const row=rows.get(id);return row?.sessionId===session?row:undefined;},
   async listScopeApprovals(session){return [...rows.values()].filter(row=>row.sessionId===session&&row.method==='SCOPE');},
   async updateApprovalExecution(session,id,patch){const row=await this.getPendingApproval(session,id);assert.ok(row);Object.assign(row,patch);},
   async upsertObservation(session,row){observations.push(row);return {id:'observation-'+observations.length};}};
- let adviceCalls=0;
- const manager=await createEgressManager({home:directory,allowLoopbackFixtures:true,lifecycle:browserLifecycle(domain),storeFor:async()=>store,assess:async(...input)=>{adviceCalls++;return assess(...input);},directFetch:async(url,init)=>{reads.push({url,init});return read?read(url,init):new Response('before');}});
+ let adviceCalls=0,restore;
+ const manager=await createEgressManager({home:directory,now,restoreBurp:(...args)=>restore(...args),allowLoopbackFixtures:true,lifecycle:browserLifecycle(domain),storeFor:async()=>store,assess:async(...input)=>{adviceCalls++;return assess(...input);},directFetch:async(url,init)=>{reads.push({url,init});return read?read(url,init):new Response('before');}});
  let native={execute:async(raw,exec)=>{sent.push({args:structuredClone(raw),signal:exec.signal});return send?send(raw,exec):{content:[{type:'text',text:'native fixture response'}]};}};
- const ctx={tools:{get:()=>native},on:(name,fn)=>events.set(name,fn),effect:fn=>effects.push(fn())};
+ const source={name:'@deepseek-ai/dsh-mcp-client',config:{serverName:'burp',transport:'streamable-http',url:'http://127.0.0.1:49999/mcp'}};
+ const ctx={get:name=>name==='loader'?{entries:function*(){yield {options:source};}}:undefined,tools:{get:()=>native},on:(name,fn)=>events.set(name,fn),effect:fn=>effects.push(fn())};
+ restore=createBurpRestorer(ctx,store);
  const execute=createBurpSender(ctx,store),agent={session:{id:'s'}};
  const run=(raw=args(),{name=h1,owner=agent,signal=new AbortController().signal}={})=>{const exec={name,arguments:raw,agent:owner,signal,callId:randomUUID()};return withEgressExecution({exec,sessionId:'s',manager},()=>execute(exec));};
- await manager.user.setScope('s',[origin]);
+ if(!prior)await manager.user.setScope('s',[origin]);
  t.after(async()=>{for(const effect of effects)effect();await manager.close();if(!home)rmSync(directory,{recursive:true,force:true});});
- return {run,manager,domain,rows,observations,sent,reads,store,agent,events,home:directory,calls:()=>adviceCalls,replaceTool:()=>{native={...native};},dispose:()=>effects.forEach(effect=>effect())};
+ return {run,manager,domain,rows,observations,sent,reads,store,agent,events,home:directory,calls:()=>adviceCalls,changeSource:()=>{source.config.url='http://127.0.0.1:49998/mcp';},replaceTool:()=>{native={...native};},dispose:()=>effects.forEach(effect=>effect())};
 }
 const pending=result=>JSON.parse(result.value.content[0].text);
 test('Burp normal HTTP1/HTTP2 reads invoke the real tool body, not directFetch, with zero proxy workers',async t=>{
@@ -90,8 +92,8 @@ test('Jev unknown holds Burp before dispatch; user approval sends captured bytes
  assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
  await assert.rejects(f.manager.user.decide('s',row.id,'allow'));assert.equal(f.sent.length,1);
 });
-test('Burp mutations retain existing safety requirements and use native send only after fresh approval',async t=>{
- const f=await setup(t);const raw=args('POST','/compute','{"x":1}');
+test('Burp unknown operations retain safety requirements and use native send only after fresh approval',async t=>{
+ const f=await setup(t,{assess:()=>({...low,effect:'unknown',action:'pending'})});const raw=args('POST','/compute','{"x":1}');
  const held=pending(await f.run(raw));assert.equal(f.sent.length,0);
  await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_SAFETY_PLAN_REQUIRED'});
  const next=await f.manager.preparePending('s',held.approvalId,{effect:'compute',object:'synthetic computation',recovery:'No persistent mutation in the owned fixture'});
@@ -108,7 +110,7 @@ test('Burp delete preserves backup/precondition/verification: only the frozen pr
  const result=await f.manager.user.decide('s',next.approvalId,'allow');assert.equal(result.writeOutcome.verification,'matched');assert.equal(f.sent.length,1);assert.equal(f.reads.length,2);assert.ok(f.reads.every(r=>r.url===origin+'/state'));
 });
 test('Burp HTTP2 approval preserves exact pseudoheaders and body and executes once',async t=>{
- const f=await setup(t),raw=args2();raw.pseudoHeaders[':method']='POST';raw.pseudoHeaders[':path']='/compute';raw.requestBody='{"x":1}';
+ const f=await setup(t,{assess:()=>({...low,effect:'unknown',action:'pending'})}),raw=args2();raw.pseudoHeaders[':method']='POST';raw.pseudoHeaders[':path']='/compute';raw.requestBody='{"x":1}';
  const copy=structuredClone(raw),held=pending(await f.run(raw,{name:h2}));raw.requestBody='changed';
  const next=await f.manager.preparePending('s',held.approvalId,{effect:'compute',object:'synthetic calculation',recovery:'no persistent change'});
  await f.manager.user.decide('s',next.approvalId,'allow');assert.deepEqual(f.sent.map(s=>s.args),[copy]);
@@ -126,7 +128,7 @@ test('Burp failed precondition prevents primary send; failed verification quaran
  }
 });
 for(const failure of ['transport','evidence','invalid-result'])test('Approved Burp uncertain outcome is recorded and never replayed: '+failure,async t=>{
- const f=await setup(t,{send:()=>{if(failure==='transport')throw new Error('connection lost');return failure==='invalid-result'?{isError:true,content:[]}:{content:[{type:'text',text:'sent'}]};}});
+ const f=await setup(t,{assess:()=>({...low,effect:'unknown',action:'pending'}),send:()=>{if(failure==='transport')throw new Error('connection lost');return failure==='invalid-result'?{isError:true,content:[]}:{content:[{type:'text',text:'sent'}]};}});
  const held=pending(await f.run(args('POST','/compute','x')));
  const next=await f.manager.preparePending('s',held.approvalId,{effect:'compute',object:'synthetic calculation',recovery:'no persistent change'});
  if(failure==='evidence')f.store.upsertObservation=async()=>{throw new Error('fixture evidence write failed');};
@@ -142,7 +144,7 @@ for(const invalidate of ['reject','scope','reset','dispose','tool','cancel','aud
  if(invalidate==='dispose')f.dispose();if(invalidate==='tool')f.replaceTool();
  if(invalidate==='audit-failure')f.store.updateApprovalExecution=async()=>{throw new Error('fixture audit write failed');};
  await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow','',invalidate==='cancel'?AbortSignal.abort():undefined));assert.equal(f.sent.length,0);
- if(['dispose','tool'].includes(invalidate))assert.equal(f.rows.get(held.approvalId).executionState,'failed-before-send');
+ if(['dispose','tool'].includes(invalidate))assert.equal(f.rows.get(held.approvalId).status,'pending'); // unavailable sender does not consume the human decision
 });
 test('Burp transport failure is unknown, never replayed, and blocks HTTP/curl aliases',async t=>{
  const f=await setup(t,{send:()=>{throw new Error('connection lost after dispatch');}});
@@ -158,10 +160,23 @@ test('Burp cancellation while Jev is pending never sends a late result',async t=
  let release,ready;const entered=new Promise(r=>ready=r);const f=await setup(t,{assess:()=>{ready();return new Promise(r=>release=r);}}),controller=new AbortController();
  const work=f.run(args(),{signal:controller.signal});await entered;controller.abort();release(low);await assert.rejects(work);assert.equal(f.sent.length,0);
 });
-test('Burp unknown approvals survive neither process restart nor a missing original tool callback',async t=>{
+test('Burp待审跨三十天及重启，原生用户上下文恢复原参数且只发一次',async t=>{
  const home=mkdtempSync(path.join(tmpdir(),'burp-restart-'));t.after(()=>rmSync(home,{recursive:true,force:true}));
- const f=await setup(t,{home,assess:()=>({...low,action:'pending'})});const held=pending(await f.run());await f.manager.close();
- const next=await setup(t,{home});await assert.rejects(next.manager.user.decide('s',held.approvalId,'allow'));assert.equal(next.sent.length,0);
+ const f=await setup(t,{home,assess:()=>({...low,action:'pending'})}),raw=args(),held=pending(await f.run(raw));await f.manager.close();
+ const next=await setup(t,{home,prior:f,now:()=>Date.now()+30*86400000});
+ assert.equal((await next.manager.user.inspect('s',held.approvalId)).state,'pending');
+ await assert.rejects(next.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_BURP_USER_CONTEXT_REQUIRED'});
+ const result=await next.manager.user.decide('s',held.approvalId,'allow','',undefined,{agent:next.agent,callId:'human-resume'});
+ assert.equal(result.executionState,'executed');assert.deepEqual(next.sent.map(s=>s.args),[raw]);assert.equal(next.reads.length,0);
+ await assert.rejects(next.manager.user.decide('s',held.approvalId,'allow','',undefined,{agent:next.agent}));assert.equal(next.sent.length,1);
+});
+
+test('Burp重启后配置或工具来源改变不能用旧审批发送，也不能换成HTTP',async t=>{
+ const home=mkdtempSync(path.join(tmpdir(),'burp-source-change-'));t.after(()=>rmSync(home,{recursive:true,force:true}));
+ const f=await setup(t,{home,assess:()=>({...low,action:'pending'})}),held=pending(await f.run());await f.manager.close();
+ const next=await setup(t,{home,prior:f});next.changeSource();
+ await assert.rejects(next.manager.user.decide('s',held.approvalId,'allow','',undefined,{agent:next.agent}),{code:'SRC_GATE_BURP_TOOL_CHANGED'});
+ assert.equal(next.sent.length,0);assert.equal(next.reads.length,0);assert.equal(next.rows.get(held.approvalId).status,'pending');
 });
 
 import {createServer} from 'node:http';
@@ -197,4 +212,13 @@ test('actual bridge still heals read-only history and sends valid HTTP2-shaped a
  const f=await bridgeFixture(t,{dropFirst:true});const result=await f.request('tools/call',{name:'get_proxy_http_history',arguments:{count:1,offset:0}});
  assert.ok(result.result);assert.equal(f.calls.length,2);
  const two=await f.request('tools/call',{name:'send_http2_request',arguments:args2()});assert.ok(two.result);assert.equal(f.calls.length,3);assert.deepEqual(f.calls[2].arguments,args2());
+});
+
+test('Burp会话冷却后重新载入不要求重启整个服务，用户新上下文恢复同源原参数',async t=>{
+ const f=await setup(t,{assess:()=>({...low,action:'pending'})}),raw=args(),held=pending(await f.run(raw));
+ f.events.get('session/disposed')(f.agent.session);
+ const resumedAgent={session:{id:'s'}};
+ await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_BURP_SESSION_CLOSED'});
+ const result=await f.manager.user.decide('s',held.approvalId,'allow','',undefined,{agent:resumedAgent,callId:'human-after-idle'});
+ assert.equal(result.executionState,'executed');assert.deepEqual(f.sent.map(s=>s.args),[raw]);assert.equal(f.reads.length,0);
 });

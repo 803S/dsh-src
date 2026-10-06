@@ -121,7 +121,8 @@ export function apply(ctx, config) {
     await ctx.get('loader')?.await();
     const [{ installModelSelection }, { createUserMessage }, { SessionId }] = await Promise.all(['dsh-agent','dsh-llm','dsh-session'].map((p) => import(`${config.aiRoot}/${p}/lib/index.js`)));
     const selection = ctx.agentDefaultModel.currentSelection();
-    const agentHandle = await agents.create({ sessionId: SessionId(`session-${randomUUID()}`), meta: { cwd: process.cwd() }, agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 1800 }, setup: async (agentCtx) => {
+    const resumeSession=process.env.DSH_EVAL_RESUME_SESSION;
+    const agentHandle = await agents[resumeSession?'resume':'create']({ ...(resumeSession?{resumeSessionId:SessionId(resumeSession)}:{sessionId:SessionId(`session-${randomUUID()}`),meta:{cwd:process.cwd()}}), agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 1800 }, setup: async (agentCtx) => {
       await ctx.agentPresets.mount(agentCtx, 'src-hunter');
       installModelSelection(agentCtx, { current: selection, assembled: undefined });
     } });
@@ -523,7 +524,8 @@ export function apply(ctx, config) {
         }catch(error){await finish('error',error);}
       });
     }
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: config.task }], source: { kind: 'user' } }));
+    if(resumeSession){const {resumeDurableApproval}=await import('./durable-approval-model.mjs');await resumeDurableApproval(ctx,agent,manager,process.env.DSH_EVAL_RESUME_APPROVAL,log);}
+    else agent.followup(createUserMessage({ content: [{ type: 'text', text: config.task }], source: { kind: 'user' } }));
     // Do not exit when commander first yields: background child completion can wake it again.
     let quiet = 0;
     while (!finished) {

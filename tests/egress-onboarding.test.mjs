@@ -111,11 +111,12 @@ test('single-request advisor receives actual method URL and headers, not an opaq
  await assessEgressPlan(batch,{},decide);assert.equal(seen.taskType,'scan-plan');assert.deepEqual(seen.plan,batch);
 });
 
-import {allowsLowImpactRead} from '../lib/src/egress/decision-policy.js';
+import {allowsLowImpact} from '../lib/src/egress/decision-policy.js';
 import {requiresHuman} from '../lib/src/egress/plan.js';
 test('validated read/low/allow is not overridden by an uncalibrated aggregate-confidence threshold',()=>{
- assert.equal(allowsLowImpactRead({...low,confidence:.42}),true);
- for(const patch of [{effect:'unknown'},{risk:'unknown'},{risk:'high'},{action:'pending'},{effect:'write'},{fallback:true},{mode:'shadow'},{confidence:NaN},{confidence:-1},{confidence:1.1}])assert.equal(allowsLowImpactRead({...low,...patch}),false);
+ assert.equal(allowsLowImpact({...low,confidence:.42}),true);
+ assert.equal(allowsLowImpact({...low,effect:'compute'}),true);
+ for(const patch of [{effect:'unknown'},{risk:'unknown'},{risk:'high'},{action:'pending'},{effect:'write'},{fallback:true},{mode:'shadow'},{confidence:NaN},{confidence:-1},{confidence:1.1}])assert.equal(allowsLowImpact({...low,...patch}),false);
 });
 test('credentials alone are not a destructive action; method overrides and indirect requests still veto',()=>{
  const request={url:'https://fixture.invalid/account',method:'GET',headers:[['authorization','Bearer fixture'],['cookie','session=fixture']],bodyBase64:''};
@@ -156,7 +157,7 @@ function durableScopeFixture(){
   async updateApprovalExecution(session,id,patch){const row=await this.getPendingApproval(session,id);if(!row)throw new Error('missing');Object.assign(row,patch);return row;}
  };
  const create=()=>createScopeRequests({storeFor:async()=>store,getScope:()=>scope,now:()=>time,setScope:async(session,origins,{ifAbsent}={})=>{if(ifAbsent&&scope)throw Object.assign(new Error('stale'),{code:'SRC_GATE_STALE_APPROVAL'});scope={origins};}});
- return {rows,store,create,advance:()=>{time+=900001;},scope:()=>scope};
+ return {rows,store,create,advance:(ms=900001)=>{time+=ms;},scope:()=>scope};
 }
 async function missingScope(gate,session='scope-durable',origin='https://fixture.invalid'){
  let result;try{await gate.require(session,[origin]);}catch(error){result=error;}
@@ -175,15 +176,14 @@ test('scope rejection remains terminal across restart and expiry without repromp
  assert.equal(again.state,'rejected');assert.equal(again.approvalId,p.approvalId);assert.equal(f.rows.size,1);
  assert.match(again.nextAction,/用户已拒绝/);assert.equal(f.scope(),undefined);
 });
-test('expired pending scope gets a fresh ID, old approval cannot grant, cache cannot fill permanently',async()=>{
- const f=durableScopeFixture(),gate=f.create();let first;
- for(let i=0;i<140;i++){
-  const p=await missingScope(gate);first??=p.approvalId;
-  assert.equal(p.state,'pending');if(i>0)assert.notEqual(p.approvalId,first);
-  f.advance();
- }
- await assert.rejects(gate.decide('scope-durable',first,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
- assert.equal(f.scope(),undefined);assert.equal([...f.rows.values()].filter(r=>r.status==='pending').length,1);
+test('范围待审跨三十天及重启保留原单，人工确认不受执行时间预算限制',async()=>{
+ const f=durableScopeFixture(),gate=f.create(),first=await missingScope(gate);
+ f.advance(30*24*60*60*1000);gate.clear();const restored=f.create();
+ for(let i=0;i<140;i++)assert.equal((await missingScope(restored)).approvalId,first.approvalId);
+ assert.equal((await restored.inspect('scope-durable',first.approvalId)).state,'pending');
+ assert.equal(f.rows.size,1);assert.equal(f.scope(),undefined);
+ assert.equal((await restored.decide('scope-durable',first.approvalId,'allow')).sent,false);
+ assert.deepEqual(f.scope().origins,['https://fixture.invalid']);
 });
 test('concurrent native scope decisions cannot both grant; interrupted durable decision is stale on restart',async()=>{
  const f=durableScopeFixture(),gate=f.create(),p=await missingScope(gate);
@@ -254,7 +254,7 @@ test('pending native scan renders its exact resume task and does not claim a com
  assert.match(notification,/src_scan_surface 携带原 taskId 和原参数/);assert.match(notification,/只有 bash 扫描计划/);
 });
 
-test('review distinguishes active, completed, denied and stale-restart plans without sending',async t=>{
+test('review distinguishes active, completed, denied and restart-preserved plans without sending',async t=>{
  const f=await fixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}}),session='review-lifecycle',origin='http://127.0.0.1:23456';
  await f.manager.user.setScope(session,[origin]);
  const body={entries:[{request:{url:origin+'/catalog',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'native review lifecycle'};
@@ -276,7 +276,7 @@ test('review distinguishes active, completed, denied and stale-restart plans wit
  const restored=await createEgressManager({home:f.home,storeFor:async()=>f.store,allowLoopbackFixtures:true});
  try{
   assert.equal((await restored.user.inspect(session,pending.approvalId)).state,'completed_tool');
-  assert.equal((await restored.user.inspect(session,unused.approvalId)).state,'revoked');
+  assert.equal((await restored.user.inspect(session,unused.approvalId)).state,'active');
   assert.equal((await restored.user.inspect(session,rejected.approvalId)).state,'denied');
   assert.equal(f.sent.length,1);
  }finally{await restored.close();}
@@ -287,11 +287,19 @@ test('an approval surviving a missing ledger task is inspectable but never execu
  const row=await f.store.addPendingApproval(session,{method:'TASK',category:'egress/task',url:`src-egress://${randomUUID()}`,body:'[]'});
  const view=await f.manager.user.inspect(session,row.id);
  assert.equal(view.state,'stale');assert.equal(view.executable,false);assert.equal(f.sent.length,0);
- await assert.rejects(f.manager.user.decide(session,row.id,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
+ await assert.rejects(f.manager.user.decide(session,row.id,'allow'),{code:'SRC_GATE_UNKNOWN_TASK'});
 });
 
 test('egress root declares live sessions so store approval commits reach the Web projection',async()=>{
  const {inject}=await import('../lib/src-egress.js');
  assert.ok(inject.includes('storageDomain'));
  assert.ok(inject.includes('sessions'),'Cordis-scoped store must be able to publish session commit events');
+});
+
+test('TASK和SCOPE审批的完整生命周期记录能通过真实开盘schema，非仅内存存取',async()=>{
+ const {srcDomainSpec}=await import('../lib/src.js'),schema=srcDomainSpec.tables.pending_approvals.valueSchema;
+ for(const method of ['TASK','SCOPE'])for(const [status,executionState] of [['pending',undefined],['approved','authorized'],['approved','scope-confirmed'],['approved','executed'],['approved','unknown'],['rejected','rejected']]){
+  const row={id:'approval-1',sessionId:'schema-session',method,url:'src-egress://11111111-1111-1111-1111-111111111111',path:'/',headers:'',body:'[]',category:method==='TASK'?'egress/task':'egress/scope',reason:'人工待办',justification:'自建靶场',status,note:'',responseStatus:0,createdAt:1,updatedAt:2,...(executionState?{executionState}:{}),...(status!=='pending'?{userDecision:status==='approved'?'allow':'reject',approvalSource:'human-command'}:{})};
+  assert.deepEqual(schema.parse(JSON.parse(JSON.stringify(row))),row);
+ }
 });
