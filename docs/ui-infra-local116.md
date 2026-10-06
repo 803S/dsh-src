@@ -24,4 +24,5 @@
 - Web/headless 已部署，Web 已优雅重启（PID 59076），424 个会话均 idle。备份与日志：`/private/tmp/dsh-ui116-delivery.vD1pdm`。
 - 实际 Web 深色主题只读验收通过：输入框代理/手机号与数据库相符，切换页面后值保留，点击显示的 key 与当前保存的 key 一致，隐藏后移除字段，零 pageerror。敏感值未写入截图/日志。
 - 前后哈希确认生产 Jev 配置文件及 infra 数据均未改变。没有点击真实保存、沿用、连接测试或删除。
-- Git 和 Release 在提交后发布，尚未提前声明完成。
+- 修复提交 `bda2353`、标签 `v0.1.0-local.116` 已推送，[Release](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.116) 已正式发布。
+- 安装包 2,061,815 字节。直连 github.com 下载两次超时，改走 GitHub asset API 独立下载，SHA256 与本地包/上传 digest 一致：`8d998b121fc845ac2ef6ebb409c75244a272a279b7ea210245818b37b2fdd516`。
