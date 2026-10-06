@@ -24,7 +24,10 @@
 - 发布前全量回归 516/516 通过；两个 profile 已同步 121 个核心文件和 12 份内置经验，部署脚本哈希终验通过。
 - Web 已优雅重启（PID 54522）；重启前后 424 个会话均 idle（备份检查时为 423，期间新增会话，不执行任何删除）。备份与部署日志：`/private/tmp/dsh-ui115-delivery.rmmxZ4`。
 - 实际 DSH Web（含 Open Sea Skin）深色主题验收通过：Jev 页加载、已有 key 不回填、报告按钮 #405bd9 底/#fff 字、域数据弹窗打开/取消、无输入域名框、零 pageerror。未点击真实保存/连接测试/删除。`live-ui.json` 与服务端 bundle 哈希在上述日志目录。
-- Git 与 Release 待本次提交后发布；尚未将“本机部署”混同于“发行版已发布”。
+- Git 修复提交 `11b1dd6`、标签 `v0.1.0-local.115` 已推送，正式 [Release](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.115) 已发布。
+- 安装包 `lihua_dis-dsh-src-0.1.0-local.115.tgz` 为 2,057,703 字节；独立下载后的 SHA256 与本地包及 GitHub asset digest 一致：`ecce6d4113c104ac80be9984e963c897852b202410b938db139b24da6e1c9caa`。
+- 源码 bundle、两个 profile 副本和实际 Web 提供的 JS 哈希一致：`865cbbe0a6c59694477a39bbd6a40f3d71bed11244ac392106bd893e439c7006`。
+- 主仓库保持唯一 worktree/分支 main；上轮 release/local.114-ui 临时分支已删除。无关 artifacts/ 未改动、未提交。
 
 ## 前轮 Git 判断纠正
 
