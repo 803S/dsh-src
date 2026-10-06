@@ -14,7 +14,7 @@
 - 修复真实 DSH 重启测试发现的 `TASK/SCOPE` 存储 schema 漏项；未新增依赖、数据库表或常驻服务。
 - **验收**：490 项回归通过；真实 DSH + Jev 验证低风险纯计算、挂审后继续独立工作、有限扫描、跨进程恢复及模拟等待 30 天后批准。测试仅使用自建 loopback 靶场。
 - **本机部署**：Web/headless 已更新到 `0.1.0-local.111`，Web 已重启，423 个原会话完整保留。
-- 版本安装包见 [local.111 发行页](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.111)；部署与发布凭据、旧审批兼容限制见[异步审批修复审计](docs/implementation/async-approval-repair-20261006.md)。
+- **源码与安装包已发布**：修复提交 `2791f58` 与版本标签已推送；[local.111 发行页](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.111)为正式发行版，安装包已独立下载核对 SHA256。部署与发布凭据、旧审批兼容限制见[异步审批修复审计](docs/implementation/async-approval-repair-20261006.md)。
 
 ## 历史更新：local.110（2026-10-05）
 
