@@ -100,7 +100,7 @@ cat resolved_ips.txt | nmap -iL - --open -p 80,443,8080,8443,8888,3000,5000 -oG 
 cat subdomains.txt | httpx -title -tech-detect -status-code -o live_hosts.txt
 
 # masscan for speed on large IP ranges:
-masscan -p 80,443,8080,8443 10.0.0.0/8 --rate=1000
+masscan -p 80,443,8080,8443 192.0.2.0/24 --rate=1000
 ```
 
 ---

@@ -4,6 +4,22 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { runtimeFiles } from '../scripts/deployment-manifest.mjs';
 const repo=fileURLToPath(new URL('../',import.meta.url));
+test('源码卫生检查识别无常见前缀的FOFA凭据，诊断不含凭据原文',async()=>{
+ const {sourceHygieneIssues}=await import('../scripts/check-source-hygiene.mjs');
+ const secret='a'.repeat(32), source=`settings:\n  fofaKeyBackup2: ${secret}\n`;
+ assert.deepEqual(sourceHygieneIssues(source),[{kind:'配置凭据',line:2}]);
+ assert.ok(!JSON.stringify(sourceHygieneIssues(source)).includes(secret));
+ assert.equal(sourceHygieneIssues(`{"apiKey":"${secret}"}`).length,1);
+ assert.equal(sourceHygieneIssues(`fofaKey: ""\napiKey: YOUR_EXAMPLE_API_KEY_HERE`).length,0);
+ assert.equal(sourceHygieneIssues('ip: '+[10,0,0,1].join('.')).length,1);
+ assert.equal(sourceHygieneIssues('ip: 192.0.2.1').length,0);
+ assert.equal(sourceHygieneIssues('apiKey:process.env.JEV_API_KEY').length,0);
+});
+test('发布回归同时执行源码卫生与预设防膨胀检查',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ for(const script of ['scripts/check-source-hygiene.mjs','scripts/check-preset-consistency.mjs'])
+  execFileSync(process.execPath,[script],{cwd:repo,encoding:'utf8',stdio:'pipe'});
+});
 test('deployment includes every runtime entry and the Python inspection addon',()=>{
  const files=runtimeFiles(repo);
  for(const entry of ['lib/src-egress.js','lib/src-bash-executor.js','lib/src/egress/manager.js','lib/src/egress/mitm-addon.py','lib/src/egress/browser-worker.cjs','lib/ui-src.client.js'])assert.ok(files.includes(entry),entry);

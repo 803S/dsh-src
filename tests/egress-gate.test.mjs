@@ -123,6 +123,53 @@ test('human reject cannot be laundered through an existing or new automatic task
   await assert.rejects(f.broker.propose('s1', input()), code('PREVIOUSLY_DENIED_OR_UNKNOWN'));
 });
 
+test('后来挂审的精确请求立即阻断既有扫描授权，不连带阻断独立读取', async t => {
+  let advice = low;
+  const f = fixture(t, { assess: () => advice });
+  const older = await f.broker.propose('s1', input());
+  advice = { ...low, action: 'pending', risk: 'unknown' };
+  const pending = await f.broker.propose('s1', input());
+  assert.equal(pending.state, 'pending');
+  assert.throws(() => f.broker.dataPlane.claim('s1', older.id, request()), code('REQUEST_PENDING'));
+  assert.equal(f.broker.commandPlane.history('s1', older.id).used, 0);
+  advice = low;
+  const independentRequest = request({ url: 'https://fixture.invalid/independent' });
+  const independent = await f.broker.propose('s1', input({ entries: [{ request: independentRequest, maxRequests: 3 }] }));
+  const claim = f.broker.dataPlane.claim('s1', independent.id, independentRequest);
+  f.broker.dataPlane.finish('s1', claim.dispatchId, 'response_received');
+  f.tick();
+  f.broker.commandPlane.decide('s1', pending.id, pending.digest, 'allow');
+  assert.ok(f.broker.dataPlane.claim('s1', pending.id, request()).dispatchId);
+});
+
+test('撤回拒绝只解除旧锁，不能复活此前人工批准的同请求扫描额度', async t => {
+  let advice = { ...low, action: 'pending' };
+  const f = fixture(t, { assess: () => advice });
+  const old = await f.broker.propose('s1', input());
+  f.broker.commandPlane.decide('s1', old.id, old.digest, 'allow');
+  const newer = await f.broker.propose('s1', input());
+  f.broker.commandPlane.decide('s1', newer.id, newer.digest, 'reject');
+  f.broker.commandPlane.reconcile('s1', newer.id, 'withdraw-rejection', '已由测试用户核对：原请求未发送；只撤回拒绝，不恢复任何旧额度。');
+  assert.throws(() => f.broker.dataPlane.claim('s1', old.id, request()), code('RESOURCE_REQUIRES_REVIEW'));
+  advice = low;
+  const fresh = await f.broker.propose('s1', input());
+  assert.equal(fresh.state, 'pending');
+  f.broker.commandPlane.decide('s1', fresh.id, fresh.digest, 'allow');
+  assert.ok(f.broker.dataPlane.claim('s1', fresh.id, request()).dispatchId);
+});
+
+for (const effect of ['read', 'compute']) test(`同路径写入待审不误拦Jev已确认的独立POST ${effect}`, async t => {
+  let advice = low;
+  const f = fixture(t, { assess: () => advice });
+  const deletion = request({ method: 'DELETE' });
+  assert.equal((await f.broker.propose('s1', input({ entries: [{ request: deletion, maxRequests: 3 }] }))).state, 'pending');
+  advice = { ...low, effect };
+  const computation = request({ method: 'POST', bodyBase64: Buffer.from('{"template":"{{7*7}}"}').toString('base64') });
+  const task = await f.broker.propose('s1', input({ entries: [{ request: computation, maxRequests: 3 }] }));
+  assert.equal(task.state, 'active');
+  assert.ok(f.broker.dataPlane.claim('s1', task.id, computation).dispatchId);
+});
+
 for (const mutation of ['expires', 'scope', 'credentials', 'origins', 'revoke']) {
   test(`authorization invalidation: ${mutation}`, async t => {
     const f = fixture(t); const a = await f.broker.propose('s1', input());

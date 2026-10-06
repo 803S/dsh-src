@@ -5866,11 +5866,11 @@ test("[local.83] T8 CT 两腿串行：agniops/certspotter 纯函数降级 + fetc
   const degradedCs = await mod.certspotterSearch({ value: "example.com" }, {});
   assert.equal(degradedCs.degraded, true, "certspotter 无 fetchImpl 降级");
   /* fetchImpl 注入：agniops 纯文本解析（子域归 hosts；agniops 不出跨域，恒空 roots——跨根域由 certspotter 腿承担）。 */
-  const agResp = { status: 200, text: async () => "account.oppo.com\nbbs.oppo.com\n10.0.0.1\n" };
+  const agResp = { status: 200, text: async () => "account.oppo.com\nbbs.oppo.com\n192.0.2.1\n" };
   const ag = await mod.agniopsSearch({ value: "oppo.com" }, { fetchImpl: async () => agResp });
   assert.equal(ag.ok, true);
   assert.ok(ag.hosts.includes("account.oppo.com") && ag.hosts.includes("bbs.oppo.com"), "子域归 hosts");
-  assert.ok(!ag.hosts.includes("10.0.0.1"), "IP 不误收进 hosts");
+  assert.ok(!ag.hosts.includes("192.0.2.1"), "IP 不误收进 hosts");
   assert.equal(ag.roots.length, 0, "agniops 无跨域能力，恒空 roots");
   /* 429 限流降级（agniops 60/min）。 */
   const agRate = await mod.agniopsSearch({ value: "example.com" }, { fetchImpl: async () => ({ status: 429, text: async () => "" }) });

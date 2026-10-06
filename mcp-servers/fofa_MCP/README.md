@@ -54,7 +54,7 @@ results = await get_alerts(domain="example.com")
 
 # 组合查询
 results = await get_alerts(
-    ip="192.168.1.1",
+    ip="192.0.2.1",
     port="80,443",
     body="Apache Tomcat"
 )
@@ -107,7 +107,7 @@ results = await get_alerts(domain="example.com")
 
 # Advanced query
 results = await get_alerts(
-    ip="192.168.1.1",
+    ip="192.0.2.1",
     port="80,443",
     body="Apache Tomcat"
 )

@@ -77,7 +77,7 @@ export function createRange() {
 			}
 			/* ① 未授权可达：公开诊断端点（无任何认证即返回环境信息）——#11b 的「未授权可达即 low」素材 */
 			if (req.method === "GET" && path === "/api/v1/health/config") {
-				return json(200, { succ: "ok", data: { env: "prod", dbHost: "10.0.3.21:3306", secretKey: "sk-live-0123456789abcdef", version: "2.4.1" } });
+				return json(200, { succ: "ok", data: { env: "prod", dbHost: "192.0.2.21:3306", secretKey: "sk-live-0123456789abcdef", version: "2.4.1" } });
 			}
 			if (req.method === "GET" && path === "/api/v1/users/query") {
 				/* 强读语义（users/query 在 src_http 放行白名单内），返回敏感字段——#17 掩码验证用 */

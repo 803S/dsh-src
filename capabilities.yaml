@@ -1,13 +1,13 @@
-# dsh-src 本机唯一配置入口。含 FOFA 凭据：仓库已转私有，本文件随仓库跟踪（capabilities.yaml），
-# 仓库必须保持私有、勿公开；本机运行时入口仍是此文件（src_add_capability 追加也写这里）。
+# 可公开的能力声明快照，不存凭据；实际运行配置为 $DSH_HOME/capabilities.yaml（默认 ~/.dsh）。
+# 在运行配置中填写密钥和本机路径，不得将其复制或提交回源码仓库。
 settings:
-  proxy: http://192.168.10.88:7893
+  proxy: ""
   fofaUv: /Users/lihua-dis/.local/bin/uv
-  fofaEmail: fbai1106@163.com
-  fofaKey: c37e23b2879049497c00c3dd02d5a849
-  fofaKeyBackup: 17c634211826cab2a5c28806fa42e451
-  fofaEmailBackup2: 599927799@qq.com
-  fofaKeyBackup2: e907eb76a438e7f3ab40557e63d41bff
+  fofaEmail: ""
+  fofaKey: ""
+  fofaKeyBackup: ""
+  fofaEmailBackup2: ""
+  fofaKeyBackup2: ""
 
 capabilities:
   - id: clown-src-playbook

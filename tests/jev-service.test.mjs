@@ -96,7 +96,7 @@ test('Jev Browser candidate seam uses selected endpoint; none/off/shadow never c
 
 test('scan-plan evaluates every exact entry once, strips credentials/body secrets, returns risk contract', async t => {
  await fixture(t);
- await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://advisor.invalid/v1/systemone',apiKey:'provider-fixture-secret'});
+ await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://advisor.invalid/v1/systemone',apiKey:'fixture-provider-secret'});
  let calls=0;
  globalThis.fetch=async (_url,init)=>{
   calls++;

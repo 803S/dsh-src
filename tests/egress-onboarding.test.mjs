@@ -176,6 +176,16 @@ test('scope rejection remains terminal across restart and expiry without repromp
  assert.equal(again.state,'rejected');assert.equal(again.approvalId,p.approvalId);assert.equal(f.rows.size,1);
  assert.match(again.nextAction,/用户已拒绝/);assert.equal(f.scope(),undefined);
 });
+
+test('确认一份范围后仍可拒绝另一份旧范围单，但不能用旧单覆盖当前范围',async()=>{
+ const f=durableScopeFixture(),gate=f.create();
+ const first=await missingScope(gate,'scope-durable','https://fixture.invalid');
+ const second=await missingScope(gate,'scope-durable','https://other.invalid');
+ await gate.decide('scope-durable',first.approvalId,'allow');
+ await assert.rejects(gate.decide('scope-durable',second.approvalId,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
+ assert.equal((await gate.decide('scope-durable',second.approvalId,'reject')).state,'rejected');
+ assert.deepEqual(f.scope().origins,['https://fixture.invalid']);
+});
 test('范围待审跨三十天及重启保留原单，人工确认不受执行时间预算限制',async()=>{
  const f=durableScopeFixture(),gate=f.create(),first=await missingScope(gate);
  f.advance(30*24*60*60*1000);gate.clear();const restored=f.create();
