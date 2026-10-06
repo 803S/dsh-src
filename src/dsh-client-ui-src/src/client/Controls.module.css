@@ -1,0 +1,40 @@
+/* Paired SRC control colors: never combine a theme-dependent brand fill with fixed white text. */
+.scope {
+  --src-accent: #405bd9;
+  --src-on-accent: #fff;
+  --src-danger: #b83243;
+  --src-on-danger: #fff;
+  --src-surface: var(--dsw-alias-bg-layer-1, #fff);
+  --src-surface-muted: var(--dsw-alias-bg-layer-2, #f3f5fa);
+  --src-text: var(--dsw-alias-label-primary, #202638);
+  --src-muted: var(--dsw-alias-label-secondary, #5a6579);
+  --src-line: var(--dsw-alias-border-l1, #dce1ed);
+  --src-dialog-surface: #f8f9fd;
+}
+:global(body[data-ds-dark-theme]) .scope,
+:global([data-theme='dark']) .scope,
+:global(html.dark) .scope {
+  --src-accent: #405bd9;
+  --src-on-accent: #fff;
+  --src-danger: #b83243;
+  --src-on-danger: #fff;
+  --src-dialog-surface: #181e2b;
+}
+.button {
+  appearance: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 36px; padding: 8px 14px; border: 1px solid var(--src-line); border-radius: 10px;
+  background: var(--src-surface-muted); color: var(--src-text); font: inherit; font-size: 13px;
+  font-weight: 600; line-height: 20px; cursor: pointer;
+  transition: box-shadow .16s, transform .16s;
+}
+.button:hover:not(:disabled) { box-shadow: 0 4px 12px #18214418; transform: translateY(-1px); }
+.button:disabled { opacity: .55; cursor: not-allowed; }
+.primary { background: var(--src-accent, #405bd9); color: var(--src-on-accent, #fff); border-color: var(--src-accent, #405bd9); }
+.danger { background: var(--src-danger, #b83243); color: var(--src-on-danger, #fff); border-color: var(--src-danger, #b83243); }
+.scope :is(button,input,textarea,select,summary):focus-visible { outline: 3px solid #8b9ff2; outline-offset: 3px; }
+.input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; padding: 9px 12px; border: 1px solid var(--src-line); border-radius: 10px; color: var(--src-text); background: var(--src-surface-muted); font: inherit; font-size: 13px; }
+.feedback { margin: 0; padding: 12px 14px; border: 1px solid var(--src-line); border-radius: 10px; color: var(--src-text); background: var(--src-surface-muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.feedback[data-tone='error'] { border-left: 3px solid #d8495b; }
+.feedback[data-tone='success'] { border-left: 3px solid #299778; }
+@media (prefers-reduced-motion: reduce) { .scope *, .button { animation: none !important; transition: none !important; } }
+@media (forced-colors: active) { .button { forced-color-adjust: auto; border: 1px solid ButtonText; } }

@@ -1,57 +1,103 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import css from './DecisionSettings.module.css'
+import ui from './Controls.module.css'
+
 type Run = ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined
-type Settings = { apiKey: string; riskMode:'on'|'shadow'|'off'; skillMode:'on'|'shadow'|'off'; delegateMode:'on'|'shadow'|'off'; browserMode:'on'|'shadow'|'off'; enabled: boolean; endpoint: string; model: string; timeoutMs: number; hasKey: boolean; lastResult?: { ok: boolean; model?: string; errorType?: string; latency: number } | null }
+type Mode = 'on' | 'shadow' | 'off'
+type Settings = { apiKey?: string; riskMode: Mode; skillMode: Mode; delegateMode: Mode; browserMode: Mode; enabled: boolean; endpoint: string; model: string; timeoutMs: number; hasKey: boolean; lastResult?: { ok: boolean; model?: string; errorType?: string; latency: number } | null }
+const roles = [
+  { field: 'riskMode', name: 'HTTP 风险审批', mark: '01', description: '明确低风险请求可自动执行；高风险、不确定或服务异常转人工。' },
+  { field: 'delegateMode', name: '主 / 子代理分工', mark: '02', description: '提供分工建议，是否采纳由主模型决定，不代替实际派发。' },
+  { field: 'skillMode', name: 'Skill 文档推荐', mark: '03', description: '推荐真实文档或跳过，不自动运行文档中的操作。' },
+  { field: 'browserMode', name: 'Browser 候选选择', mark: '04', description: '从已有浏览器候选中选择；复杂规划仍交给主模型。' },
+] as const
+const modes: Array<[Mode, string]> = [['on', '生效'], ['shadow', '观测'], ['off', '关闭']]
+
 export function DecisionSettings({ runCommand }: { runCommand: Run }) {
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [saved, setSaved] = useState<Settings | null>(null)
   const [key, setKey] = useState('')
   const [clearKey, setClearKey] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [message, setMessage] = useState('')
-  const invoke = async (cmd: string) => {
-    if (!runCommand) throw new Error('当前会话不支持设置命令')
-    const r = await runCommand(cmd)
-    if (r.kind !== 'success') throw new Error(r.text)
-    return r.text
+  const [showKey, setShowKey] = useState(false)
+  const [busy, setBusy] = useState<'load' | 'save' | 'test' | null>(null)
+  const [feedback, setFeedback] = useState<{ tone: string; text: string } | null>(null)
+  const pending = useRef(false)
+  const generation = useRef(0)
+  const command = useRef(runCommand); command.current = runCommand
+  const invoke = async (line: string) => {
+    if (!command.current) throw new Error('当前会话不支持设置命令')
+    const result = await command.current(line)
+    if (result.kind !== 'success') throw new Error(result.text)
+    return result.text
+  }
+  // Never keep a returned secret in the editable configuration or browser storage.
+  const safeSettings = (text: string): Settings => {
+    const { apiKey: _secret, ...value } = JSON.parse(text) as Settings
+    return value
   }
   const load = async () => {
-    setBusy(true)
-    try { setSettings(JSON.parse(await invoke('/src-decision-status'))); setMessage('') }
-    catch (e: any) { setMessage(e.message) } finally { setBusy(false) }
-  }
-  useEffect(() => { void load() }, [runCommand])
-
-  const save = async () => {
-    if (!settings) return
-    setBusy(true)
+    if (pending.current) return
+    const current = generation.current
+    pending.current = true; setBusy('load'); setFeedback(null)
     try {
-      const next = { enabled: settings.enabled, endpoint: settings.endpoint, model: settings.model, timeoutMs: settings.timeoutMs, riskMode:settings.riskMode,skillMode:settings.skillMode,delegateMode:settings.delegateMode,browserMode:settings.browserMode, ...(key || settings.apiKey ? { apiKey: key || settings.apiKey } : {}), ...(clearKey ? { clearKey: true } : {}) }
-      // Never persist the key in browser storage or log command input in the host.
-      setSettings(JSON.parse(await invoke('/src-decision-save ' + JSON.stringify(next))))
-      setKey(''); setClearKey(false); setMessage('已全局保存，下次调用立即生效；无需重启。key按当前局域网配置直接显示。')
-    } catch (e: any) { setKey(''); setMessage(e.message) } finally { setBusy(false) }
+      const value = safeSettings(await invoke('/src-decision-status'))
+      if (generation.current !== current) return
+      setSettings(value); setSaved(value); setKey(''); setClearKey(false)
+    } catch (error) { if (generation.current === current) setFeedback({ tone: 'error', text: String((error as Error).message) }) }
+    finally { if (generation.current === current) { pending.current = false; setBusy(null) } }
+  }
+  useEffect(() => {
+    void load()
+    return () => { generation.current++; pending.current = false }
+  }, [])
+  const dirty = !!settings && (JSON.stringify(settings) !== JSON.stringify(saved) || !!key || clearKey)
+  const save = async () => {
+    if (!settings || pending.current) return
+    pending.current = true; setBusy('save'); setFeedback(null)
+    try {
+      const next = { enabled: settings.enabled, endpoint: settings.endpoint.trim(), model: settings.model.trim(), timeoutMs: settings.timeoutMs, riskMode: settings.riskMode, delegateMode: settings.delegateMode, skillMode: settings.skillMode, browserMode: settings.browserMode,
+        ...(clearKey ? { clearKey: true } : key ? { apiKey: key } : {}) }
+      const value = safeSettings(await invoke('/src-decision-save ' + JSON.stringify(next)))
+      setSettings(value); setSaved(value); setKey(''); setClearKey(false); setShowKey(false)
+      setFeedback({ tone: 'success', text: '已全局保存。下一次调用立即生效，无需重启。' })
+    } catch (error) { setFeedback({ tone: 'error', text: String((error as Error).message) }) }
+    finally { pending.current = false; setBusy(null) }
   }
   const test = async () => {
-    setBusy(true)
-    try { setMessage(await invoke('/src-decision-test')); setSettings(JSON.parse(await invoke('/src-decision-status'))) }
-    catch (e: any) { setMessage(e.message) } finally { setBusy(false) }
+    if (pending.current) return
+    pending.current = true; setBusy('test'); setFeedback(null)
+    try { setFeedback({ tone: 'success', text: await invoke('/src-decision-test') }) }
+    catch (error) { setFeedback({ tone: 'error', text: String((error as Error).message) }) }
+    finally { pending.current = false; setBusy(null) }
   }
-  const inputStyle = { width: '100%', padding: '6px 8px', background: 'transparent', color: 'inherit', border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 6, boxSizing: 'border-box' as const }
-  return <section data-testid="decision-settings" style={{ padding: 12, border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 8, marginBottom: 12 }}>
-    <strong>全局决策服务 · Jev / SystemOne</strong>
-    <p style={{ fontSize: 12 }}>所有会话及 Web/headless 共用，不随目标复制。Jev承担低风险HTTP自动审批、高风险/不确定转人工、主/子分工建议、Skill直接推荐和已有Browser候选选择。普通浏览器规划仍由主模型负责。</p>
-    {settings && <fieldset disabled={busy} style={{ border: 0, padding: 0, display: 'grid', gap: 9 }}>
-      <label><input type="checkbox" checked={settings.enabled} onChange={e => setSettings({ ...settings, enabled: e.target.checked })} /> 启用决策提示</label>
-      {([['riskMode','HTTP风险审批'],['delegateMode','主/子代理分工'],['skillMode','Skill直接推荐'],['browserMode','Browser候选选择']] as const).map(([field,label]) => <label key={field}>{label} <select aria-label={label} value={settings[field]} onChange={e=>setSettings({...settings,[field]:e.target.value as 'on'|'shadow'|'off'})}><option value="on">on · 生效</option><option value="shadow">shadow · 仅观测</option><option value="off">off · 关闭</option></select></label>)}
-      <label>完整接口 URL<input aria-label="决策接口 URL" style={inputStyle} value={settings.endpoint} placeholder="https://供应商/v1/systemone" onChange={e => setSettings({ ...settings, endpoint: e.target.value })} /></label>
-      <label>模型<input aria-label="决策模型" style={inputStyle} value={settings.model} placeholder="jev-latest 或已支持的固定版本" onChange={e => setSettings({ ...settings, model: e.target.value })} /></label>
-      <label>API key<input aria-label="决策 API key" type="text" autoComplete="off" style={inputStyle} value={key || settings.apiKey || ''} placeholder="输入或修改 API key" onChange={e => setKey(e.target.value)} /></label>
-      <label><input type="checkbox" checked={clearKey} onChange={e => setClearKey(e.target.checked)} /> 清除已保存 key（换供应商须提供新key或清除旧key）</label>
-      <label>等待超时（毫秒）<input aria-label="决策超时" type="number" min={1000} max={300000} style={inputStyle} value={settings.timeoutMs} onChange={e => setSettings({ ...settings, timeoutMs: Number(e.target.value) })} /></label>
-      <div style={{ display: 'flex', gap: 10 }}><button type="button" onClick={() => void save()}>保存决策设置</button><button type="button" onClick={() => void test()}>测试已保存的连接</button><button type="button" onClick={() => void load()}>刷新</button></div>
-    </fieldset>}
-    {!settings && <button type="button" disabled={busy} onClick={() => void load()}>读取设置</button>}
-    <p style={{ fontSize: 12 }}>远程会收到经凭据过滤的任务语义及文档片段；当前部署按局域网环境回显并保存API key。失败不重试、不自动切换供应商或回退 Laya；风险on时服务失败包括GET也挂人工。风险off/shadow恢复原审批规则。Key以本地受限权限文件保存，不是加密存储。</p>
-    {settings?.lastResult && <div style={{ fontSize: 12 }}>最近结果：{settings.lastResult.ok ? `成功 ${settings.lastResult.model ?? ''}` : `未取得建议 ${settings.lastResult.errorType}`} · {settings.lastResult.latency}ms</div>}
-    <div role="status" style={{ fontSize: 12 }}>{busy ? '处理中…' : message}</div>
+  return <section className={`${ui.scope} ${css.root}`} data-testid="decision-settings" aria-busy={busy !== null}>
+    <header className={css.header}>
+      <div className={css.logo} aria-hidden="true">J</div>
+      <div className={css.heading}><span className={css.eyebrow}>DECISION SERVICE</span><h2>Jev <span>/ SystemOne</span></h2><p>全局决策服务 · Web / headless 及所有会话共用</p></div>
+      <span className={css.state} data-active={saved?.enabled === true}>{saved ? saved.enabled ? '已保存：启用' : '已保存：停用' : '读取配置中'}</span>
+    </header>
+    {settings ? <form onSubmit={event => { event.preventDefault(); void save() }}>
+      <fieldset className={css.fields} disabled={busy !== null}>
+        <div className={css.enableRow}><div><strong>启用决策服务</strong><p>只负责低层建议与分类，授权边界仍由代码和用户把关。</p></div><button className={css.switch} type="button" role="switch" aria-label="启用决策服务" aria-checked={settings.enabled} onClick={() => setSettings({ ...settings, enabled: !settings.enabled })}><span /></button></div>
+        <div className={css.layout}>
+          <section className={css.connection}><div className={css.sectionTitle}><span>连接配置</span><small>SystemOne 协议</small></div>
+            <label className={css.field}>完整接口 URL<input className={ui.input} aria-label="决策接口 URL" type="url" required={settings.enabled} value={settings.endpoint} placeholder="https://provider.example/v1/systemone" onChange={event => setSettings({ ...settings, endpoint: event.target.value })} /><small>使用 HTTPS；本机服务允许 HTTP。更换供应商时须输入新 key 或明确清除旧 key。</small></label>
+            <div className={css.twoFields}><label className={css.field}>模型<input className={ui.input} aria-label="决策模型" required value={settings.model} onChange={event => setSettings({ ...settings, model: event.target.value })} /></label><label className={css.field}>等待超时 · 毫秒<input className={ui.input} aria-label="决策超时" type="number" required min={1000} max={300000} step={1} value={settings.timeoutMs} onChange={event => setSettings({ ...settings, timeoutMs: Number(event.target.value) })} /></label></div>
+            <label className={css.field} htmlFor="decision-key">API key <small>{saved?.hasKey ? '已有密钥 · 留空保留' : '尚未配置密钥'}</small></label>
+            <div className={css.secret}><input id="decision-key" className={ui.input} aria-label="决策 API key" type={showKey ? 'text' : 'password'} autoComplete="new-password" spellCheck={false} disabled={clearKey} value={key} placeholder={clearKey ? '保存时清除已存密钥' : '输入新密钥；留空不修改'} onChange={event => setKey(event.target.value)} /><button type="button" className={ui.button} aria-label={showKey ? '隐藏新密钥' : '显示新密钥'} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? '隐藏' : '显示'}</button></div>
+            <label className={css.clearKey}><input type="checkbox" checked={clearKey} onChange={event => setClearKey(event.target.checked)} />保存时清除已保存的 key</label>
+            <div className={css.notice}><strong>测试不发送目标业务请求</strong><p>使用合成任务测试已保存的配置，不覆盖你尚未保存的草稿。连接成功不等于判断准确。</p></div>
+          </section>
+          <section className={css.roles}><div className={css.sectionTitle}><span>职责分配</span><small>生效 / 仅观测 / 不调用</small></div>
+            {roles.map(role => <div key={role.field} className={css.roleCard} data-mode={settings[role.field]}><div className={css.roleHeading}><span className={css.roleNumber}>{role.mark}</span><strong>{role.name}</strong></div><p>{role.description}</p><div className={css.segmented} role="group" aria-label={role.name}>{modes.map(([mode, label]) => <button type="button" key={mode} aria-pressed={settings[role.field] === mode} onClick={() => setSettings({ ...settings, [role.field]: mode })}>{label}</button>)}</div></div>)}
+            {!settings.enabled && <p className={css.muted}>总开关关闭时，四项职责均不调用 Jev；上方选择会保留为下次启用的配置。</p>}
+          </section>
+        </div>
+      </fieldset>
+      <footer className={css.footer}><span className={css.saveHint}>{dirty ? '有未保存的更改' : '配置已同步'}{busy === 'test' ? ' · 正在测试已保存配置…' : ''}</span><div className={css.actions}><button type="button" className={ui.button} disabled={busy !== null || dirty} title={dirty ? '先保存更改，避免刷新丢失草稿' : '重新读取全局配置'} onClick={() => void load()}>刷新</button><button type="button" className={ui.button} disabled={busy !== null || !saved?.endpoint} onClick={() => void test()}>{busy === 'test' ? '测试中…' : '测试已保存的连接'}</button><button type="submit" className={`${ui.button} ${ui.primary}`} disabled={busy !== null || !dirty}>{busy === 'save' ? '保存中…' : '保存决策设置'}</button></div></footer>
+    </form> : <div className={css.loading}><p>{busy ? '正在读取全局配置…' : '尚未取得配置，请重试。'}</p><button type="button" className={ui.button} disabled={busy !== null} onClick={() => void load()}>重新读取设置</button></div>}
+    {feedback && <p className={ui.feedback} data-tone={feedback.tone} role={feedback.tone === 'error' ? 'alert' : 'status'}>{feedback.text}</p>}
+    {saved?.lastResult && <p className={css.lastResult}>最近记录：{saved.lastResult.ok ? `连接成功 ${saved.lastResult.model ?? ''}` : `未取得建议 ${saved.lastResult.errorType ?? ''}`} · {saved.lastResult.latency} ms</p>}
+    <details className={css.details}><summary>数据与失败处理说明</summary><p>远程服务会收到经凭据过滤的任务语义及文档片段，请使用可信供应商。密钥保存于本机受限权限文件，并非加密存储；此页面不回填已存密钥，也不使用浏览器持久化存储。</p><p>失败不自动重试、不切换供应商或回退 Laya；风险职责生效时，服务异常可能让 GET 也转人工。观测或关闭时沿用原审批规则。</p></details>
   </section>
 }

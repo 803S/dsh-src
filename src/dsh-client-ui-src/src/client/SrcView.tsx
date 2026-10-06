@@ -6,6 +6,8 @@ import { ExploreView } from './ExploreView.tsx'
 import { FindingsView } from './FindingsView.tsx'
 import { AssetsView } from './AssetsView.tsx'
 import { DecisionSettings } from './DecisionSettings.tsx'
+import { DomainDataView } from './DomainDataView.tsx'
+import ui from './Controls.module.css'
 import { EgressControls } from './EgressControls.tsx'
 import { ApprovalExplanationCard } from './ApprovalExplanationCard.tsx'
 import { ReportView } from './ReportView.tsx'
@@ -245,35 +247,6 @@ type TodoRow = {
 			].join("\n");
 			return<div className={css.list}><DecisionSettings runCommand={runCommand} />{feedback !== null &&<div style={{ color: busyKey !== null ? "var(--dsw-alias-state-warn-primary)" : "var(--dsw-alias-state-success-primary)", fontSize: 12, padding: "2px 4px" }}>{feedback}</div>}<div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 2 }}><button type="button" disabled={copyingInfra || busyKey !== null} title="把最近配置过的其他会话的设置复制到本会话并覆盖当前值；新会话建目标（src_add_goal）时已自动沿用，此按钮用于重新复制或覆盖当前值" onClick={() => void sendTool("/src-infra-copy", setCopyingInfra, "沿用中…")} style={buttonStyle("var(--dsw-alias-state-success-primary, #3c9)")}>{copyingInfra ? "沿用中…" : "沿用上次会话的基础设施"}</button><span style={{ color: "var(--dsw-alias-label-tertiary)", fontSize: 11 }}>新会话建目标时自动沿用，免逐项重填</span></div><div className={css.card}><div className={css.groupHead}><span className={css.groupTitle}>网络出站</span><button type="button" disabled={proxyTesting || busyKey !== null} title="服务端直接经代理请求探针地址，结果只显示在这里，不打扰 agent" onClick={() => void sendTool("/src-proxy-test", setProxyTesting, "测活中…")} style={buttonStyle("var(--dsw-alias-state-info-primary, #69c)")}>{proxyTesting ? "测活中…" : "测试代理连通"}</button></div>{row_proxyUrl}{row_httpTimeoutMs}</div><div className={css.card}><div className={css.groupHead}><span className={css.groupTitle}>Burp MCP</span><button type="button" disabled={burpTesting || busyKey !== null} title="先经自愈桥 tools_list，再真实拉一条 proxy history 验证完整链路" onClick={() => void sendTool("/src-burp-test", setBurpTesting, "发送中…")} style={buttonStyle("var(--dsw-alias-state-info-primary, #69c)")}>{burpTesting ? "测试中…" : "测试连接"}</button></div>{row_burpMcpPort}{row_burpPath}<div style={{ color: "var(--dsw-alias-label-tertiary)", fontSize: 11 }}>前置：Burp Pro 装「MCP Server」扩展并点 Start。接线开箱即用（包 patch 默认启用）；桥未装时跑一次 caps-sync 即自动安装</div></div><div className={css.card}><div className={css.groupTitle}>测试凭据</div>{row_testAccount}{row_testPhone}</div><details style={{ fontSize: 12 }}><summary style={{ cursor: "pointer", color: "var(--dsw-alias-label-tertiary)" }}>高级：cordis 接线片段与进程级代理</summary><pre style={preStyle(200)}>{bridgeSnippet}\n\n# 进程级代理（可选）：dsh 主进程全部流量走系统代理时，启动前设置\n# HTTPS_PROXY=http://127.0.0.1:7890 NODE_OPTIONS=--use-env-proxy\n# 插件内的 HTTP 代理仅作用于 SRC 出站请求，与此互不影响。</pre></details></div>;
 		}
-		function DomainDataView({ runCommand }: { readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined }) {
-			const [rows, setRows] = useState<any[]>([]);
-			const [busy, setBusy] = useState(false);
-			const [feedback, setFeedback] = useState<string | null>(null);
-			const load = async () => {
-				if (runCommand === void 0) return;
-				setBusy(true); setFeedback(null);
-				try {
-					const result = await runCommand("/src-domains");
-					if (result.kind !== "success") throw new Error(result.text);
-					const parsed = JSON.parse(result.text);
-					setRows(Array.isArray(parsed.domains) ? parsed.domains : []);
-				} catch (error: any) { setFeedback(`读取失败：${error?.message ?? String(error)}`); }
-				finally { setBusy(false); }
-			};
-			useEffect(() => { void load(); }, []);
-			const remove = async (target: string) => {
-				if (busy || runCommand === void 0 || window.prompt(`删除「${target}」的全部 SRC 数据、专属凭证、沉淀经验、遥测及标准目录产物。\n保留其他域、共享凭证、宿主对话历史和备份。已有对话中的内容不会被抹除，删除后请新建会话。\n此操作不可撤销。请输入目标域名确认：`) !== target) return;
-				setBusy(true); setFeedback(null);
-				try {
-					const result = await runCommand(`/src-delete-domain ${target} confirm ${target}`);
-					if (result.kind !== "success") throw new Error(result.text);
-					await load();
-					setFeedback(`已删除 ${target} 的 SRC 数据。旧对话历史仍保留，请新建会话继续。`);
-				} catch (error: any) { setFeedback(`删除失败：${error?.message ?? String(error)}`); setBusy(false); }
-			};
-			if (runCommand === void 0) return <div className={css.empty}>当前会话不支持管理命令。</div>;
-			return <div className={css.list}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><div><strong>域数据管理</strong><div style={{ color: "var(--dsw-alias-label-tertiary, #888)", fontSize: 12, marginTop: 3 }}>按目标域聚合跨会话 SRC 数据。删除域数据不会删除 dsh 历史会话日志。</div></div><button type="button" disabled={busy} onClick={() => void load()} style={buttonStyle("var(--dsw-alias-state-info-primary, #69c)")}>{busy ? "处理中…" : "刷新"}</button></div>{feedback !== null && <div style={{ color: "var(--dsw-alias-state-success-primary, #3c9)", fontSize: 12, marginBottom: 8 }}>{feedback}</div>}{rows.length === 0 ? <div className={css.empty}>暂无 SRC 域数据</div> : rows.map((row) => <div className={css.card} key={row.target} style={{ marginBottom: 8, padding: "10px 12px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong style={{ fontSize: 15, wordBreak: "break-all" }}>{row.target}</strong><button type="button" disabled={busy} onClick={() => void remove(row.target)} style={buttonStyle("var(--dsw-alias-state-error-primary, #c33)")}>删除域数据</button></div><div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary, #888)" }}><span>会话 {row.sessions}</span><span>笔记 {row.notes}</span><span>资产 {row.assets}</span><span>漏洞 {row.findings}</span><span>研究 {row.research}</span><span>观察 {row.observations}</span><span>审批 {row.approvals}</span><span>待办 {row.todos}</span><span>基础设施 {row.infra ?? 0} · 种子 {row.surveySeeds ?? 0}{row.cleanupPending ? " · 清理未完成，请重试" : ""}</span></div><div style={{ marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-caption, #aaa)" }}>最后更新：{row.lastUpdated ? new Date(row.lastUpdated).toLocaleString() : "未知"}</div></div>)}</div>;
-		}
 		function LegacySrcView({ useProjection, t, runCommand }: {
   readonly useProjection: (key: string) => SrcProjection | null | undefined
   readonly t: PropsLocale['t']
@@ -380,7 +353,7 @@ function ModernEngagementHeader({ src, t, onNavigate }: { readonly src: SrcProje
     { label: '接口覆盖', value: total > 0 ? `${tested}/${total}` : '—', tab: 'timeline' },
     { label: '认证预算', value: src.authBudget ? `${src.authBudget.used}/${src.authBudget.limit}` : '—' },
   ]
-  return <header className={css.engagementHeader}>
+  return <header className={`${ui.scope} ${css.engagementHeader}`}>
     <div className={css.engagementTop}>
       <div className={css.engagementCopy}>
         <div className={css.eyebrow}><span className={css.liveDot} /> SRC ENGAGEMENT <span className={css.eyebrowDivider}>/</span> {status}</div>
@@ -388,7 +361,7 @@ function ModernEngagementHeader({ src, t, onNavigate }: { readonly src: SrcProje
         <p className={css.objective}>{src.goal?.objective || '等待 agent 记录本次挖掘目标与验证目的。'}</p>
         <div className={css.headerMeta}><span>最近活动 {activityText}</span>{src.apiDiscovery && src.apiDiscovery.total > 0 && <span>API 发现 {src.apiDiscovery.total}</span>}</div>
       </div>
-      <div className={css.headerActions}><button type="button" className={css.secondaryAction} onClick={() => onNavigate('explore')}>查看链路</button><button type="button" className={css.primaryAction} onClick={() => onNavigate('report')}>查看报告 <span>→</span></button></div>
+      <div className={css.headerActions}><button type="button" className={css.secondaryAction} onClick={() => onNavigate('explore')}>查看链路</button><button type="button" className={`${ui.button} ${ui.primary}`} data-testid="src-view-report" onClick={() => onNavigate('report')}>查看报告 <span>→</span></button></div>
     </div>
     <div className={css.metricStrip}>{stats.map(stat => <button key={stat.label} type="button" className={`${css.metric} ${stat.tone ?? ''}`} onClick={() => stat.tab && onNavigate(stat.tab)} disabled={!stat.tab}><span>{stat.label}</span><strong>{stat.value}</strong></button>)}</div>
   </header>

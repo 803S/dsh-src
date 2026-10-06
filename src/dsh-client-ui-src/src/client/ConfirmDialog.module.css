@@ -1,0 +1,11 @@
+.dialog { box-sizing: border-box; width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; border: 1px solid var(--src-line); border-radius: 20px; color: var(--src-text); background: var(--src-dialog-surface); box-shadow: 0 28px 100px #0005; overflow: auto; }
+.dialog::backdrop { background: #111a2c80; backdrop-filter: blur(5px); }
+.header { display: flex; gap: 14px; align-items: center; padding: 24px 24px 18px; background: linear-gradient(125deg, #c6574612, transparent 80%); }
+.icon { display: grid; place-items: center; flex: none; width: 42px; height: 42px; border-radius: 14px; border: 1px solid #c6574640; background: #c6574615; color: var(--src-text); font-size: 22px; }
+.eyebrow { color: var(--src-muted); font-size: 11px; }
+.header h2 { margin: 5px 0 0; font-size: 19px; line-height: 1.4; }
+.body { padding: 0 24px 22px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.body p { margin: 10px 0; }
+.body ul { padding-left: 20px; margin: 8px 0 16px; color: var(--src-muted); }
+.footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--src-line); }
+@media (max-width: 480px) { .header { padding: 18px; } .body { padding: 0 18px 16px; } .footer { padding: 14px 18px; } .footer button { flex: 1; } }

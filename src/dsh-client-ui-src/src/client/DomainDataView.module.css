@@ -1,0 +1,22 @@
+.root { display: flex; flex-direction: column; gap: 18px; color: var(--src-text); container-type: inline-size; padding-bottom: 24px; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; border: 1px solid var(--src-line); border-radius: 18px; background: linear-gradient(120deg, #647de313, transparent), var(--src-surface); }
+.eyebrow { font-size: 10px; letter-spacing: .13em; color: var(--src-muted); }
+.header h2 { font-size: 21px; margin: 5px 0 8px; }
+.header p { font-size: 13px; margin: 0; line-height: 1.7; color: var(--src-muted); }
+.header button { flex: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,460px),1fr)); gap: 14px; }
+.card { border: 1px solid var(--src-line); border-radius: 16px; background: var(--src-surface); padding: 20px; min-width: 0; }
+.cardHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cardHeading > div { min-width: 0; }
+.cardHeading h3 { margin: 0 0 6px; font-size: 16px; overflow-wrap: anywhere; }
+.cardHeading span { font-size: 11px; color: var(--src-muted); }
+.cardHeading button { flex: none; }
+.counts { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 18px 12px; border-top: 1px solid var(--src-line); margin: 18px 0 0; padding-top: 18px; }
+.counts dt { font-size: 11px; color: var(--src-muted); }
+.counts dd { margin: 6px 0 0; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.warning { border-left: 3px solid #c18a42; padding-left: 10px; font-size: 12px; line-height: 1.7; }
+.empty { padding: 40px; text-align: center; color: var(--src-muted); border: 1px dashed var(--src-line); border-radius: 16px; }
+.deleteTarget { display: flex; flex-direction: column; gap: 5px; padding: 14px; border: 1px solid var(--src-line); border-radius: 12px; background: #647de30c; }
+.deleteTarget strong { font-size: 16px; }
+.deleteTarget span { color: var(--src-muted); font-size: 12px; }
+@container (max-width: 460px) { .header { flex-direction: column; align-items: start; padding: 18px; } .cardHeading { flex-wrap: wrap; } .counts { grid-template-columns: repeat(3,minmax(0,1fr)); } }
