@@ -1306,6 +1306,37 @@ test("[local.14] /src-infra-copy copies latest other session's infra overrides; 
   assert.ok(eventsAfter.length >= 2, "each copy appends its synthetic events");
 });
 
+test('local.116: pre-goal infra survives authoritative read, copy, save, reset and goal creation', async () => {
+  const { __resetSharedDomainOpensForTests } = await import('../lib/src.js');
+  __resetSharedDomainOpensForTests();
+  const h = harness(), source = h.exec('infra116-source'), target = h.exec('infra116-target');
+  const command = (name, agent, rawInput = '') => h.commands.get(name).handler({ agent: agent.agent, rawInput });
+  const read = async () => JSON.parse((await command('src-infra-status', target)).text);
+  assert.equal((await read()).source, null);
+  await command('src-infra', source, 'proxyUrl http://192.0.2.88:7893');
+  await command('src-infra', source, 'testPhone 13800138000');
+  const sourceInfo = await read();
+  assert.equal(sourceInfo.source.sessionId, 'infra116-source');
+  assert.equal(sourceInfo.initialized, false);
+  await command('src-infra-copy', target);
+  assert.equal((await read()).infra.proxyUrl, 'http://192.0.2.88:7893');
+  const state = JSON.parse((await command('src-authoritative-state', target)).text);
+  assert.equal(state.goal, null);
+  assert.equal(state.infra.proxyUrl, 'http://192.0.2.88:7893', 'pre-goal authoritative view must not hide copied values');
+  assert.equal(state.infra.testPhone, '13800138000');
+  await command('src-infra', target, 'burpMcpPort 9877');
+  assert.equal(JSON.parse((await command('src-authoritative-state', target)).text).infra.burpMcpPort, '9877');
+  await command('src-infra', target, 'burpMcpPort -');
+  assert.equal((await read()).infra.burpMcpPort, '9876');
+  assert.ok(!(await read()).overrideKeys.includes('burpMcpPort'));
+  await h.run('src_add_goal', { target: 'fixture.test', objective: 'infra116 test' }, target);
+  assert.equal((await read()).infra.proxyUrl, 'http://192.0.2.88:7893');
+  assert.equal((await read()).initialized, true);
+  const fresh = h.exec('infra116-auto');
+  await h.run('src_add_goal', { target: 'fixture.test', objective: 'infra116 automatic copy' }, fresh);
+  assert.equal(JSON.parse((await command('src-authoritative-state', fresh)).text).infra.proxyUrl, 'http://192.0.2.88:7893');
+});
+
 test("[local.15] finalize 受限完成声明后 src_state/src_graph 输出仍是 lossless JSON（undefined 属性被剥离）", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   __resetSharedDomainOpensForTests();

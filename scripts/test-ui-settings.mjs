@@ -19,9 +19,13 @@ window.commands=[];window.failDelete=false;window.failLoad=false;window.failSave
 window.settings={enabled:true,endpoint:'https://decision.example/v1/systemone',model:'jev-latest',timeoutMs:120000,apiKey:'test-stored-secret',hasKey:true,riskMode:'on',delegateMode:'shadow',skillMode:'on',browserMode:'off'};
 window.rows=[{target:'demo.test',sessions:2,assets:8,findings:1,notes:3,lastUpdated:1791280000000}];
 window.src={goal:{id:'goal-1',target:'demo.test',objective:'仅使用合成数据验证前端',authorization:'本地界面测试'},nodes:[],assets:[],edges:[],coverage:[],research:[],checkpoints:[],observations:[],userTodos:[],pendingApprovals:[],infra:{}};
+window.infra={proxyUrl:'',httpTimeoutMs:'8000',burpMcpPort:'9876',burpProxyJarPath:'',testAccount:'',testPhone:''};window.overrideKeys=[];window.failInfraRead=false;window.failInfraSave=false;window.failInfraCopy=false;
 window.runCommand=async line=>{
  window.commands.push(line);
  if(line==='/src-authoritative-state')return{kind:'success',text:JSON.stringify(src)};
+ if(line==='/src-infra-status')return failInfraRead?{kind:'error',text:'模拟回读失败'}:{kind:'success',text:JSON.stringify({infra,overrideKeys,initialized:false,source:{sessionId:'fixture-previous',updatedAt:1791280000000,keys:['proxyUrl','testPhone']}})};
+ if(line==='/src-infra-copy'){if(failInfraCopy)return{kind:'error',text:'模拟沿用失败'};infra={...infra,proxyUrl:'http://192.0.2.88:7893',testPhone:'13800138000'};overrideKeys=['proxyUrl','testPhone'];return{kind:'success',text:'已沿用2项配置'}};
+ if(line.startsWith('/src-infra ')){if(failInfraSave)return{kind:'error',text:'模拟保存失败'};const [,key,...parts]=line.split(' '),v=parts.join(' ');infra[key]=v==='-'?({httpTimeoutMs:'8000',burpMcpPort:'9876'}[key]??''):v;overrideKeys=overrideKeys.filter(k=>k!==key);if(v!=='-')overrideKeys.push(key);return{kind:'success',text:'已保存'}};
  if(line==='/src-domains')return failLoad?{kind:'error',text:'模拟列表失败'}:{kind:'success',text:JSON.stringify({domains:rows})};
  if(line.startsWith('/src-delete-domain ')){if(delayDelete)await new Promise(r=>setTimeout(r,delayDelete));if(failDelete)return{kind:'error',text:'有任务正在运行，不能删除'};rows=[];return{kind:'success',text:'已清理'}};
  if(line==='/src-decision-status')return{kind:'success',text:JSON.stringify(settings)};
@@ -53,7 +57,11 @@ try {
  await p.goto(base);await p.getByTestId('src-tab-infra').click();
  await p.getByLabel('决策模型',{exact:true}).waitFor();
  assert.equal(await p.getByLabel('决策 API key',{exact:true}).inputValue(),'');
- assert.equal(await p.locator('input[type=password]').count(),1);
+ assert.equal(await p.getByLabel('决策 API key',{exact:true}).getAttribute('type'),'password');
+ await p.getByRole('button',{name:'显示密钥',exact:true}).click();
+ assert.equal(await p.getByLabel('已保存的 API key',{exact:true}).inputValue(),'test-stored-secret');
+ await p.getByRole('button',{name:'隐藏密钥',exact:true}).click();
+ assert.equal(await p.getByLabel('已保存的 API key',{exact:true}).count(),0);
  const contrast = locator => locator.evaluate(el=>{
   const s=getComputedStyle(el), rgb=c=>c.match(/[\d.]+/g).slice(0,3).map(Number).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4}),lum=c=>{const [r,g,b]=rgb(c);return r*.2126+g*.7152+b*.0722};
   const fg=lum(s.color), bg=lum(s.backgroundColor);return {fg:s.color,bg:s.backgroundColor,ratio:(Math.max(fg,bg)+.05)/(Math.min(fg,bg)+.05)};
@@ -77,14 +85,40 @@ try {
  const saveCommand=await p.evaluate(()=>commands.findLast(c=>c.startsWith('/src-decision-save ')));
  const payload=JSON.parse(saveCommand.slice('/src-decision-save '.length));assert.equal(payload.model,'jev-draft');assert.equal(payload.riskMode,'shadow');assert.equal(payload.delegateMode,'off');assert.equal(payload.skillMode,'shadow');assert.equal(payload.browserMode,'on');assert.ok(!('apiKey' in payload),'stored key must not be echoed back');
  await p.getByLabel('决策 API key',{exact:true}).fill('test-new-secret');
- await p.getByRole('button',{name:'显示新密钥'}).click();assert.equal(await p.getByLabel('决策 API key',{exact:true}).getAttribute('type'),'text');
+ await p.getByRole('button',{name:'显示密钥',exact:true}).click();assert.equal(await p.getByLabel('决策 API key',{exact:true}).getAttribute('type'),'text');
  await p.getByRole('button',{name:'保存决策设置',exact:true}).click();await p.getByText('配置已同步',{exact:true}).waitFor();
  assert.equal(await p.getByLabel('决策 API key',{exact:true}).inputValue(),'');
+ await p.getByRole('button',{name:'显示密钥',exact:true}).click();assert.equal(await p.getByLabel('已保存的 API key',{exact:true}).inputValue(),'test-new-secret');
+ await p.evaluate(()=>window.dispatchEvent(new Event('blur')));assert.equal(await p.getByLabel('已保存的 API key',{exact:true}).count(),0);
  await p.getByLabel('保存时清除已保存的 key').check();await p.getByRole('button',{name:'保存决策设置',exact:true}).click();await p.getByText('尚未配置密钥',{exact:true}).waitFor();
  await p.evaluate(()=>{failSave=true;failTest=true});await p.getByLabel('决策模型',{exact:true}).fill('keep-after-failure');await p.getByRole('button',{name:'保存决策设置',exact:true}).click();await p.getByRole('alert').getByText('模拟保存失败').waitFor();assert.equal(await p.getByLabel('决策模型',{exact:true}).inputValue(),'keep-after-failure');
  await p.getByRole('button',{name:'测试已保存的连接',exact:true}).click();await p.getByRole('alert').getByText('模拟连接失败').waitFor();
  await p.setViewportSize({width:390,height:844});await p.getByTestId('decision-settings').screenshot({path:path.join(output,'jev-mobile.png')});
  assert.ok(await p.evaluate(()=>document.querySelector('[data-testid=decision-settings]').scrollWidth<=document.querySelector('[data-testid=decision-settings]').clientWidth+1));
+ // Infra copy/readback must work without a projection update and before a goal exists.
+ const infraPanel=p.getByTestId('src-infrastructure');
+ await infraPanel.getByLabel('HTTP 代理',{exact:true}).waitFor();
+ assert.equal(await infraPanel.getByLabel('HTTP 代理',{exact:true}).inputValue(),'');
+ await infraPanel.getByRole('button',{name:'沿用上次配置',exact:true}).click();
+ await p.getByText('已沿用2项配置',{exact:true}).waitFor();
+ assert.equal(await infraPanel.getByLabel('HTTP 代理',{exact:true}).inputValue(),'http://192.0.2.88:7893');
+ assert.equal(await infraPanel.getByLabel('测试手机号',{exact:true}).inputValue(),'13800138000');
+ const proxyForm=infraPanel.locator('form').filter({has:p.getByLabel('HTTP 代理',{exact:true})});
+ assert.equal(await proxyForm.getByRole('button',{name:'保存',exact:true}).isEnabled(),false,'unmodified save cannot clear resolved value');
+ await infraPanel.getByLabel('HTTP 代理',{exact:true}).fill('http://192.0.2.99:7894');
+ await p.evaluate(()=>{failInfraSave=true});await proxyForm.getByRole('button',{name:'保存',exact:true}).click();await infraPanel.getByRole('alert').waitFor();assert.equal(await infraPanel.getByLabel('HTTP 代理',{exact:true}).inputValue(),'http://192.0.2.99:7894');await p.evaluate(()=>{failInfraSave=false});
+ assert.equal(await infraPanel.getByRole('button',{name:'沿用上次配置',exact:true}).isEnabled(),false);
+ await proxyForm.getByRole('button',{name:'保存',exact:true}).click();await p.getByText('已保存',{exact:true}).first().waitFor();
+ assert.equal(await infraPanel.getByLabel('HTTP 代理',{exact:true}).inputValue(),'http://192.0.2.99:7894');
+ await proxyForm.getByRole('button',{name:'恢复默认',exact:true}).click();await p.waitForFunction(()=>infra.proxyUrl==='');
+ await infraPanel.getByRole('button',{name:'刷新配置',exact:true}).click();assert.equal(await infraPanel.getByLabel('HTTP 代理',{exact:true}).inputValue(),'');
+ await p.evaluate(()=>{failInfraCopy=true});await infraPanel.getByRole('button',{name:'沿用上次配置',exact:true}).click();await infraPanel.getByRole('alert').waitFor();assert.match(await infraPanel.getByRole('alert').innerText(),/模拟沿用失败/);
+ await p.evaluate(()=>{failInfraCopy=false;failInfraRead=true});await infraPanel.getByRole('button',{name:'沿用上次配置',exact:true}).click();await p.getByText(/但回读失败/).waitFor();
+ await p.evaluate(()=>{failInfraRead=false});await infraPanel.getByRole('button',{name:'刷新配置',exact:true}).click();await p.waitForFunction(()=>document.querySelector('#infra-proxyUrl').value==='http://192.0.2.88:7893');
+ await p.setViewportSize({width:1365,height:1050});await infraPanel.screenshot({path:path.join(output,'infra-dark.png')});
+ await p.setViewportSize({width:390,height:844});await infraPanel.screenshot({path:path.join(output,'infra-mobile.png')});assert.ok(await infraPanel.evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+ await p.getByTestId('src-tab-overview').click();await p.getByTestId('src-tab-infra').click();
+ await p.waitForFunction(()=>document.querySelector('#infra-proxyUrl')?.value==='http://192.0.2.88:7893');
  await p.getByTestId('src-tab-domains').click();await p.getByRole('button',{name:'删除域数据',exact:true}).click();
  const dialog=p.getByRole('dialog');await dialog.waitFor();assert.equal(await dialog.locator('input').count(),0);
  assert.equal(await p.evaluate(()=>document.activeElement.textContent),'取消');
@@ -98,6 +132,6 @@ try {
  assert.deepEqual(await p.evaluate(()=>commands.filter(c=>c.startsWith('/src-delete-domain '))),['/src-delete-domain demo.test confirm demo.test','/src-delete-domain demo.test confirm demo.test']);
  await p.getByTestId('src-view-report').click();await p.getByTestId('src-report').waitFor();
  assert.deepEqual(errors,[]);
- await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','report-navigation']},null,2));
+ await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['infra-copy-readback-pre-goal','infra-save/reset/failures','infra-mobile/tab-remount','saved-key-reveal/hide/blur','save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','report-navigation']},null,2));
  console.log(JSON.stringify({passed:true,output,evidence},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

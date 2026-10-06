@@ -5,6 +5,7 @@ import type { SrcProjection } from '../../types/projection'
 import { ExploreView } from './ExploreView.tsx'
 import { FindingsView } from './FindingsView.tsx'
 import { AssetsView } from './AssetsView.tsx'
+import { InfrastructureView } from './InfrastructureView.tsx'
 import { DecisionSettings } from './DecisionSettings.tsx'
 import { DomainDataView } from './DomainDataView.tsx'
 import ui from './Controls.module.css'
@@ -407,7 +408,7 @@ export function SrcView({ useProjection, t, runCommand }: {
       case 'explore': return <ExploreView src={src} t={t} />
       case 'assets': return <AssetsView src={src} t={t} />
       case 'timeline': return <TimelineView src={src} t={t} />
-      case 'infra': return <InfraView src={src} t={t} runCommand={runCommand} />
+      case 'infra': return <InfrastructureView src={src} runCommand={runCommand} />
       case 'domains': return <DomainDataView runCommand={runCommand} />
       case 'report': return <ReportView src={src} t={t} />
     }

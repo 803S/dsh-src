@@ -19,6 +19,7 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
   const [key, setKey] = useState('')
   const [clearKey, setClearKey] = useState(false)
   const [showKey, setShowKey] = useState(false)
+  const storedKey = useRef('')
   const [busy, setBusy] = useState<'load' | 'save' | 'test' | null>(null)
   const [feedback, setFeedback] = useState<{ tone: string; text: string } | null>(null)
   const pending = useRef(false)
@@ -30,9 +31,10 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
     if (result.kind !== 'success') throw new Error(result.text)
     return result.text
   }
-  // Never keep a returned secret in the editable configuration or browser storage.
+  // Separate the saved secret from the draft. Revealing it must not resubmit it on save.
   const safeSettings = (text: string): Settings => {
-    const { apiKey: _secret, ...value } = JSON.parse(text) as Settings
+    const { apiKey, ...value } = JSON.parse(text) as Settings
+    storedKey.current = typeof apiKey === 'string' ? apiKey : ''
     return value
   }
   const load = async () => {
@@ -42,14 +44,21 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
     try {
       const value = safeSettings(await invoke('/src-decision-status'))
       if (generation.current !== current) return
-      setSettings(value); setSaved(value); setKey(''); setClearKey(false)
-    } catch (error) { if (generation.current === current) setFeedback({ tone: 'error', text: String((error as Error).message) }) }
+      setSettings(value); setSaved(value); setKey(''); setClearKey(false); setShowKey(false)    } catch (error) { if (generation.current === current) setFeedback({ tone: 'error', text: String((error as Error).message) }) }
     finally { if (generation.current === current) { pending.current = false; setBusy(null) } }
   }
   useEffect(() => {
     void load()
-    return () => { generation.current++; pending.current = false }
+    return () => { generation.current++; pending.current = false; storedKey.current = '' }
   }, [])
+  useEffect(() => {
+    if (!showKey) return
+    const hide = () => setShowKey(false)
+    const timer = window.setTimeout(hide, 30000)
+    window.addEventListener('blur', hide)
+    document.addEventListener('visibilitychange', hide)
+    return () => { clearTimeout(timer); window.removeEventListener('blur', hide); document.removeEventListener('visibilitychange', hide) }
+  }, [showKey])
   const dirty = !!settings && (JSON.stringify(settings) !== JSON.stringify(saved) || !!key || clearKey)
   const save = async () => {
     if (!settings || pending.current) return
@@ -84,7 +93,8 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
             <label className={css.field}>完整接口 URL<input className={ui.input} aria-label="决策接口 URL" type="url" required={settings.enabled} value={settings.endpoint} placeholder="https://provider.example/v1/systemone" onChange={event => setSettings({ ...settings, endpoint: event.target.value })} /><small>使用 HTTPS；本机服务允许 HTTP。更换供应商时须输入新 key 或明确清除旧 key。</small></label>
             <div className={css.twoFields}><label className={css.field}>模型<input className={ui.input} aria-label="决策模型" required value={settings.model} onChange={event => setSettings({ ...settings, model: event.target.value })} /></label><label className={css.field}>等待超时 · 毫秒<input className={ui.input} aria-label="决策超时" type="number" required min={1000} max={300000} step={1} value={settings.timeoutMs} onChange={event => setSettings({ ...settings, timeoutMs: Number(event.target.value) })} /></label></div>
             <label className={css.field} htmlFor="decision-key">API key <small>{saved?.hasKey ? '已有密钥 · 留空保留' : '尚未配置密钥'}</small></label>
-            <div className={css.secret}><input id="decision-key" className={ui.input} aria-label="决策 API key" type={showKey ? 'text' : 'password'} autoComplete="new-password" spellCheck={false} disabled={clearKey} value={key} placeholder={clearKey ? '保存时清除已存密钥' : '输入新密钥；留空不修改'} onChange={event => setKey(event.target.value)} /><button type="button" className={ui.button} aria-label={showKey ? '隐藏新密钥' : '显示新密钥'} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? '隐藏' : '显示'}</button></div>
+            <div className={css.secret}><input id="decision-key" className={ui.input} aria-label="决策 API key" type={showKey ? 'text' : 'password'} autoComplete="new-password" spellCheck={false} disabled={clearKey} value={key} placeholder={clearKey ? '保存时清除已存密钥' : '输入新密钥；留空不修改'} onChange={event => setKey(event.target.value)} /><button type="button" className={ui.button} aria-label={showKey ? '隐藏密钥' : '显示密钥'} aria-pressed={showKey} onClick={() => setShowKey(!showKey)}>{showKey ? '隐藏' : '显示'}</button></div>
+            {showKey && <div className={css.notice} data-testid="decision-saved-key"><label className={css.field}>当前已保存的 API key<input className={ui.input} type="text" readOnly value={storedKey.current} autoComplete="off" aria-label="已保存的 API key" placeholder="尚未保存密钥" /></label><small>只读查看，不会作为新密钥提交。30 秒后、窗口失焦或离开本页时自动隐藏；上方输入框用于替换。</small></div>}
             <label className={css.clearKey}><input type="checkbox" checked={clearKey} onChange={event => setClearKey(event.target.checked)} />保存时清除已保存的 key</label>
             <div className={css.notice}><strong>测试不发送目标业务请求</strong><p>使用合成任务测试已保存的配置，不覆盖你尚未保存的草稿。连接成功不等于判断准确。</p></div>
           </section>
@@ -98,6 +108,6 @@ export function DecisionSettings({ runCommand }: { runCommand: Run }) {
     </form> : <div className={css.loading}><p>{busy ? '正在读取全局配置…' : '尚未取得配置，请重试。'}</p><button type="button" className={ui.button} disabled={busy !== null} onClick={() => void load()}>重新读取设置</button></div>}
     {feedback && <p className={ui.feedback} data-tone={feedback.tone} role={feedback.tone === 'error' ? 'alert' : 'status'}>{feedback.text}</p>}
     {saved?.lastResult && <p className={css.lastResult}>最近记录：{saved.lastResult.ok ? `连接成功 ${saved.lastResult.model ?? ''}` : `未取得建议 ${saved.lastResult.errorType ?? ''}`} · {saved.lastResult.latency} ms</p>}
-    <details className={css.details}><summary>数据与失败处理说明</summary><p>远程服务会收到经凭据过滤的任务语义及文档片段，请使用可信供应商。密钥保存于本机受限权限文件，并非加密存储；此页面不回填已存密钥，也不使用浏览器持久化存储。</p><p>失败不自动重试、不切换供应商或回退 Laya；风险职责生效时，服务异常可能让 GET 也转人工。观测或关闭时沿用原审批规则。</p></details>
+    <details className={css.details}><summary>数据与失败处理说明</summary><p>远程服务会收到经凭据过滤的任务语义及文档片段，请使用可信供应商。密钥保存于本机受限权限文件，并非加密存储；此页面默认隐藏已存密钥，点击显示后短时只读展示，不使用浏览器持久化存储。</p><p>失败不自动重试、不切换供应商或回退 Laya；风险职责生效时，服务异常可能让 GET 也转人工。观测或关闭时沿用原审批规则。</p></details>
   </section>
 }
