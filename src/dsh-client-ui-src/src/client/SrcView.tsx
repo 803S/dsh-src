@@ -9,6 +9,8 @@ import { DecisionSettings } from './DecisionSettings.tsx'
 import { EgressControls } from './EgressControls.tsx'
 import { ApprovalExplanationCard } from './ApprovalExplanationCard.tsx'
 import { ReportView } from './ReportView.tsx'
+import { OverviewView } from './OverviewView.tsx'
+import { ActionCenter } from './ActionCenter.tsx'
 import css from './SrcView.module.css'
 
 type TodoRow = {
@@ -19,7 +21,7 @@ type TodoRow = {
   readonly status: 'pending' | 'done' | 'abandoned'
   readonly note?: string
   readonly createdAt?: number
-} 
+}
 
 		/**
 		* SrcView: the 渗透 conversation-view tab. A pure projection-mode
@@ -272,7 +274,7 @@ type TodoRow = {
 			if (runCommand === void 0) return <div className={css.empty}>当前会话不支持管理命令。</div>;
 			return <div className={css.list}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><div><strong>域数据管理</strong><div style={{ color: "var(--dsw-alias-label-tertiary, #888)", fontSize: 12, marginTop: 3 }}>按目标域聚合跨会话 SRC 数据。删除域数据不会删除 dsh 历史会话日志。</div></div><button type="button" disabled={busy} onClick={() => void load()} style={buttonStyle("var(--dsw-alias-state-info-primary, #69c)")}>{busy ? "处理中…" : "刷新"}</button></div>{feedback !== null && <div style={{ color: "var(--dsw-alias-state-success-primary, #3c9)", fontSize: 12, marginBottom: 8 }}>{feedback}</div>}{rows.length === 0 ? <div className={css.empty}>暂无 SRC 域数据</div> : rows.map((row) => <div className={css.card} key={row.target} style={{ marginBottom: 8, padding: "10px 12px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong style={{ fontSize: 15, wordBreak: "break-all" }}>{row.target}</strong><button type="button" disabled={busy} onClick={() => void remove(row.target)} style={buttonStyle("var(--dsw-alias-state-error-primary, #c33)")}>删除域数据</button></div><div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 8, fontSize: 12, color: "var(--dsw-alias-label-tertiary, #888)" }}><span>会话 {row.sessions}</span><span>笔记 {row.notes}</span><span>资产 {row.assets}</span><span>漏洞 {row.findings}</span><span>研究 {row.research}</span><span>观察 {row.observations}</span><span>审批 {row.approvals}</span><span>待办 {row.todos}</span><span>基础设施 {row.infra ?? 0} · 种子 {row.surveySeeds ?? 0}{row.cleanupPending ? " · 清理未完成，请重试" : ""}</span></div><div style={{ marginTop: 6, fontSize: 11, color: "var(--dsw-alias-label-caption, #aaa)" }}>最后更新：{row.lastUpdated ? new Date(row.lastUpdated).toLocaleString() : "未知"}</div></div>)}</div>;
 		}
-		export function SrcView({ useProjection, t, runCommand }: {
+		function LegacySrcView({ useProjection, t, runCommand }: {
   readonly useProjection: (key: string) => SrcProjection | null | undefined
   readonly t: PropsLocale['t']
   readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined
@@ -329,5 +331,133 @@ type TodoRow = {
 									return<span className={`${css.tabBadge} ${tabKey === "todos" ? css.tabBadgeHot : ""}`}>{n}</span>;
 								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={authoritative ? runCommand : undefined} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <Fragment><div className={css.todoColumns}><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: 4 }}>待办事项</div><TodoListView src={src} t={t} runCommand={runCommand} /></div><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-state-error-primary, #c33)", marginBottom: 4 }}>⚠️ 待人工确认的请求</div><ApprovalListView src={src} t={t} runCommand={authoritative ? runCommand : undefined} /></div></div></Fragment>; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "domains": return <DomainDataView runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
 		}
-		//#endregion
+
+/**
+ * Current SRC workbench. The previous implementation remains above as a
+ * compatibility reference while the new shell owns navigation and layout.
+ */
+const MODERN_PRIMARY_TABS = ['overview', 'findings', 'todos', 'explore', 'assets', 'timeline', 'report'] as const
+const MODERN_UTILITY_TABS = ['infra', 'domains'] as const
+type ModernTab = typeof MODERN_PRIMARY_TABS[number] | typeof MODERN_UTILITY_TABS[number]
+
+const MODERN_TAB_LABELS: Record<ModernTab, string> = {
+  overview: 'view.tab.overview',
+  findings: 'view.tab.findings',
+  todos: 'view.tab.todos',
+  explore: 'view.tab.explore',
+  assets: 'view.tab.assets',
+  timeline: 'view.tab.timeline',
+  report: 'view.tab.report',
+  infra: 'view.tab.infra',
+  domains: 'view.tab.domains',
+}
+
+function latestSrcActivity(src: SrcProjection): number {
+  return [
+    ...src.nodes,
+    ...src.observations,
+    ...src.checkpoints,
+    ...src.userTodos,
+    ...src.pendingApprovals,
+  ].reduce((latest, row) => Math.max(latest, row.createdAt ?? 0), 0)
+}
+
+function ModernEngagementHeader({ src, t, onNavigate }: { readonly src: SrcProjection; readonly t: PropsLocale['t']; readonly onNavigate: (tab: ModernTab) => void }) {
+  const pendingTodos = src.userTodos.filter(row => row.status === 'pending').length
+  const pendingApprovals = src.pendingApprovals.filter(row => row.status === 'pending').length
+  const activeFindings = src.nodes.filter(node => node.kind === 'finding' && node.status !== 'rejected').length
+  const coverageRows = src.coverage.filter(row => typeof row.endpointsTotal === 'number' && row.endpointsTotal > 0)
+  const tested = coverageRows.reduce((sum, row) => sum + (row.endpointsTested ?? 0), 0)
+  const total = coverageRows.reduce((sum, row) => sum + (row.endpointsTotal ?? 0), 0)
+  const lastActivity = latestSrcActivity(src)
+  const activityText = lastActivity === 0 ? '暂无活动' : new Date(lastActivity).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const status = pendingApprovals + pendingTodos > 0 ? '需要你的操作' : src.nodes.some(node => node.kind === 'intent' && node.status === 'running') ? '正在运行' : '持续记录中'
+  const stats: Array<{ label: string; value: string | number; tone?: string; tab?: ModernTab }> = [
+    { label: '漏洞', value: activeFindings, tone: activeFindings > 0 ? css.metricDanger : '', tab: 'findings' },
+    { label: '待处理', value: pendingTodos + pendingApprovals, tone: pendingTodos + pendingApprovals > 0 ? css.metricWarning : '', tab: 'todos' },
+    { label: '资产', value: src.assets.length, tab: 'assets' },
+    { label: '研究方向', value: src.nodes.filter(node => node.kind === 'intent').length, tab: 'explore' },
+    { label: '接口覆盖', value: total > 0 ? `${tested}/${total}` : '—', tab: 'timeline' },
+    { label: '认证预算', value: src.authBudget ? `${src.authBudget.used}/${src.authBudget.limit}` : '—' },
+  ]
+  return <header className={css.engagementHeader}>
+    <div className={css.engagementTop}>
+      <div className={css.engagementCopy}>
+        <div className={css.eyebrow}><span className={css.liveDot} /> SRC ENGAGEMENT <span className={css.eyebrowDivider}>/</span> {status}</div>
+        <div className={css.titleLine}><h1>{src.goal?.target || '未设置目标'}</h1>{src.goal?.authorization && <span className={css.authorizationBadge} title={src.goal.authorization}>授权 · {src.goal.authorization}</span>}</div>
+        <p className={css.objective}>{src.goal?.objective || '等待 agent 记录本次挖掘目标与验证目的。'}</p>
+        <div className={css.headerMeta}><span>最近活动 {activityText}</span>{src.apiDiscovery && src.apiDiscovery.total > 0 && <span>API 发现 {src.apiDiscovery.total}</span>}</div>
+      </div>
+      <div className={css.headerActions}><button type="button" className={css.secondaryAction} onClick={() => onNavigate('explore')}>查看链路</button><button type="button" className={css.primaryAction} onClick={() => onNavigate('report')}>查看报告 <span>→</span></button></div>
+    </div>
+    <div className={css.metricStrip}>{stats.map(stat => <button key={stat.label} type="button" className={`${css.metric} ${stat.tone ?? ''}`} onClick={() => stat.tab && onNavigate(stat.tab)} disabled={!stat.tab}><span>{stat.label}</span><strong>{stat.value}</strong></button>)}</div>
+  </header>
+}
+
+export function SrcView({ useProjection, t, runCommand }: {
+  readonly useProjection: (key: string) => SrcProjection | null | undefined
+  readonly t: PropsLocale['t']
+  readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined
+}) {
+  const projected = useProjection('src')
+  const [authoritative, setAuthoritative] = useState<SrcProjection | null>(null)
+  const [stateError, setStateError] = useState('')
+  const commandRef = useRef(runCommand)
+  commandRef.current = runCommand
+  const projectionSignature = JSON.stringify(projected ?? null)
+  const [tab, setTab] = useState<ModernTab>('overview')
+
+  useEffect(() => {
+    let cancelled = false
+    setAuthoritative(null)
+    if (!commandRef.current) return
+    void commandRef.current('/src-authoritative-state').then(result => {
+      if (cancelled) return
+      if (result.kind !== 'success') throw new Error(result.text)
+      setAuthoritative(JSON.parse(result.text) as SrcProjection)
+      setStateError('')
+    }).catch(error => {
+      if (!cancelled) setStateError(String(error?.message ?? error))
+    })
+    return () => { cancelled = true }
+  }, [projectionSignature])
+
+  const src = authoritative ?? projected
+  if (src === undefined || src === null) return <section className={css.root} data-testid="src-view"><div className={css.emptyState}><span className={css.emptyIcon}>◌</span><h2>{t('view.empty')}</h2><p>在 SRC 专业模式下发送目标与目的后，这里会自动建立研究工作台。</p></div><DomainDataView runCommand={runCommand} /></section>
+
+  const pendingCount = src.userTodos.filter(row => row.status === 'pending').length + src.pendingApprovals.filter(row => row.status === 'pending').length
+  const renderTab = () => {
+    switch (tab) {
+      case 'overview': return <OverviewView src={src} t={t} onNavigate={next => setTab(next as ModernTab)} />
+      case 'findings': return <FindingsView src={src} t={t} runCommand={authoritative ? runCommand : undefined} />
+      case 'todos': return <ActionCenter src={src} t={t} runCommand={authoritative ? runCommand : undefined} />
+      case 'explore': return <ExploreView src={src} t={t} />
+      case 'assets': return <AssetsView src={src} t={t} />
+      case 'timeline': return <TimelineView src={src} t={t} />
+      case 'infra': return <InfraView src={src} t={t} runCommand={runCommand} />
+      case 'domains': return <DomainDataView runCommand={runCommand} />
+      case 'report': return <ReportView src={src} t={t} />
+    }
+  }
+  const badgeFor = (key: ModernTab): number => {
+    if (key === 'findings') return src.nodes.filter(node => node.kind === 'finding').length
+    if (key === 'todos') return pendingCount
+    if (key === 'assets') return src.assets.length
+    if (key === 'timeline') return src.checkpoints.length + src.observations.length + src.nodes.filter(node => node.kind === 'fact').length
+    return 0
+  }
+  const renderNavButton = (key: ModernTab) => {
+    const badge = badgeFor(key)
+    return <button key={key} type="button" className={css.tab} aria-selected={tab === key} aria-pressed={tab === key} data-testid={`src-tab-${key}`} onClick={() => setTab(key)}>{t(MODERN_TAB_LABELS[key])}{badge > 0 && <span className={`${css.tabBadge} ${key === 'todos' && pendingCount > 0 ? css.tabBadgeHot : ''}`}>{badge}</span>}</button>
+  }
+
+  return <section className={css.root} data-testid="src-view">
+    <div role="status" className={css.statusMessage}>{stateError ? `权威状态加载失败：${stateError}；仅显示历史投影，操作已禁用。` : !authoritative && runCommand ? '正在核对权威状态…' : ''}</div>
+    <ModernEngagementHeader src={src} t={t} onNavigate={setTab} />
+    <nav className={css.tabs} data-testid="src-tabs" aria-label="SRC 工作台导航"><div className={css.primaryTabs}>{MODERN_PRIMARY_TABS.map(renderNavButton)}</div><div className={css.utilityTabs}>{MODERN_UTILITY_TABS.map(renderNavButton)}</div></nav>
+    <div className={css.content}>{renderTab()}</div>
+  </section>
+}
+
+//#endregion
 		

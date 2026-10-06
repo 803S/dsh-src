@@ -1,0 +1,124 @@
+import { useState } from 'react'
+import type { SrcProjection, SrcProjectionPendingApproval, SrcProjectionUserTodo } from '../../types/projection'
+import type { PropsLocale } from '../../types/slots'
+import { ApprovalExplanationCard } from './ApprovalExplanationCard.tsx'
+import { EgressControls } from './EgressControls.tsx'
+import css from './ActionCenter.module.css'
+
+type RunCommand = (command: string) => Promise<{ kind: string; text: string }>
+
+function statusLabel(status: SrcProjectionUserTodo['status']): string {
+  return status === 'done' ? '已完成' : status === 'abandoned' ? '已放弃' : '待处理'
+}
+
+function approvalTitle(approval: SrcProjectionPendingApproval): string {
+  if (approval.method === 'ASSET') return `确认资产归属：${approval.url}`
+  if (approval.method === 'SCOPE') return `确认测试范围：${approval.url}`
+  return `${approval.method} ${approval.url}`
+}
+
+function approvalActionLabel(approval: SrcProjectionPendingApproval, allow: boolean): string {
+  if (approval.method === 'ASSET') return allow ? '确认归属' : '排除资产'
+  if (approval.method === 'SCOPE') return allow ? '确认范围（不发包）' : '拒绝范围'
+  return allow ? '批准并执行一次' : '拒绝'
+}
+
+function TodoCard({ todo, runCommand, onFeedback }: { readonly todo: SrcProjectionUserTodo; readonly runCommand?: RunCommand; readonly onFeedback: (message: string) => void }) {
+  const [noteOpen, setNoteOpen] = useState(false)
+  const [noteStatus, setNoteStatus] = useState<'done' | 'abandoned'>('done')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const send = async (status: 'done' | 'abandoned') => {
+    if (!runCommand || busy) return
+    setBusy(true)
+    try {
+      const trimmed = note.trim()
+      const result = await runCommand(`/src-todo ${todo.id} ${status}${trimmed ? ` ${trimmed}` : ''}`)
+      onFeedback(result.kind === 'success' ? `已转达：${todo.id} → ${status === 'done' ? '已完成' : '已放弃'}` : `命令返回错误：${result.text}`)
+      setNoteOpen(false)
+      setNote('')
+    } catch (error) {
+      onFeedback(`发送失败：${(error as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <article className={`${css.actionCard} ${css.todoCard}`} data-testid="src-todo-card">
+    <div className={css.actionIcon} data-status={todo.status}>{todo.status === 'done' ? '✓' : todo.status === 'abandoned' ? '×' : '↗'}</div>
+    <div className={css.actionBody}>
+      <div className={css.actionHeading}><span className={css.kindLabel}>{todo.kind || '用户待办'}</span><span className={`${css.statusPill} ${css[`status_${todo.status}`]}`}>{statusLabel(todo.status)}</span></div>
+      <h3>{todo.title}</h3>
+      {todo.detail && <p>{todo.detail}</p>}
+      {todo.note && <p className={css.userNote}>用户备注：{todo.note}</p>}
+      <div className={css.actionMeta}><code>{todo.id}</code>{todo.intentId && <span>关联研究方向 {todo.intentId}</span>}</div>
+      {todo.status === 'pending' && runCommand && <div className={css.actionButtons}>
+        {!noteOpen ? <><button type="button" className={css.successButton} disabled={busy} onClick={() => { setNoteStatus('done'); setNote(''); setNoteOpen(true) }}>我已完成</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setNoteStatus('abandoned'); setNote(''); setNoteOpen(true) }}>放弃此项</button></> : <div className={css.noteForm}>
+          <label htmlFor={`todo-note-${todo.id}`}>{noteStatus === 'done' ? '完成说明' : '放弃原因'} <span>可选，会转达给 agent</span></label>
+          <textarea id={`todo-note-${todo.id}`} autoFocus rows={2} value={note} placeholder={noteStatus === 'done' ? '例如：已用 Burp 抓好登录包' : '例如：暂不具备测试条件'} onChange={event => setNote(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(noteStatus) } if (event.key === 'Escape') setNoteOpen(false) }} />
+          <div><button type="button" className={css.ghostButton} onClick={() => setNoteOpen(false)}>取消</button><button type="button" className={noteStatus === 'done' ? css.successButton : css.ghostButton} disabled={busy} onClick={() => void send(noteStatus)}>{busy ? '发送中…' : noteStatus === 'done' ? '确认完成' : '确认放弃'}</button></div>
+        </div>}
+      </div>}
+    </div>
+  </article>
+}
+
+function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval: SrcProjectionPendingApproval; readonly runCommand?: RunCommand; readonly onFeedback: (message: string) => void }) {
+  const [decisionOpen, setDecisionOpen] = useState(false)
+  const [decision, setDecision] = useState<'allow' | 'reject'>('allow')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const isPending = approval.status === 'pending'
+  const send = async () => {
+    if (!runCommand || busy) return
+    setBusy(true)
+    try {
+      const trimmed = note.trim()
+      const result = await runCommand(`/src-approve ${approval.id} ${decision}${trimmed ? ` ${trimmed}` : ''}`)
+      onFeedback(result.kind === 'success' ? result.text : `命令返回错误：${result.text}`)
+      setDecisionOpen(false)
+      setNote('')
+    } catch (error) {
+      onFeedback(`发送失败：${(error as Error).message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const statusText = approval.status === 'approved' ? '已批准' : approval.status === 'rejected' ? '已拒绝' : '等待决定'
+  return <article className={`${css.actionCard} ${css.approvalCard}`} data-testid="src-approval-card">
+    <div className={css.actionIcon} data-status={approval.status}>{approval.method === 'ASSET' ? '◎' : '!'}</div>
+    <div className={css.actionBody}>
+      <div className={css.actionHeading}><span className={css.kindLabel}>{approval.category || '人工审批'}</span><span className={`${css.statusPill} ${approval.status === 'pending' ? css.status_pending : approval.status === 'approved' ? css.status_done : css.status_abandoned}`}>{statusText}</span></div>
+      <h3>{approvalTitle(approval)}</h3>
+      <p className={css.consequenceHint}>{approval.method === 'SCOPE' ? '确认范围本身不会发送目标请求。' : approval.method === 'ASSET' ? '确认后该注册域及其子域会进入可测试范围。' : '批准后会按冻结的请求参数执行一次，可能产生业务副作用。'}</p>
+      <div className={css.actionMeta}><code>{approval.id}</code>{approval.executionState && <span>执行状态：{approval.executionState}</span>}</div>
+      <ApprovalExplanationCard request={approval} />
+      {approval.reason && <p className={css.reason}><strong>{approval.status === 'pending' ? '分类理由' : '执行前记录'}：</strong>{approval.reason}</p>}
+      {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看请求报文'}</summary><pre>{approval.method} {approval.url}{approval.headers ? `\n${approval.headers}` : ''}{approval.body ? `\n\n${approval.body}` : ''}</pre></details>}
+      {isPending && runCommand && approval.executionState !== 'executing' && approval.executionState !== 'unknown' && <div className={css.actionButtons}>
+        {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
+          <label htmlFor={`approval-note-${approval.id}`}>{decision === 'allow' ? '批准前补充备注' : '拒绝原因'} <span>可选，会写入审计记录</span></label>
+          <textarea id={`approval-note-${approval.id}`} autoFocus rows={2} value={note} placeholder={decision === 'allow' ? '例如：确认这是授权测试账号' : '例如：可能影响真实用户，不批准'} onChange={event => setNote(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } if (event.key === 'Escape') setDecisionOpen(false) }} />
+          <div><button type="button" className={css.ghostButton} onClick={() => setDecisionOpen(false)}>取消</button><button type="button" className={decision === 'allow' ? css.dangerButton : css.successButton} disabled={busy} onClick={() => void send()}>{busy ? '发送中…' : decision === 'allow' ? '确认批准' : '确认拒绝'}</button></div>
+        </div>}
+      </div>}
+    </div>
+  </article>
+}
+
+export function ActionCenter({ src, t, runCommand }: { readonly src: SrcProjection; readonly t: PropsLocale['t']; readonly runCommand?: RunCommand }) {
+  const [feedback, setFeedback] = useState('')
+  const todos = [...src.userTodos].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt - a.createdAt)
+  const approvals = [...src.pendingApprovals].sort((a, b) => (a.status === 'pending' ? -1 : 1) - (b.status === 'pending' ? -1 : 1) || b.createdAt - a.createdAt)
+  const pendingTodos = todos.filter(todo => todo.status === 'pending')
+  const pendingApprovals = approvals.filter(approval => approval.status === 'pending')
+  return <div className={css.root} data-testid="src-action-center">
+    <section className={css.actionHero}><div><span className={css.sectionKicker}>ACTION CENTER</span><h2>把需要人工判断的事情集中处理</h2><p>审批会说明操作目的、潜在后果和恢复条件；待办完成后会写回当前 SRC 会话，agent 才会继续推进。</p></div><div className={css.actionSummary}><strong>{pendingTodos.length + pendingApprovals.length}</strong><span>待处理</span></div></section>
+    {feedback && <div className={css.feedback} role="status">{feedback}</div>}
+    <div className={css.columns}>
+      <section className={css.column}><header className={css.columnHeader}><div><span className={css.columnKicker}>USER TASKS</span><h2>用户待办</h2></div><span className={css.countBadge}>{pendingTodos.length}</span></header>{todos.length === 0 ? <div className={css.empty}>暂无用户待办</div> : todos.map(todo => <TodoCard key={todo.id} todo={todo} runCommand={runCommand} onFeedback={setFeedback} />)}</section>
+      <section className={css.column}><header className={css.columnHeader}><div><span className={`${css.columnKicker} ${css.redText}`}>HUMAN REVIEW</span><h2>待审批请求</h2></div><span className={`${css.countBadge} ${pendingApprovals.length > 0 ? css.countBadgeHot : ''}`}>{pendingApprovals.length}</span></header>{approvals.length === 0 ? <div className={css.empty}>暂无待审请求</div> : approvals.map(approval => <ApprovalCard key={approval.id} approval={approval} runCommand={runCommand} onFeedback={setFeedback} />)}</section>
+    </div>
+    <div className={css.advanced}><EgressControls runCommand={runCommand} /></div>
+  </div>
+}

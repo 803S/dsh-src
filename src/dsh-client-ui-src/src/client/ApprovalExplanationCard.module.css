@@ -1,0 +1,7 @@
+.root { display: flex; flex-direction: column; gap: 5px; margin: 3px 0; padding: 10px 11px; border: 1px solid color-mix(in oklab, var(--dsw-alias-state-warn-primary) 28%, var(--dsw-alias-border-l1)); border-radius: 9px; color: var(--dsw-alias-label-secondary); background: color-mix(in oklab, var(--dsw-alias-state-warn-primary) 5%, transparent); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.root strong { color: var(--dsw-alias-label-primary); font-weight: 650; }
+.root ul { margin: 0; padding: 0 0 0 17px; }
+.root li { padding-left: 2px; }
+.root details { margin-top: 2px; border-top: 1px solid color-mix(in oklab, var(--dsw-alias-border-l1) 70%, transparent); padding-top: 5px; }
+.root summary { color: var(--dsw-alias-label-tertiary); font-size: 10px; cursor: pointer; }
+.fullText { margin-top: 5px; color: var(--dsw-alias-label-tertiary); white-space: pre-wrap; overflow-wrap: anywhere; }

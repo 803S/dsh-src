@@ -6,6 +6,7 @@ export const NS = 'src'
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
   'counts': '意图 {intents} · 事实 {facts} · 漏洞 {findings} · 资产 {assets} · 检查点 {checkpoints} · 探测 {observations} · 待处理待办 {userTodos}',
+  'view.tab.overview': '概览',
   'view.tab.explore': '探索链路',
   'view.tab.findings': '漏洞',
   'view.tab.assets': '资产',
@@ -118,6 +119,7 @@ export type SrcKey = keyof typeof zh
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
   'counts': 'Intents {intents} · Facts {facts} · Findings {findings} · Assets {assets} · Checkpoints {checkpoints} · Probes {observations} · Pending todos {userTodos}',
+  'view.tab.overview': 'Overview',
   'view.tab.explore': 'Exploration',
   'view.tab.findings': 'Findings',
   'view.tab.assets': 'Assets',
