@@ -286,7 +286,7 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
    assert.equal(incoming.state.executionPolicy.targetScopeChecked,true);
    assert.equal(incoming.state.executionPolicy.lowRiskAutoApprovalGranted,true);
    if(fail)return new Response('unavailable',{status:503});
-   const p=JSON.parse(init.body);const choices={decision:effect,risk,verdict};
+   const p=JSON.parse(init.body);const choices={decision:effect,risk,verdict,objectClass:'not-applicable'};
    return new Response(JSON.stringify({model:'jev-fixture',answers:Object.fromEntries(Object.entries(p.questions).map(([k,q])=>[k,{choice:choices[k],confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map(option=>[option,option===choices[k]?1:0]))}]))}));
   }
   hits++;return new Response('fixture response');

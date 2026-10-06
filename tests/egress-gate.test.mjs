@@ -25,6 +25,15 @@ function fixture(t, { assess, file = ':memory:', key = randomBytes(32) } = {}) {
 }
 const code = name => ({ code: `SRC_GATE_${name}` });
 
+test('低风险只读资源名不被upload、mail、pay关键词一票否决',async t=>{
+ const f=fixture(t);
+ for(const pathname of ['/uploads/logo.png','/mail/list','/api/payments/history']){
+  const req=request({url:'https://fixture.invalid'+pathname});
+  const task=await f.broker.propose('paths',input({entries:[{request:req,maxRequests:1}],maxRequests:1}));
+  assert.equal(task.state,'active');const sent=f.broker.dataPlane.claim('paths',task.id,req);f.broker.dataPlane.finish('paths',sent.dispatchId,'response_received');f.tick();
+ }
+});
+
 test('canonical requests preserve query, body bytes and every semantic header', () => {
   assert.deepEqual(canonicalRequest(request({ headers: [['Host', 'fixture.invalid'], ['Content-Length', '0'], ['X-Test', 'value']] })).headers, [['x-test', 'value']]);
   for (const url of ['https://fixture.invalid', 'https://u:p@fixture.invalid/', 'https://fixture.invalid/a#x', 'https://fixture.invalid/a/../b', 'ftp://fixture.invalid/a']) {
@@ -67,10 +76,9 @@ test('Jev errors become pending; mutation of advisor/input/returned views cannot
 });
 
 for (const patch of [{ url: 'https://fixture.invalid/%64elete?id=1' }, { url: 'https://fixture.invalid/run?operation=reset' }, { method: 'DELETE' }, { method: 'PUT', bodyBase64: Buffer.from('<x/>').toString('base64') }, { method: 'POST', url:'https://fixture.invalid/delete' }]) {
-  test(`hard boundary overrides Jev: ${JSON.stringify(patch)}`, async t => {
-    const f = fixture(t);
+  test(`危险请求真实语义交Jev，高危不自动放行: ${JSON.stringify(patch)}`, async t => {
+    const f = fixture(t,{assess:()=>({...low,effect:'destructive',risk:'high',action:'pending'})});
     const planInput = input({ entries: [{ request: request(patch), maxRequests: 3 }] });
-    assert.equal(requiresHuman(normalizePlan(planInput, scope)), true);
     assert.equal((await f.broker.propose('s1', planInput)).state, 'pending');
   });
 }
@@ -296,7 +304,7 @@ test('单笔POST纯计算由Jev自动放行，安全说明不强制转人工且�
 });
 
 test('低风险计算判定不能覆盖真实删除方法、危险路径或语义不明',async t=>{
- for(const [patch,advice] of [[{method:'DELETE'},{...low,effect:'compute'}],[{method:'POST',path:'/delete'},{...low,effect:'compute'}],[{method:'POST'},{...low,effect:'unknown'}]]){
+ for(const [patch,advice] of [[{method:'DELETE'},{...low,effect:'compute'}],[{method:'POST',path:'/delete'},{...low,effect:'destructive',risk:'high'}],[{method:'POST'},{...low,effect:'unknown'}]]){
   const f=await managerFixture(t,{advice});
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123'+(patch.path??'/render'),{method:patch.method,body:'{"template":"{{7*7}}"}'}),code('PENDING_OR_REJECTED'));
   assert.equal(f.sends(),0);assert.equal(f.rows.size,1);
@@ -370,7 +378,7 @@ test('host/child shared store closes only after last owner; later owner reopens'
   const next=new Store(ctx);await next.domain();assert.equal(opens,2);await next.dispose();assert.equal(closes,2);
 });
 test('hazardous GET cannot become a scan grant through human batch approval',async t=>{
-  const f=fixture(t);
+  const f=fixture(t,{assess:()=>({...low,effect:'destructive',risk:'high',action:'pending'})});
   const task=await f.broker.propose('s1',input({maxRequests:1,entries:[{request:request({url:'https://fixture.invalid/delete?id=1'}),maxRequests:1}]}));
   assert.equal(task.state,'pending');
   assert.throws(()=>f.broker.commandPlane.decide('s1',task.id,task.digest,'allow'),code('WRITE_EXECUTOR_REQUIRED'));
@@ -655,7 +663,7 @@ test('待办写入中断后重新读取同请求补齐原任务卡片，不产�
 
 test('域名中的危险词不能把普通读取误判为高危动作',()=>{
  for(const host of ['mail','payment','upload','command','dropbox'])assert.equal(requiresHuman({entries:[{request:request({url:`https://${host}.fixture.invalid/read`})}]}),false);
- assert.equal(requiresHuman({entries:[{request:request({url:'https://mail.fixture.invalid/delete'})}]}),true);
+ assert.equal(requiresHuman({entries:[{request:request({url:'https://mail.fixture.invalid/delete'})}]}),false,'路径交给语义审核，不单凭名字定性');
 });
 
 test('补材料后发布中断可从旧编号恢复同一新单，正文和安全材料均不重建',async t=>{

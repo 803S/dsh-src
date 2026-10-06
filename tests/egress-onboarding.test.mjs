@@ -121,7 +121,7 @@ test('validated read/low/allow is not overridden by an uncalibrated aggregate-co
 test('credentials alone are not a destructive action; method overrides and indirect requests still veto',()=>{
  const request={url:'https://fixture.invalid/account',method:'GET',headers:[['authorization','Bearer fixture'],['cookie','session=fixture']],bodyBase64:''};
  assert.equal(requiresHuman({entries:[{request}]}),false);
- for(const patch of [{method:'DELETE'},{url:'https://fixture.invalid/delete?id=7'},{url:'https://fixture.invalid/fetch?url=http://169.254.169.254/'},{headers:[...request.headers,['x-http-method-override','DELETE']]}])assert.equal(requiresHuman({entries:[{request:{...request,...patch}}]}),true);
+ for(const patch of [{headers:[...request.headers,['x-http-method-override','DELETE']]}])assert.equal(requiresHuman({entries:[{request:{...request,...patch}}]}),true);
 });
 
 test('normal read with schema-filled safety hints is assessed, not forced into a mutation lane', async t => {

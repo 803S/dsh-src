@@ -9,6 +9,7 @@ import { jevDecide, decisionServiceStatus } from '../lib/src/decision/jev-client
 import { registerDecisionCommands } from '../lib/src/decision/service-commands.js';
 const answer = (choice,options,model='jev-fixture') => {
  const result={ model, answers:{decision:{choice,confidence:.95,probabilities:Object.fromEntries(options.map(k=>[k,k===choice?1:0]))}} };
+ result.answers.objectClass={choice:'business-or-unknown',confidence:1,probabilities:{'not-applicable':0,'new-test-file':0,'owned-test-file':0,'business-or-unknown':1}};
  result.answers.risk={choice:'high',confidence:1,probabilities:{low:0,high:1,unknown:0}};
  result.answers.verdict={choice:'pending',confidence:1,probabilities:{allow:0,pending:1}};
  return result;
@@ -16,6 +17,18 @@ const answer = (choice,options,model='jev-fixture') => {
 async function fixture(t){const prev=process.env.DSH_HOME, fetch=globalThis.fetch;const dir=await fs.mkdtemp(path.join(os.tmpdir(),'jev-service-'));await fs.mkdir(dir,{recursive:true,mode:0o700});await fs.chmod(dir,0o700);process.env.DSH_HOME=dir;t.after(async()=>{globalThis.fetch=fetch;if(prev===undefined)delete process.env.DSH_HOME;else process.env.DSH_HOME=prev;await fs.rm(dir,{recursive:true,force:true});});return dir;}
 const exec={agent:{session:{id:'fixture'}}};
 const args={taskType:'skill-activate',justification:'排查TLS差异',headers:{'api-key':'business-fixture-secret'},candidates:[{id:'network-guide',title:'网络诊断',identity:'v1',excerpt:'比较代理直连和TLS错误'}]};
+
+for(const composite of [false,true])test(`风险审核不截断正文尾部，展示摘要限制不影响审核：composite=${composite}`,async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});
+ const body=composite?JSON.stringify({padding:'x'.repeat(6000),operation:'delete-business-records',password:'fixture-private-body'}):'padding='+'x'.repeat(6000)+'&operation=delete-business-records&password=fixture-private-body';
+ globalThis.fetch=async(_url,init)=>{
+  assert.ok(init.body.includes('delete-business-records'));assert.ok(!init.body.includes('fixture-private-body'));assert.ok(!init.body.includes('截断'));
+  const p=JSON.parse(init.body);return new Response(JSON.stringify(answer('destructive',Object.keys(p.questions.decision.criteria))));
+ };
+ const request={method:'POST',url:'https://fixture.invalid/query',headers:[],bodyBase64:Buffer.from(body).toString('base64')};
+ const result=await jevDecide(composite?{taskType:'scan-plan',scopeChecked:true,plan:{entries:[{request,maxRequests:2}],maxRequests:2,purpose:'fixture'}}:{taskType:'risk-grade',scopeChecked:true,method:request.method,url:request.url,body},exec);
+ assert.equal(result.fallback,false);assert.equal(result.effect,'destructive');
+});
 
 test('Jev settings are global, private, atomic, mask keys, and require key on provider-origin change',async t=>{
  await fixture(t);assert.equal((await readDecisionSettings()).enabled,false);
@@ -154,4 +167,17 @@ test('复合安全计划发给Jev时所有嵌套请求均脱敏，不残留base6
  };
  const plan={entries:[{request,maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'计算',hostExecution:{request,safety:{effect:'compute',object:'算术',recovery:'无自动重试'}}};
  const result=await jevDecide({taskType:'scan-plan',plan,scopeChecked:true},exec);assert.equal(result.effect,'compute');assert.equal(result.fallback,false);
+});
+
+test('审核正文保留重复JSON键与尾部语义，脱敏转义键，拒绝有损解码',async()=>{
+ const {reviewBody}=await import('../lib/src/decision/review-input.js');
+ const text=reviewBody('{"operation":"read","password":"fixture-secret","operation":"drop-database","nested":{"secret":{"key":"nested-private"}}}');
+ assert.equal((text.match(/"operation"/g)??[]).length,2);assert.ok(text.includes('drop-database'));assert.ok(!text.includes('fixture-secret'));assert.ok(!text.includes('nested-private'));
+ assert.throws(()=>reviewBody(Buffer.from([0xff,0xfe])));
+ const escaped='{"'+String.raw`\u0070assword`+'":"unicode-private","operation":"delete"}';assert.ok(!reviewBody(escaped).includes('unicode-private'));
+});
+test('有损或超限审核材料不能请求Jev后自动放行',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});let calls=0;globalThis.fetch=async()=>{calls++;throw Error('must not call');};
+ for(const body of [Buffer.from([0xff,0xfe]),'x'.repeat(65537)]){const r=await jevDecide({taskType:'risk-grade',method:'POST',url:'https://fixture.invalid/test',body},exec);assert.equal(r.action,'pending');assert.equal(r.errorType,'unreviewable-input');}
+ assert.equal(calls,0);
 });
