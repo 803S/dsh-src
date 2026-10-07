@@ -7,7 +7,7 @@
 
 - 覆盖行不带 manifest 时仍须执行 schema 校验，禁止无效 endpointStatuses 落库。
 - 旧行、日志回放和缓存投影只读兼容，原值在限制说明中保留；未知状态不计为已测试。
-- 详见 [会话加载修复记录](implementation/session-load-repair-20261007.md)。
+- 541项回归通过，已部署、推送并正式发布；原会话历史和SRC面板实测均恢复，数据未删改。详见 [会话加载修复记录](implementation/session-load-repair-20261007.md)。
 
 ## local.118（2026-10-07）
 
