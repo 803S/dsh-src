@@ -170,3 +170,16 @@ test('审批展示冻结HTTP请求、脱敏凭据，空PUT没有可执行按钮'
  const put={...input,body:JSON.stringify({entries:[{request:{method:'PUT',url:'http://127.0.0.1/render',headers:{},body:''}}],safety:null})};
  assert.equal(approvalMissingSafety(put),true);assert.match(approvalOperation(put),/清空资源/);
 });
+
+import {readableCoverage} from '../lib/src/coverage-projection.js';
+import {srcProjectionSchema,viewSrcState} from '../lib/src.js';
+test('三种历史覆盖事件及缓存投影都兼容非法状态，且不把漏洞结论当覆盖证据',()=>{
+ const row={id:'coverage-1',sessionId:'fixture-coverage',phase:'api',category:'ssti',status:'completed',evidence:[],limitation:'原说明',endpointStatuses:{'/render':'vulnerable','/health':'tested'},endpointsTotal:2,endpointsTested:2,updatedAt:1};
+ const goal=applySrcEvent(srcInitialState,{type:'tool/call',data:{name:'src_add_goal',arguments:JSON.stringify({target:'fixture.invalid',objective:'offline'})}});
+ for(const [name,args] of [['src_record_coverage',row],['src_coverage_committed',row],['src_store_committed',{eventSeq:1,puts:[{table:'coverage',row}]}]]){
+  const state=applySrcEvent(goal,{type:'tool/call',data:{name,arguments:JSON.stringify(args)}});
+  const view=viewSrcState(state);assert.equal(srcProjectionSchema.safeParse(view).success,true,name);assert.equal(view.coverage[0].endpointStatuses['/render'],'blocked');assert.equal(view.coverage[0].endpointsTested,1);
+ }
+ assert.equal(srcProjectionSchema.safeParse(viewSrcState({...goal,coverage:[row]})).success,true);
+ const once=readableCoverage(row);assert.deepEqual(readableCoverage(once),once);assert.equal(row.endpointStatuses['/render'],'vulnerable');
+});

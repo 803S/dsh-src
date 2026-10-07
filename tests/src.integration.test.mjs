@@ -6419,3 +6419,24 @@ test('扫描遇DOMException数字code不再二次抛错，真实闸错误和取�
   await assert.rejects(h.run('src_scan_surface',{baseUrl:'https://example.test',paths:['/cancel'],rps:10},parent),/fixture cancellation/);
  }finally{globalThis.fetch=previous;}
 });
+
+test('覆盖状态写入校验与历史坏行兼容：不再拖垮整份权威状态',async()=>{
+ const h=await freshEvidenceHarness(),parent=h.exec('coverage-invalid-status');
+ await h.run('src_add_goal',{target:'fixture.invalid',objective:'离线状态回归'},parent);
+ const args={phase:'api',category:'template',status:'completed',evidence:[],endpointStatuses:{'/render':'vulnerable'},endpointsTotal:1,endpointsTested:1};
+ const before=h.sessions.get(parent.agent.session.id).events.length;
+ for(const value of ['vulnerable',123,null,{status:'tested'}])await assert.rejects(h.run('src_record_coverage',{...args,endpointStatuses:{'/render':value}},parent));
+ assert.equal([...h.domain.table('coverage').entries()].length,0);
+ assert.equal(h.sessions.get(parent.agent.session.id).events.length,before,'失败写入不能发布成功事件');
+ const row={...args,id:'coverage-1',sessionId:parent.agent.session.id,limitation:'原始说明',updatedAt:1};
+ await h.domain.table('coverage').put(row.sessionId+':'+row.id,row);
+ const command=h.commands.get('src-authoritative-state');
+ for(let i=0;i<2;i++){
+  const result=await command.handler({agent:parent.agent});assert.equal(result.kind,'success');
+  const state=JSON.parse(result.text);assert.equal(state.coverage[0].endpointStatuses['/render'],'blocked');
+  assert.equal(state.coverage[0].endpointsTested,0);assert.equal(state.coverage[0].status,'blocked');
+  assert.match(state.coverage[0].limitation,/vulnerable/);
+  assert.equal(h.domain.table('coverage').get(row.sessionId+':'+row.id).endpointStatuses['/render'],'vulnerable','只读恢复不能篡改原始证据');
+ }
+ const good=await h.run('src_record_coverage',{...args,endpointStatuses:{'/render':'tested'}},parent);assert.equal(good.id,row.id);assert.equal(h.domain.table('coverage').get(row.sessionId+':'+row.id).endpointStatuses['/render'],'tested');
+});
