@@ -753,3 +753,54 @@ test('旧未知审批等待数日且重启后仍可明确接管，原请求逐�
  assert.deepEqual(sent,[{url:'http://127.0.0.1:49123/render',body}]);
  await assert.rejects(next.user.decide('s',row.id,'allow-read'));assert.equal(sent.length,1);
 });
+
+test('同接口旧请求结果未知：人类确认三种独立参数探测后实际发送，旧请求仍不可重放',async t=>{
+ const advice={...low,effect:'compute'},sent=[];
+ const f=await managerFixture(t,{advice,send:async(u,i)=>{const body=String(i.body??'');sent.push(body);if(body==='old-unknown')throw new Error('lost response');return new Response('ok');}});
+ const url='http://127.0.0.1:49123/render';
+ await assert.rejects(f.manager.fetch('s',url,{method:'POST',body:'old-unknown'}));
+ Object.assign(advice,{effect:'unknown',risk:'unknown',action:'pending'});
+ for(const body of ['', '{"values":{}}','{"template":12345}']){
+  let id;try{await f.manager.fetch('s',url,{method:'POST',body});}catch(e){id=e.approvalId;}
+  assert.ok(id);assert.equal((await f.manager.user.decide('s',id,'allow-read')).executionState,'executed');
+ }
+ assert.deepEqual(sent,['old-unknown','', '{"values":{}}','{"template":12345}']);
+ await assert.rejects(f.manager.fetch('s',url,{method:'POST',body:'old-unknown'}));assert.equal(sent.length,4);
+});
+
+test('local121已批准未发送旧单：冷启核验零dispatch后原编号恢复，结果未知锁保留',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const advice={...low,effect:'compute'},url='http://127.0.0.1:49123/render';
+ const f=await managerFixture(t,{advice,send:async()=>{throw new Error('prior result unknown');}});
+ await assert.rejects(f.manager.fetch('s',url,{method:'POST',body:'prior'}));
+ Object.assign(advice,{effect:'unknown',risk:'unknown',action:'pending'});
+ for(const body of ['', '{"values":{}}','{"template":12345}'])await assert.rejects(f.manager.fetch('s',url,{method:'POST',body}));
+ const rows=[...f.rows.values()];assert.equal(rows.length,3);await f.manager.close();
+ const db=new DatabaseSync(path.join(f.home,'control/src-egress/ledger.sqlite'));
+ for(const row of rows){
+  const id=row.url.slice('src-egress://'.length),task=db.prepare('select * from gate_tasks where id=?').get(id),manifest=JSON.parse(task.manifest);
+  manifest.humanApproved=true;db.prepare("update gate_tasks set state='revoked',manifest=? where id=?").run(JSON.stringify(manifest),id);
+  Object.assign(row,{status:'approved',userDecision:'allow',executionState:'failed-before-send',executionError:'SRC_GATE_RESOURCE_REQUIRES_REVIEW'});
+ }
+ db.close();const sent=[];
+ const next=await createEgressManager({home:f.home,storeFor:async()=>f.store,allowLoopbackFixtures:true,assess:async()=>{throw new Error('do not re-review old bytes');},directFetch:async(u,i)=>{sent.push(i.body?String(i.body):'');return new Response('ok');}});t.after(()=>next.close());
+ for(const row of rows){
+  await assert.rejects(next.user.decide('s',row.id,'allow'));
+  assert.equal((await next.user.decide('s',row.id,'allow-read')).executionState,'executed');
+  await assert.rejects(next.user.decide('s',row.id,'allow-read'));
+ }
+ assert.deepEqual(sent,['','{"values":{}}','{"template":12345}']);
+ await assert.rejects(next.fetch('s',url,{method:'POST',body:'prior'}));assert.equal(sent.length,3);
+});
+
+for(const evidence of ['used','dispatch'])test('未发送恢复不信任面板状态：账本有执行证据即拒绝 '+evidence,async t=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body:'{}'}));const [row]=f.rows.values();await f.manager.close();
+ const db=new DatabaseSync(path.join(f.home,'control/src-egress/ledger.sqlite')),id=row.url.slice('src-egress://'.length),task=db.prepare('select * from gate_tasks where id=?').get(id),manifest=JSON.parse(task.manifest);
+ manifest.humanApproved=true;db.prepare("update gate_tasks set state='revoked',manifest=?,used=? where id=?").run(JSON.stringify(manifest),evidence==='used'?1:0,id);
+ if(evidence==='dispatch')db.prepare('insert into gate_dispatches values (?,?,?,?,?,?,?,?)').run('fixture-dispatch',id,'s',manifest.entries[0].digest,'http://127.0.0.1:49123','response_received',1,2);
+ db.close();Object.assign(row,{status:'approved',userDecision:'allow',executionState:'failed-before-send',executionError:'SRC_GATE_RESOURCE_REQUIRES_REVIEW'});
+ let sends=0;const next=await createEgressManager({home:f.home,storeFor:async()=>f.store,allowLoopbackFixtures:true,directFetch:async()=>{sends++;return new Response('must not send');}});t.after(()=>next.close());
+ await assert.rejects(next.user.decide('s',row.id,'allow-read'));assert.equal(sends,0);
+});

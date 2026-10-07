@@ -187,11 +187,16 @@ export function apply(ctx, config) {
           }else if(probe.status!==200)throw new Error('参数探测未成功 '+JSON.stringify(probe));
           log({type:'parameter-approval-runtime',body,automatic:probe.status===200,approvalId:probe.pendingApprovalId,decision});
         }
+        let lost=await call('src_http',{url:config.origin+'/opaque-operation',method:'GET',justification:'读取本机固定响应，靶场在接收后故意断连验证结果未知锁'}).catch(error=>{if(!/socket hang up/.test(String(error)))throw error;return {expectedDisconnect:true};});
+        if(lost?.pendingApprovalId)lost=await ctx.commands.execute(agent,`/src-approve ${lost.pendingApprovalId} allow-read 人类确认本机GET只读，靶场将断连`,[],AbortSignal.timeout(30000)).catch(error=>{if(!/socket hang up|fetch failed/.test(String(error)))throw error;return {expectedDisconnect:true};});
+        if(lost?.expectedDisconnect!==true)throw new Error('靶场未实际接收并断连 '+JSON.stringify(lost));
         const opaque=await call('src_http',{url:config.origin+'/opaque-operation',method:'POST',headers:{'Content-Type':'application/json'},body:'{"operation":87139}',justification:'接口语义未知，需要用户确认'});
         if(!opaque.pendingApprovalId)throw new Error('不明业务操作未等待人类 '+JSON.stringify(opaque));
         const manual=await ctx.commands.execute(agent,`/src-approve ${opaque.pendingApprovalId} allow-read 人类确认本地合成接口仅返回固定文本，不执行业务动作`,[],AbortSignal.timeout(30000));
         if(manual?.result.kind!=='success')throw new Error('原生人工接管失败 '+JSON.stringify(manual));
-        log({type:'unknown-approval-runtime',approvalId:opaque.pendingApprovalId,manual});
+        const replay=await call('src_http',{url:config.origin+'/opaque-operation',method:'GET',justification:'原结果未知请求不得重放'}).catch(error=>({blocked:true,error:String(error)}));
+        if(replay?.status===200)throw new Error('旧请求被重放');
+        log({type:'unknown-approval-runtime',approvalId:opaque.pendingApprovalId,manual,lost,replay});
       }
       if(process.env.DSH_EVAL_CANCEL_REVIEW==='1'){
         const cancelled=await call('bash',{command:`curl --max-time 1 -sS '${config.origin}/cancelled-read'`,description:'Explicit caller deadline while review is pending'});
