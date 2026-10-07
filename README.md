@@ -11,7 +11,7 @@
 - 来源 IP 探测交 Jev 判断，不再因 `X-Forwarded-For` 一律挂审；方法/路由改写及编码歧义仍保留硬闸。
 - 旧只读待审单经用户显式批准可补齐执行材料；缺材料的写操作不再给出必失败的批准按钮。不会自动重放历史请求。
 - 审批展示脱敏 HTTP 报文与简短操作说明，修复扫描遇数字错误码时的二次异常，保留取消和审批异常语义。
-- 无新增依赖、数据库表或常驻服务。验收与实际交付状态见 [local.118 修复记录](docs/implementation/approval-read-repair-20261007.md)。
+- 538项回归通过，Web/headless已部署重启，Git及[正式发行版](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.118)已发布并独立下载核验。无新增依赖、表或服务；真实DSH验收范围及保留的失败记录见 [local.118 修复记录](docs/implementation/approval-read-repair-20261007.md)。
 
 ## local.117（2026-10-07）
 
