@@ -135,9 +135,11 @@ try {
  assert.match(await card.innerText(),/识别到删除或破坏性操作/);
  for(const label of ['操作目的（模型说明）','可能后果','恢复条件','为什么需要确认','无意义模板'])assert.ok(!(await card.innerText()).includes(label));
  assert.equal(await card.locator('details[open]').count(),0);
+ assert.equal(await card.getByRole('button',{name:'待补充安全材料'}).isDisabled(),true);
+ assert.equal(await card.getByRole('button',{name:'拒绝',exact:true}).isEnabled(),true);
  await p.setViewportSize({width:390,height:844});assert.ok(await card.evaluate(e=>e.scrollWidth<=e.clientWidth+1));await card.screenshot({path:path.join(output,'approval-compact-mobile.png')});
- await card.getByText('查看请求报文',{exact:true}).click();assert.match(await card.innerText(),/synthetic destructive fixture/);
- await card.getByText('查看请求报文',{exact:true}).click();
+ await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();assert.match(await card.innerText(),/synthetic destructive fixture/);
+ await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();
  await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'failed-before-send'};renderSrc();});await card.getByText('未发送',{exact:true}).waitFor();
  await p.getByTestId('src-view-report').click();await p.getByTestId('src-report').waitFor();
  assert.deepEqual(errors,[]);

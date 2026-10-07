@@ -6339,7 +6339,7 @@ test("[local.103] 域数据面板：确认/运行闸、精确清理、共享凭�
     // Exercise the actual global user command after the pure store contract above.
     await h.run('src_add_goal', { target: 'alpha.test', objective: 'command fixture restored' }, a);
     await h.run('src_add_asset', { type: 'subdomain', value: 'api.alpha.test', source: 'fixture' }, a);
-    await h.run('src_record_domain_note', { category: 'misc', title: 'alpha command note', content: 'delete me by command' }, a);
+    await h.run('src_record_domain_note', { category: 'misc', title: 'alpha command note', content: 'DELETED_DOMAIN_SENTINEL_118' }, a);
     const deleteCommand = h.commands.get('src-delete-domain');
     running = true;
     const busy = await deleteCommand.handler({ rawInput: 'alpha.test confirm alpha.test', agent: a.agent });
@@ -6363,6 +6363,9 @@ test("[local.103] 域数据面板：确认/运行闸、精确清理、共享凭�
     assert.equal(projection.view(freshState).goal.target, 'alpha.test', 'new engagement after deletion is allowed');
     const newGoal = await h.run('src_add_goal', { target: 'alpha.test', objective: 'new' }, h.exec('domain-new-alpha'));
     assert.equal(newGoal.priorContext, undefined, 'new session no longer receives deleted prior context');
+    assert.doesNotMatch(JSON.stringify(newGoal), /DELETED_DOMAIN_SENTINEL_118|alpha command note/);
+    const freshData=await h.run('src_state',{},h.exec('domain-new-alpha'));
+    assert.equal(freshData.counts.facts,0);assert.equal(freshData.counts.findings,0);assert.equal(freshData.domainNotes.length,0);
   } finally {
     for (const [key, value] of Object.entries({ DSH_HOME: prevHome, DSH_SRC_LESSONS_DIR: prevLessons, DSH_SRC_TELEMETRY_DIR: prevTel })) if (value === undefined) delete process.env[key]; else process.env[key] = value;
     await fsPromises.rm(tmp, { recursive: true, force: true });
@@ -6394,4 +6397,25 @@ test('人工ASSET确认在资产决定落库后同步出口整域范围，模型
  await assert.rejects(cmd.handler(invocation),{code:'SRC_GATE_USER_COMMAND_REQUIRED'});assert.equal(calls.length,0);
  invocation.agent.session.events.push({type:'command/run',data:{commandId:'user-confirm',name:'src-approve',source:{kind:'user'}}});
  assert.equal((await cmd.handler(invocation)).kind,'success');assert.deepEqual(calls,[{session:'asset-egress-wire',domain:'partner.test',action:'allow'}]);
+});
+
+test('扫描遇DOMException数字code不再二次抛错，真实闸错误和取消仍保留',async()=>{
+ const h=harness(),parent=h.exec('scan-numeric-code');
+ await h.run('src_add_goal',{target:'https://example.test',objective:'仅合成响应扫描回归',authorization:'fixture'},parent);
+ const previous=globalThis.fetch;
+ try {
+  globalThis.fetch=async()=>{throw new DOMException('fixture timeout','AbortError');};
+  const result=await h.run('src_scan_surface',{baseUrl:'https://example.test',paths:['/one'],rps:10},parent);
+  assert.equal(result.preflight.error,'timeout');assert.equal(result.results[0].error,'timeout');
+  let calls=0;
+  globalThis.fetch=async()=>{if(++calls===1)return new Response('fixture',{status:403});throw new DOMException('fixture timeout','AbortError');};
+  const bypass=await h.run('src_scan_surface',{baseUrl:'https://example.test',paths:['/two'],rps:10},parent);
+  assert.equal(bypass.stopped,'protection-detected');assert.ok(bypass.bypassAttempts.every(a=>a.status===0));
+  const gate=Object.assign(new Error('fixture-gate'),{code:'SRC_GATE_PENDING_OR_REJECTED'});
+  globalThis.fetch=async()=>{throw gate;};
+  await assert.rejects(h.run('src_scan_surface',{baseUrl:'https://example.test',paths:['/gate'],rps:10},parent),e=>e===gate);
+  const controller=new AbortController();controller.abort(new Error('fixture cancellation'));parent.signal=controller.signal;
+  globalThis.fetch=async()=>{throw new DOMException('fixture timeout','AbortError');};
+  await assert.rejects(h.run('src_scan_surface',{baseUrl:'https://example.test',paths:['/cancel'],rps:10},parent),/fixture cancellation/);
+ }finally{globalThis.fetch=previous;}
 });

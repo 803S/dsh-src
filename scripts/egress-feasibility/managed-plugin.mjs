@@ -160,6 +160,20 @@ export function apply(ctx, config) {
       if(response.status!==200)throw new Error('Ordinary src_http still blocked '+JSON.stringify(response));
       const curl=await call('bash',{command:`curl --max-time ${process.env.DSH_EVAL_SLOW_REVIEW==='1'?60:20} -sS '${config.origin}/curl-normal'`,description:'normal curl with default headers, no prepared task'});
       if(curl.stdout?.text!=='synthetic')throw new Error('Ordinary curl still blocked '+JSON.stringify(curl));
+      if(process.env.DSH_EVAL_APPROVAL_REPAIR==='1'){
+        if(process.env.DSH_EVAL_REAL_JEV!=='1')throw new Error('审批修复验收必须真实Jev');
+        const read=await call('src_http',{url:config.origin+'/health',method:'GET',headers:{Authorization:'Bearer fixture-only','X-Forwarded-For':'127.0.0.1'},justification:'来源IP健康检查探测'});
+        if(read.status!==200)throw new Error('来源IP读取被误拦 '+JSON.stringify(read));
+        const put=await call('src_http',{url:config.origin+'/render',method:'PUT',justification:'空PUT方法探测，实际影响未知'});
+        if(!put.pendingApprovalId||put.status)throw new Error('空PUT未挂审 '+JSON.stringify(put));
+        const approve=await ctx.commands.execute(agent,`/src-approve ${put.pendingApprovalId} allow 仅测试无材料批准应失败`,[],AbortSignal.timeout(15000)).catch(error=>({result:{kind:'error',text:String(error.code??error.message)}}));
+        if(approve.result.kind!=='error'||!JSON.stringify(approve).includes('SAFETY_PLAN_REQUIRED'))throw new Error('无材料PUT被批准 '+JSON.stringify(approve));
+        const after=await call('src_http',{url:config.origin+'/after-put',method:'GET',justification:'待审后的独立读取'});
+        if(after.status!==200)throw new Error('待审阻塞独立工作');
+        const reject=await ctx.commands.execute(agent,`/src-approve ${put.pendingApprovalId} reject 不执行空PUT探测`,[],AbortSignal.timeout(15000));
+        if(reject.result.kind!=='success')throw new Error('拒绝未成功');
+        log({type:'approval-repair-runtime',read:read.status,pending:put.pendingApprovalId,approve,reject,after:after.status});
+      }
       if(process.env.DSH_EVAL_CANCEL_REVIEW==='1'){
         const cancelled=await call('bash',{command:`curl --max-time 1 -sS '${config.origin}/cancelled-read'`,description:'Explicit caller deadline while review is pending'});
         if(cancelled.exitCode!==28)throw new Error('Caller deadline was not preserved '+JSON.stringify(cancelled));

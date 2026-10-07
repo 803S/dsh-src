@@ -157,3 +157,16 @@ test('TASK卡展示冻结目标及方法，不展示内部任务URI或编造风�
  assert.match(approvalTarget(input),/DELETE https:/);assert.doesNotMatch(approvalTarget(input),/src-egress|只读/);
  assert.match(approvalTarget({...input,body:'bad'}),/不要批准/);
 });
+
+import { approvalMissingSafety, approvalRequestText, approvalOperation } from '../src/dsh-client-ui-src/src/client/approval-explanation.ts';
+test('审批展示冻结HTTP请求、脱敏凭据，空PUT没有可执行按钮',()=>{
+ const review={risk:'low',effect:'read',action:'allow',mode:'on',fallback:false,hardVeto:true};
+ const input={method:'TASK',url:'src-egress://fixture',reason:'执行前判定'+JSON.stringify(review),body:JSON.stringify({entries:[{request:{method:'GET',url:'http://127.0.0.1:23456/health?q=1',headers:{authorization:'secret','x-forwarded-for':'127.0.0.1'},body:''}}],safety:null})};
+ assert.equal(approvalMissingSafety(input),false);
+ assert.match(approvalRequestText(input),/^GET \/health\?q=1 HTTP\/1.1\r\nHost: 127.0.0.1:23456\r\n/);
+ assert.match(approvalRequestText(input),/authorization: <stored>/);
+ assert.doesNotMatch(approvalRequestText(input),/secret|src-egress/);
+ assert.match(approvalOperation(input),/代理信任/);
+ const put={...input,body:JSON.stringify({entries:[{request:{method:'PUT',url:'http://127.0.0.1/render',headers:{},body:''}}],safety:null})};
+ assert.equal(approvalMissingSafety(put),true);assert.match(approvalOperation(put),/清空资源/);
+});

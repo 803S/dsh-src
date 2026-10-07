@@ -696,3 +696,11 @@ test('范围变更后旧单不能批准，但用户仍能明确拒绝清理待�
  await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SCOPE_CHANGED'));
  assert.equal((await f.manager.user.decide('s',row.id,'reject')).state,'denied');assert.equal(row.status,'rejected');assert.equal(f.sends(),0);
 });
+
+for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']]},{url:'https://fixture.invalid/%2525252541'}])test('旧单补材料不能绕过写入/改写/编码闸 '+JSON.stringify(patch),async t=>{
+ const f=fixture(t),req=request(patch);
+ const task=await f.broker.propose('legacy-negative',input({entries:[{request:req,maxRequests:1}],maxRequests:1,hostExecution:{request:req,safety:null}}));
+ assert.equal(task.state,'pending');
+ assert.throws(()=>f.broker.commandPlane.repairReadSafety('legacy-negative',task.id),code('SAFETY_PLAN_REQUIRED'));
+ assert.equal(f.broker.commandPlane.inspect('legacy-negative',task.id).plan.hostExecution.safety,null);
+});

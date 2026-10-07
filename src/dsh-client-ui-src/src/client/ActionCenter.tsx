@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { SrcProjection, SrcProjectionPendingApproval, SrcProjectionUserTodo } from '../../types/projection'
 import type { PropsLocale } from '../../types/slots'
 import { ApprovalExplanationCard } from './ApprovalExplanationCard.tsx'
+import { approvalMissingSafety, approvalRequestText } from './approval-explanation.ts'
 import { EgressControls } from './EgressControls.tsx'
 import css from './ActionCenter.module.css'
 
@@ -70,8 +71,9 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const isPending = approval.status === 'pending'
+  const missingSafety = approvalMissingSafety(approval)
   const send = async () => {
-    if (!runCommand || busy) return
+    if (!runCommand || busy || decision === 'allow' && missingSafety) return
     setBusy(true)
     try {
       const trimmed = note.trim()
@@ -94,9 +96,10 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
       <div className={css.actionMeta}><code>{approval.id}</code></div>
       <ApprovalExplanationCard request={approval} />
       {approval.reason && <details className={css.requestDetails}><summary>查看判定记录</summary><pre>{approval.reason}</pre></details>}
-      {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看请求报文'}</summary><pre>{approval.method} {approval.url}{approval.headers ? `\n${approval.headers}` : ''}{approval.body ? `\n\n${approval.body}` : ''}</pre></details>}
+      {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看冻结请求（脱敏，非抓包）'}</summary><pre>{approvalRequestText(approval)}</pre></details>}
+      {isPending && missingSafety && <p role="status">暂不可执行：先由 AI 使用 src_egress_prepare 补齐实际影响及安全材料（覆盖/删除需备份、前置校验和回读）。批准备注不能代替这些材料；也可拒绝此项。</p>}
       {isPending && runCommand && approval.executionState !== 'executing' && approval.executionState !== 'unknown' && <div className={css.actionButtons}>
-        {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
+        {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy || missingSafety} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{missingSafety?'待补充安全材料':approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
           <label htmlFor={`approval-note-${approval.id}`}>{decision === 'allow' ? '批准前补充备注' : '拒绝原因'} <span>可选，会写入审计记录</span></label>
           <textarea id={`approval-note-${approval.id}`} autoFocus rows={2} value={note} placeholder={decision === 'allow' ? '例如：确认这是授权测试账号' : '例如：可能影响真实用户，不批准'} onChange={event => setNote(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } if (event.key === 'Escape') setDecisionOpen(false) }} />
           <div><button type="button" className={css.ghostButton} onClick={() => setDecisionOpen(false)}>取消</button><button type="button" className={decision === 'allow' ? css.dangerButton : css.successButton} disabled={busy} onClick={() => void send()}>{busy ? '发送中…' : decision === 'allow' ? '确认批准' : '确认拒绝'}</button></div>

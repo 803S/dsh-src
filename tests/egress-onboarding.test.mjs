@@ -387,3 +387,40 @@ test('先否决域名不阻塞其他明确人类资产初始化，也不能丢�
  assert.deepEqual(f.manager.user.getScope(s).excludedDomains,['excluded.test']);
  await assert.rejects(f.manager.fetch(s,'https://excluded.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
 });
+
+test('来源IP探测交给Jev，但方法/路由改写和编码歧义仍硬拦',async t=>{
+ const f=await fixture(t),origin='http://127.0.0.1:23456',session='ip-probe';
+ await f.manager.user.setScope(session,[origin]);
+ for(const value of ['127.0.0.1','::1','192.0.2.1, 127.0.0.1']){
+  assert.equal((await f.manager.fetch(session,origin+'/health',{headers:{'X-Forwarded-For':value,Authorization:'Bearer fixture-secret'}})).status,200);
+ }
+ assert.equal(f.sent.length,3);assert.equal(f.rows.size,0);
+ for(const [name,value] of [['X-Forwarded-Host','other.invalid'],['X-Forwarded-For','127.0.0.1;host=other.invalid'],['Forwarded','for=127.0.0.1;host=other.invalid'],['X-HTTP-Method-Override','DELETE'],['X-Original-URL','/delete'],['X-Rewrite-URL','/delete']]){
+  const request={url:origin+'/health',method:'GET',headers:[[name,value]]};
+  assert.equal(requiresHuman({entries:[{request}]}),true,name);
+  await assert.rejects(f.manager.fetch(session,request.url,{headers:{[name]:value}}),{code:'SRC_GATE_PENDING_OR_REJECTED'});
+ }
+ assert.equal(f.sent.length,3);
+ assert.equal(requiresHuman({entries:[{request:{url:origin+'/%25252525252525252541',headers:[]}}]}),true);
+});
+
+import {createEgressBroker} from '../lib/src/egress/broker.js';
+import {readFile} from 'node:fs/promises';
+test('旧safety:null只读审批经显式用户批准可执行一次，重启和查看均不自动发包',async t=>{
+ const f=await fixture(t),session='legacy-read',origin='http://127.0.0.1:23456';
+ await f.manager.user.setScope(session,[origin]);
+ const scope=f.manager.user.getScope(session);await f.manager.close();
+ const root=path.join(f.home,'control/src-egress');
+ const broker=createEgressBroker({filename:path.join(root,'ledger.sqlite'),key:await readFile(path.join(root,'binding-key')),scopeFor:()=>scope,assess:async()=>low});
+ const request={method:'GET',url:origin+'/health',headers:[['authorization','Bearer legacy-fixture'],['x-forwarded-for','127.0.0.1']],bodyBase64:''};
+ const task=await broker.propose(session,{entries:[{request,maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:1000,purpose:'旧版来源IP探测',hostExecution:{request,safety:null}});
+ assert.equal(task.state,'pending');
+ const row=await f.store.addPendingApproval(session,{method:'TASK',url:'src-egress://'+task.id,category:'egress/task',body:'fixture-old-presentation'});
+ broker.commandPlane.bindApproval(session,task.id,row.id);broker.close();
+ const manager=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,directFetch:async(url,init)=>{f.sent.push({url,method:init.method});return new Response('legacy-read-ok');}});
+ t.after(()=>manager.close());
+ const inspected=await manager.user.inspect(session,row.id);assert.equal(inspected.state,'pending');assert.equal(f.sent.length,0);
+ await manager.user.decide(session,row.id,'allow','用户明确执行旧只读单');
+ assert.equal(f.sent.length,1);assert.equal(f.sent[0].method,'GET');assert.equal(f.rows.get(row.id).executionState,'executed');
+ await assert.rejects(manager.user.decide(session,row.id,'allow'));assert.equal(f.sent.length,1);
+});
