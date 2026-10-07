@@ -8,7 +8,7 @@
 - 接入原始人类单资产范围，复用整域 ASSET 确认；不从模型消息授予目标权限。
 - Jev 保留实际影响/文件对象分类，宿主执行统一政策，删除重复风险/许可提问。
 - 待审按操作隔离、精确授权不变；UI 删除旧套话生成逻辑，无新增依赖、表或服务。
-- 真实会话、失败修复、回归和交付记录见[local.117 验收记录](implementation/approval-noise-repair-20261007.md)。
+- 531项回归通过，Web/headless部署、Git推送、正式Release及下载校验已完成；424个原会话保留。真实会话、失败修复、回归和交付记录见[local.117 验收记录](implementation/approval-noise-repair-20261007.md)。
 
 ## local.116（2026-10-07）
 
