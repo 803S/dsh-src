@@ -159,6 +159,12 @@ test('TASK卡展示冻结目标及方法，不展示内部任务URI或编造风�
 });
 
 import { approvalMissingSafety, approvalRequestText, approvalOperation } from '../src/dsh-client-ui-src/src/client/approval-explanation.ts';
+test('高危TASK安全说明不一致时无执行按钮，但普通资产审批不受TASK材料规则影响',()=>{
+ const input={method:'TASK',url:'src-egress://fixture',reason:'执行前判定'+JSON.stringify({effect:'destructive',risk:'high'}),body:JSON.stringify({entries:[{request:{method:'POST',url:'https://fixture.invalid/operation',headers:{},body:'{}'}}],safety:{effect:'compute'}})};
+ assert.equal(approvalMissingSafety(input),true);
+ assert.equal(approvalMissingSafety({...input,method:'ASSET',url:'fixture.invalid'}),false);
+ assert.equal(approvalMissingSafety({...input,body:JSON.stringify({entries:[],safety:{effect:'delete',precondition:{},verification:{}}})}),true);
+});
 test('审批展示冻结HTTP请求、脱敏凭据，空PUT没有可执行按钮',()=>{
  const review={risk:'low',effect:'read',action:'allow',mode:'on',fallback:false,hardVeto:true};
  const input={method:'TASK',url:'src-egress://fixture',reason:'执行前判定'+JSON.stringify(review),body:JSON.stringify({entries:[{request:{method:'GET',url:'http://127.0.0.1:23456/health?q=1',headers:{authorization:'secret','x-forwarded-for':'127.0.0.1'},body:''}}],safety:null})};

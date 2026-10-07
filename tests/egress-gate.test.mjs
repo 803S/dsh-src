@@ -278,11 +278,58 @@ async function managerFixture(t, {advice=low,home,send}={}) {
     async updateApprovalExecution(session,id,patch){const row=await this.getPendingApproval(session,id);assert.ok(row);Object.assign(row,patch);},
   };
   const manager=await createEgressManager({home:directory,allowLoopbackFixtures:true,storeFor:async()=>store,
-    assess:async()=>{calls++;return advice;},directFetch:async(...args)=>{sends++;return send?send(...args):new Response('synthetic',{status:200});}});
+    assess:async(plan)=>{calls++;return typeof advice==='function'?advice(plan):advice;},directFetch:async(...args)=>{sends++;return send?send(...args):new Response('synthetic',{status:200});}});
   t.after(async()=>{await manager.close();if(!home)rmSync(directory,{recursive:true,force:true});});
   await manager.user.setScope('s',['http://127.0.0.1:49123']);
   return {manager,store,rows,home:directory,calls:()=>calls,sends:()=>sends};
 }
+
+test('Jev识别写入/删除/外发后，自报读取或计算不能批准，也不能先记成已授权',async t=>{
+ for(const effect of ['write','destructive','external'])for(const claimed of ['read','compute']){
+  const f=await managerFixture(t,{advice:{...low,effect,risk:'high',action:'pending'}});
+  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/operation',{method:'POST',body:'{"all":true}'},{egressSafetyPlan:{effect:claimed,object:'不能由目的说明证明安全'}}),code('PENDING_OR_REJECTED'));
+  const [row]=f.rows.values(),before=structuredClone(row);
+  await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SAFETY_EFFECT_CONTRADICTION'));
+  assert.deepEqual(row,before);assert.equal(row.status,'pending');assert.equal(row.userDecision,undefined);assert.equal(f.sends(),0);
+  await assert.rejects(f.manager.preparePending('s',row.id,{effect:claimed,object:'补料不能降级影响'}),code('SAFETY_EFFECT_CONTRADICTION'));
+  assert.equal(f.rows.size,1);
+  await f.manager.user.decide('s',row.id,'reject');assert.equal(row.status,'rejected');
+ }
+});
+
+test('重启后未发出的高危授权单仍检查安全说明，pending/active均不能绕过',async t=>{
+ const {DatabaseSync}=await import('node:sqlite');
+ for(const state of ['pending','active']){
+  const f=await managerFixture(t,{advice:{...low,effect:'destructive',risk:'high',action:'pending'}});
+  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/operation',{method:'POST',body:'{"all":true}'},{egressSafetyPlan:{effect:'compute'}}));
+  const [row]=f.rows.values();await f.manager.close();
+  const db=new DatabaseSync(path.join(f.home,'control/src-egress/ledger.sqlite'));
+  db.prepare('UPDATE gate_tasks SET state=? WHERE id=?').run(state,row.url.slice('src-egress://'.length));db.close();
+  Object.assign(row,{status:'approved',userDecision:'allow',executionState:'authorized'});
+  let sends=0;const next=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,directFetch:async()=>{sends++;return new Response('must not send');}});
+  try {await assert.rejects(next.user.decide('s',row.id,'allow'),code('SAFETY_EFFECT_CONTRADICTION'));assert.equal(sends,0);}
+  finally {await next.close();}
+ }
+});
+
+test('未知影响单提示人类核对原包，不要求读取/计算虚构安全材料',async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body:'{}'}),error=>{
+  assert.equal(error.reason,'human-impact-confirmation-required');assert.doesNotMatch(error.nextAction,/src_egress_prepare/);return true;
+ });
+ assert.equal(f.sends(),0);const [row]=f.rows.values();
+ assert.equal((await f.manager.user.decide('s',row.id,'allow-read')).executionState,'executed');assert.equal(f.sends(),1);
+});
+
+test('主操作发出后证据失败：异常和审批都报告结果未知，禁止重放',async t=>{
+ const {gateError}=await import('../lib/src/egress/plan.js');
+ const f=await managerFixture(t,{advice:{...low,effect:'compute',risk:'unknown',action:'pending'},send:async()=>{throw gateError('RESPONSE_TOO_LARGE');}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body:'{}'}));
+ const [row]=f.rows.values();
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow'),error=>error.code==='SRC_GATE_RESPONSE_TOO_LARGE'&&error.safeNotSent===false);
+ assert.equal(row.executionState,'unknown');assert.equal(f.sends(),1);
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow'));assert.equal(f.sends(),1);
+});
 
 test('manager new implicit read gets a fresh assessment after success, never automatic replay',async t=>{
   const f=await managerFixture(t);

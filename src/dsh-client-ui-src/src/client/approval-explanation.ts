@@ -31,6 +31,13 @@ export function approvalCanConfirmRead(input: ApprovalExplanationInput): boolean
 
 export function approvalMissingSafety(input: ApprovalExplanationInput): boolean {
   const stored=frozenTask(input);
+  if(!stored || !Object.hasOwn(stored,'safety'))return false;
+  const required:Record<string,string[]>={write:['create','replace'],destructive:['delete','replace'],external:['external']};
+  const safety=stored?.safety, effects=required[String(assessmentOf(input).effect)];
+  if(effects&&(!effects.includes(safety?.effect)||!safety?.precondition||!safety?.verification))return true;
+  if(['create','replace','delete','external'].includes(safety?.effect)&&(!safety?.precondition||!safety?.verification))return true;
+  if(['replace','delete'].includes(safety?.effect)&&!safety?.backupRef)return true;
+  if(safety?.effect==='external'&&safety?.irreversibleAcknowledgement!=='external-effect-cannot-be-automatically-undone')return true;
   if(approvalCanConfirmRead(input))return false;
   if(!stored || !Object.hasOwn(stored,'safety') || stored.safety!==null)return false;
   const review=assessmentOf(input), request=stored.entries?.[0]?.request;

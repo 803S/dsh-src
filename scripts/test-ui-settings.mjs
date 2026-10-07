@@ -137,6 +137,9 @@ try {
  for(const label of ['操作目的（模型说明）','可能后果','恢复条件','为什么需要确认','无意义模板'])assert.ok(!(await card.innerText()).includes(label));
  assert.equal(await card.locator('details[open]').count(),0);
  assert.equal(await card.getByRole('button',{name:'需补执行材料'}).isDisabled(),true);
+ await p.evaluate(()=>{const frozen=JSON.parse(src.pendingApprovals[0].body);frozen.safety={effect:'compute',object:'错误的计算说明'};src.pendingApprovals[0].body=JSON.stringify(frozen);renderSrc();});
+ assert.equal(await card.getByRole('button',{name:'需补执行材料'}).isDisabled(),true);
+ assert.equal(await card.getByRole('button',{name:'拒绝',exact:true}).isEnabled(),true);
  await p.evaluate(()=>{src.pendingApprovals[0].reason='执行前判定'+JSON.stringify({effect:'unknown',risk:'unknown',action:'pending',fallback:false,mode:'on',hardVeto:false});src.pendingApprovals[0].body=JSON.stringify({entries:[{maxRequests:1,request:{method:'POST',url:'https://fixture.invalid/render',headers:{'content-type':'application/json'},body:'{"template":12345}'}}],safety:null});renderSrc();});
  assert.equal(await card.getByRole('button',{name:'确认低影响并放行',exact:true}).isEnabled(),true);
  assert.match(await card.innerText(),/template（数字）/);

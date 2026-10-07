@@ -103,11 +103,23 @@ test('Burp unknown operations retain safety requirements and use native send onl
  assert.equal(f.rows.get(next.approvalId).responseStatus,0);assert.match(f.rows.get(next.approvalId).responseBody,/Burp MCP/);
 });
 test('Burp delete preserves backup/precondition/verification: only the frozen primary call uses Burp',async t=>{
- let deleted=false;const f=await setup(t,{send:async()=>{deleted=true;return {content:[{type:'text',text:'native delete response'}]};},read:()=>new Response(deleted?'after':'before')});
+ let deleted=false;const f=await setup(t,{assess:plan=>plan.entries[0].request.method==='DELETE'?{...low,effect:'destructive',risk:'high',action:'pending'}:low,send:async()=>{deleted=true;return {content:[{type:'text',text:'native delete response'}]};},read:()=>new Response(deleted?'after':'before')});
  const backupRef=await saveResponseSnapshot(f.home,'s',origin+'/state','before','text/plain');
  const held=pending(await f.run(args('DELETE','/item')));
  const next=await f.manager.preparePending('s',held.approvalId,{effect:'delete',object:'owned fixture item',recovery:'restore synthetic fixture',backupRef,precondition:{request:{url:origin+'/state',method:'GET'},status:200,bodySha256:sha('before')},verification:{request:{url:origin+'/state',method:'GET'},status:200,bodySha256:sha('after')}});
  const result=await f.manager.user.decide('s',next.approvalId,'allow');assert.equal(result.writeOutcome.verification,'matched');assert.equal(f.sent.length,1);assert.equal(f.reads.length,2);assert.ok(f.reads.every(r=>r.url===origin+'/state'));
+});
+
+test('前置GET隐藏副作用、语义未知或Jev失败时，不能当只读检查发送',async t=>{
+ for(const phase of ['precondition','verification'])for(const advice of [{...low,effect:'destructive',risk:'high',action:'pending'},{...low,effect:'unknown',risk:'unknown',action:'pending'},{fallback:true}]){
+  const f=await setup(t,{assess:plan=>plan.entries[0].request.url.endsWith('/unsafe-check')?advice:low});
+  const before=origin+(phase==='precondition'?'/unsafe-check':'/state'),after=origin+(phase==='verification'?'/unsafe-check':'/state');
+  const backupRef=await saveResponseSnapshot(f.home,'s',before,'before','text/plain');
+  const held=pending(await f.run(args('DELETE','/item')));
+  const next=await f.manager.preparePending('s',held.approvalId,{effect:'delete',object:'owned item',recovery:'restore fixture',backupRef,precondition:{request:{url:before,method:'GET'},status:200,bodySha256:sha('before')},verification:{request:{url:after,method:'GET'},status:200,bodySha256:sha('after')}});
+  await assert.rejects(f.manager.user.decide('s',next.approvalId,'allow'),{code:'SRC_GATE_UNSAFE_SAFETY_READ'});
+  assert.equal(f.sent.length,0);assert.equal(f.reads.length,0);assert.equal(f.rows.get(next.approvalId).status,'pending');
+ }
 });
 test('Burp HTTP2 approval preserves exact pseudoheaders and body and executes once',async t=>{
  const f=await setup(t,{assess:()=>({...low,effect:'unknown',action:'pending'})}),raw=args2();raw.pseudoHeaders[':method']='POST';raw.pseudoHeaders[':path']='/compute';raw.requestBody='{"x":1}';
