@@ -26,6 +26,7 @@ window.runCommand=async line=>{
  if(line==='/src-infra-status')return failInfraRead?{kind:'error',text:'模拟回读失败'}:{kind:'success',text:JSON.stringify({infra,overrideKeys,initialized:false,source:{sessionId:'fixture-previous',updatedAt:1791280000000,keys:['proxyUrl','testPhone']}})};
  if(line==='/src-infra-copy'){if(failInfraCopy)return{kind:'error',text:'模拟沿用失败'};infra={...infra,proxyUrl:'http://192.0.2.88:7893',testPhone:'13800138000'};overrideKeys=['proxyUrl','testPhone'];return{kind:'success',text:'已沿用2项配置'}};
  if(line.startsWith('/src-infra ')){if(failInfraSave)return{kind:'error',text:'模拟保存失败'};const [,key,...parts]=line.split(' '),v=parts.join(' ');infra[key]=v==='-'?({httpTimeoutMs:'8000',burpMcpPort:'9876'}[key]??''):v;overrideKeys=overrideKeys.filter(k=>k!==key);if(v!=='-')overrideKeys.push(key);return{kind:'success',text:'已保存'}};
+ if(line.startsWith('/src-approve '))return{kind:'success',text:'合成批准成功（未发包）'};
  if(line==='/src-domains')return failLoad?{kind:'error',text:'模拟列表失败'}:{kind:'success',text:JSON.stringify({domains:rows})};
  if(line.startsWith('/src-delete-domain ')){if(delayDelete)await new Promise(r=>setTimeout(r,delayDelete));if(failDelete)return{kind:'error',text:'有任务正在运行，不能删除'};rows=[];return{kind:'success',text:'已清理'}};
  if(line==='/src-decision-status')return{kind:'success',text:JSON.stringify(settings)};
@@ -135,10 +136,16 @@ try {
  assert.match(await card.innerText(),/识别到删除或破坏性操作/);
  for(const label of ['操作目的（模型说明）','可能后果','恢复条件','为什么需要确认','无意义模板'])assert.ok(!(await card.innerText()).includes(label));
  assert.equal(await card.locator('details[open]').count(),0);
- assert.equal(await card.getByRole('button',{name:'待补充安全材料'}).isDisabled(),true);
+ assert.equal(await card.getByRole('button',{name:'需补执行材料'}).isDisabled(),true);
+ await p.evaluate(()=>{src.pendingApprovals[0].reason='执行前判定'+JSON.stringify({effect:'unknown',risk:'unknown',action:'pending',fallback:false,mode:'on',hardVeto:false});src.pendingApprovals[0].body=JSON.stringify({entries:[{maxRequests:1,request:{method:'POST',url:'https://fixture.invalid/render',headers:{'content-type':'application/json'},body:'{"template":12345}'}}],safety:null});renderSrc();});
+ assert.equal(await card.getByRole('button',{name:'确认低影响并放行',exact:true}).isEnabled(),true);
+ assert.match(await card.innerText(),/template（数字）/);
+ await card.getByRole('button',{name:'确认低影响并放行',exact:true}).click();
+ await card.getByRole('button',{name:'确认无副作用，发送一次',exact:true}).click();
+ assert.ok(await p.evaluate(()=>commands.includes('/src-approve approval-1 allow-read')));
  assert.equal(await card.getByRole('button',{name:'拒绝',exact:true}).isEnabled(),true);
  await p.setViewportSize({width:390,height:844});assert.ok(await card.evaluate(e=>e.scrollWidth<=e.clientWidth+1));await card.screenshot({path:path.join(output,'approval-compact-mobile.png')});
- await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();assert.match(await card.innerText(),/synthetic destructive fixture/);
+ await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();assert.match(await card.innerText(),/template/);
  await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();
  await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'failed-before-send'};renderSrc();});await card.getByText('未发送',{exact:true}).waitFor();
  await p.getByTestId('src-view-report').click();await p.getByTestId('src-report').waitFor();

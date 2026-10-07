@@ -597,7 +597,7 @@ test('审批密文篡改、移植与旧版缺少原文不能恢复发送',async 
   const file=path.join(dir,'ledger.sqlite'),key=randomBytes(32),f=fixture(t,{file,key,assess:()=>({...low,action:'pending'})});
   const a=await f.broker.propose('s1',input()),b=await f.broker.propose('s2',input());f.broker.close();
   const db=new DatabaseSync(file),manifest=JSON.parse(db.prepare('SELECT manifest FROM gate_tasks WHERE id=?').get(a.id).manifest);
-  if(mode==='tamper')manifest.frozen.data='X'+manifest.frozen.data.slice(1);
+  if(mode==='tamper'){const bytes=Buffer.from(manifest.frozen.data,'base64');bytes[0]^=1;manifest.frozen.data=bytes.toString('base64');}
   if(mode==='transplant')manifest.frozen=JSON.parse(db.prepare('SELECT manifest FROM gate_tasks WHERE id=?').get(b.id).manifest).frozen;
   if(mode==='legacy')delete manifest.frozen;
   db.prepare('UPDATE gate_tasks SET manifest=? WHERE id=?').run(JSON.stringify(manifest),a.id);db.close();
@@ -703,4 +703,53 @@ for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']
  assert.equal(task.state,'pending');
  assert.throws(()=>f.broker.commandPlane.repairReadSafety('legacy-negative',task.id),code('SAFETY_PLAN_REQUIRED'));
  assert.equal(f.broker.commandPlane.inspect('legacy-negative',task.id).plan.hostExecution.safety,null);
+});
+
+for(const body of ['', '{"values":{}}', '{"template":12345}'])test('未知参数探测只能由人类明确确认单笔低影响后执行 '+body,async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body}),code('PENDING_OR_REJECTED'));
+ const [row]=f.rows.values();assert.equal(JSON.parse(row.body).safety,null);
+ await f.manager.user.inspect('s',row.id);assert.equal(f.sends(),0);
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SAFETY_PLAN_REQUIRED'));
+ const decisions=await Promise.allSettled([f.manager.user.decide('s',row.id,'allow-read'),f.manager.user.decide('s',row.id,'allow-read')]);
+ assert.equal(decisions.filter(d=>d.status==='fulfilled').length,1);assert.equal(f.sends(),1);assert.equal(f.rows.size,1);
+ assert.equal(row.approvalSource,'human-command');assert.match(row.note,/人类确认冻结单笔/);
+ await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'),code('STALE_APPROVAL'));assert.equal(f.sends(),1);
+});
+
+for(const effect of ['write','destructive','external','auth'])test('人工低影响确认不能覆盖Jev已识别副作用 '+effect,async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect,risk:'high',action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/action',{method:'POST',body:'{}'}));
+ const [row]=f.rows.values();await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'),code('SAFETY_PLAN_REQUIRED'));
+ assert.equal(f.sends(),0);assert.equal(row.status,'pending');
+});
+
+for(const init of [{method:'PUT'},{method:'PATCH'},{method:'DELETE'},{method:'POST',headers:{'x-http-method-override':'DELETE'}}])test('人工低影响确认不能绕过方法和改写硬闸 '+JSON.stringify(init),async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/action',init));
+ const [row]=f.rows.values();await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'),code('SAFETY_PLAN_REQUIRED'));
+ assert.equal(f.sends(),0);
+});
+
+test('未知单笔拒绝及范围变更不会被只读确认覆盖',async t=>{
+ for(const reject of [true,false]){
+  const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}});
+  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body:'{}'}));const [row]=f.rows.values();
+  if(reject)await f.manager.user.decide('s',row.id,'reject');else await f.manager.user.setScope('s',['http://127.0.0.1:49123']);
+  await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'));assert.equal(f.sends(),0);
+ }
+});
+
+test('旧未知审批等待数日且重启后仍可明确接管，原请求逐字节执行一次',async t=>{
+ const f=await managerFixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}}),body='{"values":{}}';
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',headers:{'Content-Type':'application/json'},body}));
+ const [row]=f.rows.values();await f.manager.close();const sent=[];
+ const next=await createEgressManager({home:f.home,storeFor:async()=>f.store,allowLoopbackFixtures:true,
+  now:()=>Date.now()+7*86400000,assess:async()=>{throw new Error('旧单不能再判定替换冻结原文');},
+  directFetch:async(url,init)=>{sent.push({url,body:Buffer.from(init.body).toString()});return new Response('validated');}});
+ t.after(()=>next.close());
+ await next.user.inspect('s',row.id);assert.deepEqual(sent,[]);
+ assert.equal((await next.user.decide('s',row.id,'allow-read')).executionState,'executed');
+ assert.deepEqual(sent,[{url:'http://127.0.0.1:49123/render',body}]);
+ await assert.rejects(next.user.decide('s',row.id,'allow-read'));assert.equal(sent.length,1);
 });

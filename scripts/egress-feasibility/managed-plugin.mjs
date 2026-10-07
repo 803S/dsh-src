@@ -174,6 +174,25 @@ export function apply(ctx, config) {
         if(reject.result.kind!=='success')throw new Error('拒绝未成功');
         log({type:'approval-repair-runtime',read:read.status,pending:put.pendingApprovalId,approve,reject,after:after.status});
       }
+      if(process.env.DSH_EVAL_PARAMETER_APPROVAL==='1'){
+        if(process.env.DSH_EVAL_REAL_JEV!=='1')throw new Error('参数审批验收必须真实Jev');
+        for(const body of ['', '{"values":{}}', '{"template":12345}']){
+          const probe=await call('src_http',{url:config.origin+'/render',method:'POST',headers:{'Content-Type':'application/json'},body,justification:'探测模板渲染接口的参数格式和类型校验，不写入业务数据'});
+          let decision;
+          if(probe.pendingApprovalId){
+            decision=await ctx.commands.execute(agent,`/src-approve ${probe.pendingApprovalId} allow-read 人类确认本地合成接口仅做参数校验`,[],AbortSignal.timeout(30000));
+            if(decision?.result.kind!=='success')throw new Error('未知参数审批不能接管 '+JSON.stringify(decision));
+            const again=await ctx.commands.execute(agent,`/src-approve ${probe.pendingApprovalId} allow-read`,[],AbortSignal.timeout(15000)).catch(error=>({result:{kind:'error',text:String(error)}}));
+            if(again.result.kind!=='error')throw new Error('重复审批未拒绝');
+          }else if(probe.status!==200)throw new Error('参数探测未成功 '+JSON.stringify(probe));
+          log({type:'parameter-approval-runtime',body,automatic:probe.status===200,approvalId:probe.pendingApprovalId,decision});
+        }
+        const opaque=await call('src_http',{url:config.origin+'/opaque-operation',method:'POST',headers:{'Content-Type':'application/json'},body:'{"operation":87139}',justification:'接口语义未知，需要用户确认'});
+        if(!opaque.pendingApprovalId)throw new Error('不明业务操作未等待人类 '+JSON.stringify(opaque));
+        const manual=await ctx.commands.execute(agent,`/src-approve ${opaque.pendingApprovalId} allow-read 人类确认本地合成接口仅返回固定文本，不执行业务动作`,[],AbortSignal.timeout(30000));
+        if(manual?.result.kind!=='success')throw new Error('原生人工接管失败 '+JSON.stringify(manual));
+        log({type:'unknown-approval-runtime',approvalId:opaque.pendingApprovalId,manual});
+      }
       if(process.env.DSH_EVAL_CANCEL_REVIEW==='1'){
         const cancelled=await call('bash',{command:`curl --max-time 1 -sS '${config.origin}/cancelled-read'`,description:'Explicit caller deadline while review is pending'});
         if(cancelled.exitCode!==28)throw new Error('Caller deadline was not preserved '+JSON.stringify(cancelled));

@@ -222,3 +222,11 @@ test('Burp会话冷却后重新载入不要求重启整个服务，用户新上�
  const result=await f.manager.user.decide('s',held.approvalId,'allow','',undefined,{agent:resumedAgent,callId:'human-after-idle'});
  assert.equal(result.executionState,'executed');assert.deepEqual(f.sent.map(s=>s.args),[raw]);assert.equal(f.reads.length,0);
 });
+
+test('旧unknown Burp单可由人类确认低影响后原样发送一次，不调用directFetch',async t=>{
+ const f=await setup(t,{assess:()=>({...low,effect:'unknown',risk:'unknown',action:'pending'})});
+ const raw=args('POST','/render','{"template":12345}'),copy=structuredClone(raw),held=pending(await f.run(raw));
+ assert.equal(f.sent.length,0);await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_SAFETY_PLAN_REQUIRED'});
+ await f.manager.user.decide('s',held.approvalId,'allow-read');assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
+ await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow-read'));assert.equal(f.sent.length,1);
+});

@@ -21,8 +21,17 @@ function assessmentOf(input: ApprovalExplanationInput): Record<string, unknown> 
   try { return JSON.parse(input.reason?.match(/执行前判定(\{[^}]*\})/)?.[1] ?? input.layaAdvice ?? '{}') } catch { return {} }
 }
 
+// 仅决定展示入口；宿主仍核验加密冻结请求、硬闸和单次预算。
+export function approvalCanConfirmRead(input: ApprovalExplanationInput): boolean {
+  const stored=frozenTask(input), review=assessmentOf(input);
+  return stored?.safety===null && stored.entries?.length===1 && stored.entries[0]?.maxRequests===1
+    && ['GET','HEAD','OPTIONS','POST'].includes(stored.entries[0]?.request?.method)
+    && review.effect==='unknown' && review.risk==='unknown' && review.action==='pending' && review.hardVeto!==true;
+}
+
 export function approvalMissingSafety(input: ApprovalExplanationInput): boolean {
   const stored=frozenTask(input);
+  if(approvalCanConfirmRead(input))return false;
   if(!stored || !Object.hasOwn(stored,'safety') || stored.safety!==null)return false;
   const review=assessmentOf(input), request=stored.entries?.[0]?.request;
   // 仅提供旧只读单的检查入口；真正资格由宿主使用加密冻结原文核验。
@@ -45,6 +54,13 @@ export function approvalRequestText(input: ApprovalExplanationInput): string {
 
 export function approvalOperation(input: ApprovalExplanationInput): string {
   const stored=frozenTask(input), request=(Array.isArray(stored)?stored:stored?.entries)?.[0]?.request;
+  if(request?.method==='POST'){
+    if(!request.body)return '空正文 POST：探测参数要求；空正文不等于已证明无副作用。';
+    try {const body=JSON.parse(request.body);if(body&&typeof body==='object'&&!Array.isArray(body)){
+      const fields=Object.entries(body).slice(0,6).map(([key,value])=>`${key}（${value===null?'null':Array.isArray(value)?'数组':typeof value==='object'?Object.keys(value).length?'对象':'空对象':typeof value==='number'?'数字':typeof value==='boolean'?'布尔':'字符串'}）`);
+      return `POST 提交 ${fields.join('、')||'空对象'}；是否改变业务状态需结合接口语义判断。`;
+    }}catch{/* 非JSON保留已有说明。 */}
+  }
   if(request?.method==='PUT'&&!request.body)return '空正文 PUT 探测；可能替换或清空资源，不能视为只读。';
   if(request && ['GET','HEAD','OPTIONS'].includes(request.method) && request.headers?.['x-forwarded-for'])return '携带伪造来源 IP 访问接口，探测代理信任/访问控制；是否只读以判定记录为准。';
   return input.justification&&!/^(?:Burp 原生单次发送|操作目的|可能后果|恢复条件|为什么需要确认)/.test(input.justification)?boundedText(input.justification,160):'';
