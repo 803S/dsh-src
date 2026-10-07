@@ -183,3 +183,21 @@ test('三种历史覆盖事件及缓存投影都兼容非法状态，且不把�
  assert.equal(srcProjectionSchema.safeParse(viewSrcState({...goal,coverage:[row]})).success,true);
  const once=readableCoverage(row);assert.deepEqual(readableCoverage(once),once);assert.equal(row.endpointStatuses['/render'],'vulnerable');
 });
+
+test('真实SQLite关闭重开：坏覆盖行不阻塞DomainFacility且磁盘原文不变',async t=>{
+ const {mkdtemp,rm}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const path=await import('node:path');
+ const {DomainFacility,descriptorOf}=await import('@deepseek-ai/dsh-storage-domain');
+ const {SqliteStorageBackend}=await import('../lib/storage-sqlite.js');const {srcDomainSpec}=await import('../lib/src.js');
+ const home=await mkdtemp(path.join(tmpdir(),'src-cold-coverage-'));t.after(()=>rm(home,{recursive:true,force:true}));
+ const config={path:path.join(home,'src.db'),journalMode:'wal'};
+ const row={id:'coverage-1',sessionId:'cold-fixture',phase:'api',category:'ssti',status:'completed',evidence:[],limitation:'原说明',endpointStatuses:{'/render':'vulnerable'},endpointsTotal:1,endpointsTested:1,updatedAt:1},key='cold-fixture:coverage-1';
+ const original=new SqliteStorageBackend(config),unit=await original.kv.open(descriptorOf(srcDomainSpec));await unit.putRecord('coverage',key,row);await original.close();
+ for(let i=0;i<2;i++){
+  const backend=new SqliteStorageBackend(config);try{
+   const facility=new DomainFacility({storage:{backend:{get:()=>backend}}},{backend:'src-sqlite'});
+   const domain=await facility.open(srcDomainSpec);assert.equal(domain.table('coverage').get(key).endpointStatuses['/render'],'blocked');assert.equal(domain.table('coverage').get(key).endpointsTested,0);
+   const {compareCommittedRows}=await import('../lib/src/store-projection.js');assert.deepEqual(compareCommittedRows([{sessionId:'cold-fixture',eventSeq:1,payload:{puts:[{table:'coverage',key,row}]}}],domain,'cold-fixture'),[]);await domain.close();
+   const raw=await backend.kv.open(descriptorOf(srcDomainSpec));assert.deepEqual((await raw.loadAll()).tables.coverage[key],row);await raw.close();
+  }finally{await backend.close();}
+ }
+});

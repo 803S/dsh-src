@@ -6,10 +6,10 @@
 
 ---
 
-## 最新更新：local.119（2026-10-07）
+## 最新更新：local.120（2026-10-07）
 
 - 修复非法覆盖状态导致整份会话历史和 SRC 面板无法加载的问题；写入严格校验，旧记录只读兼容，不删除会话或篡改原始结果。
-- 修复范围及生产恢复凭据见 [local.119 加载修复记录](docs/implementation/session-load-repair-20261007.md)。
+- 修复范围及生产恢复凭据见 [local.120 加载修复记录](docs/implementation/session-load-repair-20261007.md)。
 
 ## local.118（2026-10-07）
 
