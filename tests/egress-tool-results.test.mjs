@@ -91,3 +91,26 @@ test('存活探测待审不能记dead，也不能渲染成已完成',async t=>{
  assert.equal(f.sends(),0);assert.equal(result.requiresDecision,true);assert.ok(result.pendingApprovalId);assert.equal((await f.store.sessionData(f.session.id)).facts.length,0);
  const text=f.render('src_survey_seed',result)[0].text;assert.match(text,/未完成/);assert.ok(text.includes(result.pendingApprovalId));
 });
+
+test('同接口不同待审只读验证，批准一个只发送该冻结请求，不互锁',async t=>{
+ const sent=[];const f=await fixture(t,{assess:async()=>({mode:'on',fallback:false,effect:'read',risk:'high',action:'pending',confidence:1}),send:async(u,i)=>{sent.push(String(i.body));return new Response('ok');}});
+ const ids=[];
+ for(const body of ['probe-one','probe-two']){try{await f.manager.fetch(f.session.id,origin+'/render',{method:'POST',body});}catch(e){ids.push(e.approvalId);}}
+ assert.equal(new Set(ids).size,2);assert.equal(sent.length,0);
+ const result=await f.manager.user.decide(f.session.id,ids[0],'allow');assert.equal(result.executionState,'executed');assert.deepEqual(sent,['probe-one']);
+ assert.equal((await f.store.getPendingApproval(f.session.id,ids[1])).status,'pending');
+});
+test('浏览器装饰头不重复挂同一操作，但人工授权仍精确绑定原报文',async t=>{
+ const sent=[];const f=await fixture(t,{assess:async()=>({mode:'on',fallback:false,effect:'read',risk:'high',action:'pending',confidence:1}),send:async(u,i)=>{sent.push(i);return new Response('ok');}});let first,second;
+ try{await f.manager.fetch(f.session.id,origin+'/render',{method:'POST',body:'same'});}catch(e){first=e;}
+ try{await f.manager.fetch(f.session.id,origin+'/render',{method:'POST',body:'same',headers:{'User-Agent':'browser','Accept':'*/*','Origin':origin,'Referer':origin+'/page'}});}catch(e){second=e;}
+ assert.equal(second.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal((await f.store.sessionData(f.session.id)).pendingApprovals.length,1);
+ await f.manager.user.decide(f.session.id,first.approvalId,'allow');assert.equal(sent.length,1);assert.equal(sent[0].headers['user-agent'],undefined);
+});
+test('真正结果未知仍锁资源，发送前被锁拒绝不得记录成已发送未知',async t=>{
+ let pending=true;const f=await fixture(t,{assess:async()=>({mode:'on',fallback:false,effect:'read',risk:pending?'high':'low',action:pending?'pending':'allow',confidence:1}),send:async()=>{throw new Error('synthetic lost response');}});let id;
+ try{await f.manager.fetch(f.session.id,origin+'/render',{method:'POST',body:'needs-human'});}catch(e){id=e.approvalId;}
+ pending=false;await assert.rejects(f.manager.fetch(f.session.id,origin+'/render',{method:'POST',body:'independent'}),/lost response/);assert.equal(f.sends(),1);
+ await assert.rejects(f.manager.user.decide(f.session.id,id,'allow'));
+ const row=await f.store.getPendingApproval(f.session.id,id);assert.equal(row.executionState,'failed-before-send');assert.equal(f.sends(),1);
+});

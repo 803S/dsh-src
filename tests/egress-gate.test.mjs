@@ -304,7 +304,7 @@ test('单笔POST纯计算由Jev自动放行，安全说明不强制转人工且�
 });
 
 test('低风险计算判定不能覆盖真实删除方法、危险路径或语义不明',async t=>{
- for(const [patch,advice] of [[{method:'DELETE'},{...low,effect:'compute'}],[{method:'POST',path:'/delete'},{...low,effect:'destructive',risk:'high'}],[{method:'POST'},{...low,effect:'unknown'}]]){
+ for(const [patch,advice] of [[{method:'DELETE'},{...low,effect:'compute'}],[{method:'POST',path:'/delete'},{...low,effect:'destructive',risk:'high'}],[{method:'POST'},{...low,effect:'unknown',risk:'unknown',action:'pending'}]]){
   const f=await managerFixture(t,{advice});
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123'+(patch.path??'/render'),{method:patch.method,body:'{"template":"{{7*7}}"}'}),code('PENDING_OR_REJECTED'));
   assert.equal(f.sends(),0);assert.equal(f.rows.size,1);

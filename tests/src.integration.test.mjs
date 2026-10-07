@@ -2559,6 +2559,8 @@ test("[local.44] src_request_asset_confirm：挂队待审 + 同域去重 + goal 
   const p2 = await h.run("src_request_asset_confirm", { domain: "*.sfgy1.com", evidence: "再次发现" }, parent);
   assert.equal(p2.duplicate, true);
   assert.equal(p2.pendingApprovalId, p1.pendingApprovalId, "*. 前缀归一化后同域去重");
+  const p3=await h.run("src_request_asset_confirm",{domain:"api.sfgy1.com",evidence:"同域子域"},parent);
+  assert.equal(p3.pendingApprovalId,p1.pendingApprovalId);assert.equal(p3.domain,"sfgy1.com");
   /* 挂队行进投影，method=ASSET，category=asset-attribution */
   const state1 = await h.run("src_state", {}, parent);
   const row = (state1.pendingApprovals ?? []).find((r) => r.id === p1.pendingApprovalId);
@@ -6382,4 +6384,14 @@ test("[local.99] Pattern 实际工具接线与 blocked 历史不误记证伪", a
     assert.equal(next.value.priorContext.blockedHypotheses.length, 1);
     assert.match(modelText(next), /历史受阻（未证伪/);
   } finally { if (prev === undefined) delete process.env.DSH_SRC_LESSONS_DIR; else process.env.DSH_SRC_LESSONS_DIR = prev; await fsPromises.rm(dir, { recursive: true, force: true }); }
+});
+
+test('人工ASSET确认在资产决定落库后同步出口整域范围，模型不能走该命令',async()=>{
+ const h=harness(),parent=h.exec('asset-egress-wire');await h.run('src_add_goal',{target:'fixture.test',objective:'整域出口衔接'},parent);
+ const row=await h.run('src_request_asset_confirm',{domain:'partner.test',evidence:'归属无法确认'},parent);
+ const calls=[];h.ctx.get=name=>name==='srcEgress'?{ready:async()=>({user:{confirmDomain:async(session,domain,action)=>{const state=await h.run('src_state',{},parent);assert.equal(state.pendingApprovals.find(r=>r.id===row.pendingApprovalId).status,'approved');calls.push({session,domain,action});}}})}:undefined;
+ const cmd=h.commands.get('src-approve');const invocation={rawInput:row.pendingApprovalId+' allow',commandId:'user-confirm',agent:{session:{...parent.agent.session,events:[]},followup:async()=>{}}};
+ await assert.rejects(cmd.handler(invocation),{code:'SRC_GATE_USER_COMMAND_REQUIRED'});assert.equal(calls.length,0);
+ invocation.agent.session.events.push({type:'command/run',data:{commandId:'user-confirm',name:'src-approve',source:{kind:'user'}}});
+ assert.equal((await cmd.handler(invocation)).kind,'success');assert.deepEqual(calls,[{session:'asset-egress-wire',domain:'partner.test',action:'allow'}]);
 });

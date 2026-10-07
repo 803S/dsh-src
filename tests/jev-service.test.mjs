@@ -140,18 +140,19 @@ test('risk rubric separates read semantics from write recovery and never upgrade
  let calls=0;
  globalThis.fetch=async(_url,init)=>{
   calls++;const p=JSON.parse(init.body);
-  assert.match(p.questions.risk.instructions,/不要求写操作/);
-  assert.match(p.questions.risk.instructions,/不是所有GET都是读取/);
-  assert.match(p.questions.risk.criteria.high,/自称测试或可恢复不豁免/);
-  assert.ok(!p.questions.risk.criteria.low.includes('可恢复'));
+  assert.equal(p.questions.risk,undefined);
+  assert.match(p.questions.decision.instructions,/不要求回滚材料/);
+  assert.match(p.questions.decision.instructions,/不是所有GET都是读取/);
+  assert.match(p.questions.decision.criteria.destructive,/自称测试或可恢复不豁免/);
+  assert.ok(!p.questions.decision.criteria.read.includes('可恢复'));
   assert.equal(p.state.request.url,'https://fixture.test/catalog/7');
-  const r=answer('read',Object.keys(p.questions.decision.criteria));
+  const r=answer('unknown',Object.keys(p.questions.decision.criteria));
   r.answers.risk={choice:'unknown',confidence:.8,probabilities:{low:.2,high:0,unknown:.8}};
   r.answers.verdict={choice:'allow',confidence:.9,probabilities:{allow:.9,pending:.1}};
   return new Response(JSON.stringify(r));
  };
  const r=await jevDecide({taskType:'risk-grade',scopeChecked:true,method:'GET',url:'https://fixture.test/catalog/7'},exec);
- assert.equal(r.risk,'unknown');assert.equal(r.action,'allow');
+ assert.equal(r.risk,'unknown');assert.equal(r.action,'pending');
  const {allowsLowImpact}=await import('../lib/src/egress/decision-policy.js');
  assert.equal(allowsLowImpact(r),false);assert.equal(calls,1);
 });
@@ -180,4 +181,20 @@ test('有损或超限审核材料不能请求Jev后自动放行',async t=>{
  await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});let calls=0;globalThis.fetch=async()=>{calls++;throw Error('must not call');};
  for(const body of [Buffer.from([0xff,0xfe]),'x'.repeat(65537)]){const r=await jevDecide({taskType:'risk-grade',method:'POST',url:'https://fixture.invalid/test',body},exec);assert.equal(r.action,'pending');assert.equal(r.errorType,'unreviewable-input');}
  assert.equal(calls,0);
+});
+
+test('风险只问一次：Jev低风险+已验范围产生allow，不再重复询问人工许可',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});
+ globalThis.fetch=async(_url,init)=>{const p=JSON.parse(init.body);assert.equal(p.questions.verdict,undefined);const r=answer('read',Object.keys(p.questions.decision.criteria));r.answers.risk={choice:'low',confidence:.8,probabilities:{low:.8,high:.1,unknown:.1}};delete r.answers.verdict;return new Response(JSON.stringify(r));};
+ assert.equal((await jevDecide({taskType:'risk-grade',scopeChecked:true,method:'POST',url:'https://fixture.invalid/render'},exec)).action,'allow');
+ assert.equal((await jevDecide({taskType:'risk-grade',scopeChecked:false,method:'POST',url:'https://fixture.invalid/render'},exec)).action,'pending');
+});
+
+test('单一影响分类：删改/外发/未知不自动，写入例外仍依赖宿主归属校验',async t=>{
+ await fixture(t);await saveDecisionSettings({enabled:true,riskMode:'on',endpoint:'https://a.test/v1/systemone'});
+ for(const effect of ['read','compute','auth','write','external','destructive','unknown']){
+  globalThis.fetch=async(_url,init)=>{const p=JSON.parse(init.body);assert.deepEqual(Object.keys(p.questions),['decision','objectClass']);return new Response(JSON.stringify(answer(effect,Object.keys(p.questions.decision.criteria))));};
+  const r=await jevDecide({taskType:'risk-grade',scopeChecked:true,method:'POST',url:'https://fixture.invalid/operation'},exec);
+  const expected=['read','compute','auth'].includes(effect)?'low':effect==='unknown'?'unknown':'high';assert.equal(r.risk,expected);assert.equal(r.action,expected==='low'?'allow':'pending');
+ }
 });

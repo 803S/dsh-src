@@ -36,7 +36,7 @@ window.runCommand=async line=>{
 </script><script src="/bundle.js"></script><script>
 let View,dict;
 plugin.apply({effect:f=>f(),locale:{register:(_,{zh})=>{dict=zh;return()=>{}},bind:()=>key=>dict[key]??key},sessions:{list:{getSnapshot:()=>({current:'fixture',byId:{fixture:{agentPreset:'src-hunter'}}}),subscribe:()=>()=>{}}},slots:{inject:(_,f)=>f(),register:(_,v)=>{View=v;return()=>{}}}});
-ReactDOM.createRoot(document.querySelector('#app')).render(React.createElement(View,{useProjection:()=>src,t:key=>dict[key]??key,runCommand}));
+const root=ReactDOM.createRoot(document.querySelector('#app'));window.renderSrc=()=>root.render(React.createElement(View,{useProjection:()=>src,t:key=>dict[key]??key,runCommand}));renderSrc();
 </script></body></html>`;
 const uiModules = path.join(repo, 'src/dsh-client-ui-src/node_modules');
 const files = { '/react.js': path.join(uiModules,'react/umd/react.development.js'), '/react-dom.js':path.join(uiModules,'react-dom/umd/react-dom.development.js'), '/bundle.js':path.join(repo,'lib/ui-src.client.js') };
@@ -130,8 +130,17 @@ try {
  await p.evaluate(()=>{failDelete=true});await dialog.getByRole('button',{name:'确认删除域数据'}).click();await dialog.getByRole('alert').waitFor();assert.match(await dialog.innerText(),/有任务正在运行/);
  await p.evaluate(()=>{failDelete=false;delayDelete=600});await dialog.getByRole('button',{name:'确认删除域数据'}).dblclick();await p.getByText('暂无 SRC 域数据',{exact:true}).waitFor();
  assert.deepEqual(await p.evaluate(()=>commands.filter(c=>c.startsWith('/src-delete-domain '))),['/src-delete-domain demo.test confirm demo.test','/src-delete-domain demo.test confirm demo.test']);
+ await p.evaluate(()=>{src.pendingApprovals=[{id:'approval-1',method:'TASK',url:'src-egress://fixture',category:'egress/task',status:'pending',createdAt:1,updatedAt:1,reason:'执行前判定'+JSON.stringify({effect:'destructive',risk:'high',action:'pending',fallback:false,mode:'on'}),justification:'操作目的（模型说明）：无意义模板不要显示',body:JSON.stringify({entries:[{request:{method:'POST',url:'https://fixture.invalid/render',headers:{'content-type':'application/json'},body:'synthetic destructive fixture'}}],safety:null})}];renderSrc();});
+ await p.getByTestId('src-tab-todos').click();const card=p.getByTestId('src-approval-card');await card.waitFor();
+ assert.match(await card.innerText(),/识别到删除或破坏性操作/);
+ for(const label of ['操作目的（模型说明）','可能后果','恢复条件','为什么需要确认','无意义模板'])assert.ok(!(await card.innerText()).includes(label));
+ assert.equal(await card.locator('details[open]').count(),0);
+ await p.setViewportSize({width:390,height:844});assert.ok(await card.evaluate(e=>e.scrollWidth<=e.clientWidth+1));await card.screenshot({path:path.join(output,'approval-compact-mobile.png')});
+ await card.getByText('查看请求报文',{exact:true}).click();assert.match(await card.innerText(),/synthetic destructive fixture/);
+ await card.getByText('查看请求报文',{exact:true}).click();
+ await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'failed-before-send'};renderSrc();});await card.getByText('未发送',{exact:true}).waitFor();
  await p.getByTestId('src-view-report').click();await p.getByTestId('src-report').waitFor();
  assert.deepEqual(errors,[]);
- await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['infra-copy-readback-pre-goal','infra-save/reset/failures','infra-mobile/tab-remount','saved-key-reveal/hide/blur','save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','report-navigation']},null,2));
+ await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['compact-approval-real-reason/mobile/request-details/not-sent','infra-copy-readback-pre-goal','infra-save/reset/failures','infra-mobile/tab-remount','saved-key-reveal/hide/blur','save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','report-navigation']},null,2));
  console.log(JSON.stringify({passed:true,output,evidence},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

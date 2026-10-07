@@ -20,26 +20,15 @@ test("scan output exposes all accepted rows and distinguishes omitted inputs", (
 });
 import { reserveRequestStart } from "../lib/src/request-rate.js";
 import { applyCommittedCoverage } from "../lib/src/coverage-projection.js";
-import { explainApproval } from "../src/dsh-client-ui-src/src/client/approval-explanation.ts";
+import { approvalTarget, approvalBlockReason } from "../src/dsh-client-ui-src/src/client/approval-explanation.ts";
 
-test("approval explanation describes actual operation without endorsing model promises", () => {
- const put = explainApproval({method:'PUT',url:'https://fixture.invalid/settings',body:'{}',justification:'仅修改开关，无任何副作用，立即可逆',layaAdvice:JSON.stringify({risk:'high',effect:'write',verdict:'pending'})});
- assert.match(put.operation,/替换/);
- assert.match(put.consequences.join(' '),/整体替换.*清空其他配置/);
- assert.match(put.recovery,/未提供经过验证/);
- assert.match(put.decision,/高风险/);
- assert.match(put.purpose,/无任何副作用/); // Kept as explicitly attributed model intent, not system guarantee.
- const get = explainApproval({method:'GET',url:'https://fixture.invalid/wms?sld_body='+encodeURIComponent('<!ENTITY xxe SYSTEM "file:///test">'),layaAdvice:JSON.stringify({risk:'low',effect:'read',verdict:'pending'})});
- assert.match(get.consequences.join(' '),/外部实体/);
- assert.match(get.decision,/低风险.*仍要求人工/);
- assert.match(explainApproval({method:'DELETE',url:'https://fixture.invalid/'}).operation,/删除/);
- assert.match(explainApproval({method:'GET',url:'bad',layaAdvice:'{'}).target,/无法解析/);
- assert.match(explainApproval({method:'ASSET',url:'https://fixture.invalid'}).consequences.join(' '),/子域/);
- assert.match(explainApproval({method:'RUN',url:'capability://fixture/script'}).consequences.join(' '),/修改文件/);
- const external = explainApproval({method:'GET',url:'https://fixture.invalid/',layaAdvice:JSON.stringify({effect:'external',fallback:true})});
- assert.match(external.decision,/未取得有效结果/);
- assert.match(external.consequences.join(' '),/费用/);
- assert.ok(explainApproval({method:'POST',url:'https://fixture.invalid/',justification:'long '.repeat(200)}).purpose.length < 220);
+test('审批卡只解释实际阻断判定，不编造方法后果或背书模型安全承诺',()=>{
+ const input={method:'PUT',url:'https://fixture.invalid/settings',justification:'无任何副作用，立即可逆',reason:'执行前判定'+JSON.stringify({risk:'high',effect:'write',action:'pending'})};
+ assert.match(approvalBlockReason(input),/写入或覆盖/);assert.doesNotMatch(approvalBlockReason(input),/立即可逆|清空其他配置/);
+ assert.match(approvalBlockReason({...input,reason:'执行前判定'+JSON.stringify({risk:'low',effect:'unknown',action:'allow'})}),/已判低风险并放行/);
+ assert.match(approvalBlockReason({...input,reason:'执行前判定'+JSON.stringify({fallback:true})}),/未返回有效判定/);
+ assert.match(approvalTarget({method:'GET',url:'bad'}),/无法解析/);
+ assert.equal(approvalTarget({method:'ASSET',url:'partner.test'}),'*.partner.test');
 });
 
 test("committed coverage replaces provisional IDs and restores calculated counts", () => {
@@ -157,20 +146,14 @@ test("project defect guard: failed finding tool result rolls back only this call
   assert.deepEqual(state.nodes.filter((node) => node.kind === "finding").map((node) => node.id), ["finding-1", "finding-2"]);
 });
 
-test('scope approval explains exact origins without implying a target request or rollback',()=>{
- const scope=explainApproval({method:'SCOPE',url:'https://fixture.invalid',body:JSON.stringify({origins:['https://fixture.invalid','https://api.fixture.invalid:8443']})});
- assert.match(scope.operation,/不发送目标请求/);assert.ok(scope.target.includes('https://api.fixture.invalid:8443'));
- assert.match(scope.consequences.join(' '),/高危和不确定操作仍须另行审核/);assert.match(scope.recovery,/不修改目标资源/);
- assert.doesNotMatch(scope.operation,/获取信息|探测接口/);
- assert.match(explainApproval({method:'SCOPE',url:'https://fixture.invalid',body:'bad'}).target,/不要批准/);
+test('范围卡展示精确origin，不暗示已经发包',()=>{
+ const input={method:'SCOPE',url:'https://fixture.invalid',body:JSON.stringify({origins:['https://fixture.invalid','https://api.fixture.invalid:8443']})};
+ assert.match(approvalTarget(input),/api.fixture.invalid:8443/);assert.match(approvalBlockReason(input),/不发包/);
+ assert.match(approvalTarget({...input,body:'bad'}),/不要批准/);
 });
-
-test('TASK approval explains the frozen target methods, not the internal task URI as a read',()=>{
+test('TASK卡展示冻结目标及方法，不展示内部任务URI或编造风险',()=>{
  const entry=(method,url)=>({request:{method,url,headers:{},body:''},maxRequests:1});
- const scan=explainApproval({method:'TASK',url:'src-egress://task-id',body:JSON.stringify([entry('GET','https://fixture.invalid/robots.txt')]),reason:'最多2次，间隔500ms'});
- assert.match(scan.operation,/批准本身不发包/);assert.match(scan.target,/https:\/\/fixture.invalid/);assert.doesNotMatch(scan.target,/src-egress/);
- const deletion=explainApproval({method:'TASK',url:'src-egress://task-id',body:JSON.stringify({entries:[entry('GET','https://fixture.invalid/settings'),entry('DELETE','https://fixture.invalid/settings')],safety:null})});
- assert.match(deletion.operation,/DELETE/);assert.match(deletion.consequences.join(' '),/可能立即执行/);assert.match(deletion.consequences.join(' '),/可能删除/);assert.match(deletion.recovery,/当前不能执行/);
- assert.doesNotMatch(deletion.operation,/获取信息|只读/);
- assert.match(explainApproval({method:'TASK',url:'src-egress://task-id',body:'invalid'}).operation,/不要批准/);
+ const input={method:'TASK',url:'src-egress://task-id',body:JSON.stringify({entries:[entry('GET','https://fixture.invalid/settings'),entry('DELETE','https://fixture.invalid/settings')],safety:null})};
+ assert.match(approvalTarget(input),/DELETE https:/);assert.doesNotMatch(approvalTarget(input),/src-egress|只读/);
+ assert.match(approvalTarget({...input,body:'bad'}),/不要批准/);
 });

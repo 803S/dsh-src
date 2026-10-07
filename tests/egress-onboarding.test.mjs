@@ -116,7 +116,8 @@ import {requiresHuman} from '../lib/src/egress/plan.js';
 test('validated read/low/allow is not overridden by an uncalibrated aggregate-confidence threshold',()=>{
  assert.equal(allowsLowImpact({...low,confidence:.42}),true);
  assert.equal(allowsLowImpact({...low,effect:'compute'}),true);
- for(const patch of [{effect:'unknown'},{risk:'unknown'},{risk:'high'},{action:'pending'},{effect:'write'},{fallback:true},{mode:'shadow'},{confidence:NaN},{confidence:-1},{confidence:1.1}])assert.equal(allowsLowImpact({...low,...patch}),false);
+ assert.equal(allowsLowImpact({...low,effect:'unknown'}),true);
+ for(const patch of [{risk:'unknown'},{risk:'high'},{action:'pending'},{effect:'write'},{fallback:true},{mode:'shadow'},{confidence:NaN},{confidence:-1},{confidence:1.1}])assert.equal(allowsLowImpact({...low,...patch}),false);
 });
 test('credentials alone are not a destructive action; method overrides and indirect requests still veto',()=>{
  const request={url:'https://fixture.invalid/account',method:'GET',headers:[['authorization','Bearer fixture'],['cookie','session=fixture']],bodyBase64:''};
@@ -312,4 +313,77 @@ test('TASK和SCOPE审批的完整生命周期记录能通过真实开盘schema�
   const row={id:'approval-1',sessionId:'schema-session',method,url:'src-egress://11111111-1111-1111-1111-111111111111',path:'/',headers:'',body:'[]',category:method==='TASK'?'egress/task':'egress/scope',reason:'人工待办',justification:'自建靶场',status,note:'',responseStatus:0,createdAt:1,updatedAt:2,...(executionState?{executionState}:{}),...(status!=='pending'?{userDecision:status==='approved'?'allow':'reject',approvalSource:'human-command'}:{})};
   assert.deepEqual(schema.parse(JSON.parse(JSON.stringify(row))),row);
  }
+});
+
+import {explicitUserOrigins,withinDomain} from '../lib/src/egress/user-scope.js';
+const userSession=(id,text,source={kind:'user',rpcId:'fixture-user'})=>({id,events:[{type:'agent/inbox/spliced',data:{inserted:[{role:'user',source,content:[{type:'text',text}]}]}}]});
+test('明确的人类单资产直接进入精确出口范围，不再开局挂审',async t=>{
+ const f=await fixture(t),session='explicit-user',origin='http://127.0.0.1:23456';
+ await f.manager.user.seedScope(session,userSession(session,`针对该资产进行 src 漏洞挖掘，不进行资产收集，只针对该资产：\n${origin}`));
+ assert.deepEqual(f.manager.user.getScope(session).origins,[origin]);
+ assert.equal((await f.manager.fetch(session,origin+'/read')).status,200);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ await assert.rejects(f.manager.fetch(session,'http://127.0.0.1:23457/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,1);
+ await f.manager.close();
+ const reopened=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,assess:async()=>low});t.after(()=>reopened.close());
+ assert.deepEqual(reopened.user.getScope(session).origins,[origin]);
+});
+test('模型、引用、合成回注、子会话不能伪造原始人类范围，撤回不回吃旧授权',()=>{
+ const text='针对该资产测试 http://127.0.0.1:23456';
+ for(const source of [{kind:'user'},{kind:'tool',rpcId:'fake'},{kind:'assistant',rpcId:'fake'}])assert.deepEqual(explicitUserOrigins(userSession('s',text,source)),[]);
+ const child=userSession('s',text);child.header={parentSession:'parent'};assert.deepEqual(explicitUserOrigins(child),[]);
+ for(const prefix of ['引用日志：','示例：','不确定是否','不要测试','> ','```'])assert.deepEqual(explicitUserOrigins(userSession('s',prefix+text)),[]);
+ const history=userSession('s',text);history.events.push(...userSession('s','停止测试该资产').events);assert.deepEqual(explicitUserOrigins(history),[]);
+ assert.deepEqual(explicitUserOrigins(userSession('s',text+' 和 http://127.0.0.1:23457')),[]);
+});
+test('已有人工范围拒绝不能被原始目标消息重新自动授权',async t=>{
+ const f=await fixture(t),s='rejected-user',origin='http://127.0.0.1:23456';let id;
+ try{await f.manager.fetch(s,origin+'/read');}catch(e){id=e.approvalId;}
+ assert.ok(id);
+ await f.manager.user.decide(s,id,'reject');
+ await f.manager.user.seedScope(s,userSession(s,`针对该资产测试 ${origin}`));
+ assert.equal(f.manager.user.getScope(s),undefined);assert.equal(f.sent.length,0);
+});
+test('已确认域按边界覆盖，范围扩展不作废已有任务版本',async t=>{
+ const f=await fixture(t),s='domains';await f.manager.user.setScope(s,['http://127.0.0.1:23456']);
+ const before=f.manager.user.getScope(s);
+ await f.manager.user.confirmDomain(s,'*.example.com','allow');
+ const after=f.manager.user.getScope(s);assert.deepEqual(after.domains,['example.com']);assert.equal(after.revision,before.revision);assert.equal(after.credentialRevision,before.credentialRevision);
+ assert.equal(withinDomain('a.example.com','example.com'),true);assert.equal(withinDomain('example.com.evil.test','example.com'),false);assert.equal(withinDomain('evil-example.com','example.com'),false);
+ await f.manager.user.confirmDomain(s,'other.test','reject');assert.deepEqual(f.manager.user.getScope(s).domains,['example.com']);
+ assert.equal(f.sent.length,0);
+});
+
+test('人类裸域仅含默认HTTP/HTTPS，显式通配域才授予子域，不猜注册域',async()=>{
+ const {explicitUserScope}=await import('../lib/src/egress/user-scope.js');
+ assert.deepEqual(explicitUserScope(userSession('s','针对 example.co.uk 进行测试')),{origins:['http://example.co.uk','https://example.co.uk'],domains:[]});
+ assert.deepEqual(explicitUserScope(userSession('s','针对 *.example.co.uk 进行SRC漏洞挖掘')),{origins:[],domains:['example.co.uk']});
+ assert.deepEqual(explicitUserScope(userSession('s','针对 a.example.com 和 b.example.com 测试')),{origins:[],domains:[]});
+});
+test('整域确认后否决子域优先于父域授权，拒绝跨重启保留',async t=>{
+ const f=await fixture(t),s='domain-denial';
+ await f.manager.user.confirmDomain(s,'example.com','allow');
+ const revision=f.manager.user.getScope(s).revision;
+ await f.manager.user.confirmDomain(s,'excluded.example.com','reject');
+ assert.notEqual(f.manager.user.getScope(s).revision,revision);
+ await assert.rejects(f.manager.fetch(s,'https://excluded.example.com/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ await assert.rejects(f.manager.fetch(s,'https://child.excluded.example.com/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.assessments(),0);
+ await f.manager.close();const reopened=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,directFetch:async()=>{throw new Error('must not send');}});t.after(()=>reopened.close());
+ await assert.rejects(reopened.fetch(s,'https://excluded.example.com/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});
+});
+
+test('整域确认只为域内新origin执行DNS固定，不重新挂审或改变既有版本',async t=>{
+ const dns=(await import('node:dns/promises')).default,{syncBuiltinESMExports}=await import('node:module');
+ const original=dns.lookup,lookups=[];dns.lookup=async(host)=>{lookups.push(host);return [{address:'127.0.0.1',family:4}];};syncBuiltinESMExports();t.after(()=>{dns.lookup=original;syncBuiltinESMExports();});
+ const f=await fixture(t),s='domain-expansion';await f.manager.user.confirmDomain(s,'fixture.test','allow');const revision=f.manager.user.getScope(s).revision;
+ assert.equal((await f.manager.fetch(s,'https://api.fixture.test:8443/read')).status,200);
+ assert.deepEqual(lookups,['api.fixture.test']);assert.deepEqual(f.manager.user.getScope(s).origins,['https://api.fixture.test:8443']);assert.equal(f.manager.user.getScope(s).revision,revision);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ await assert.rejects(f.manager.fetch(s,'https://evil-fixture.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,1);assert.deepEqual(lookups,['api.fixture.test']);
+});
+
+test('先否决域名不阻塞其他明确人类资产初始化，也不能丢失原拒绝',async t=>{
+ const f=await fixture(t),s='deny-before-scope';await f.manager.user.confirmDomain(s,'excluded.test','reject');
+ await f.manager.user.seedScope(s,userSession(s,'针对该资产测试 http://127.0.0.1:23456'));
+ assert.equal((await f.manager.fetch(s,'http://127.0.0.1:23456/read')).status,200);
+ assert.deepEqual(f.manager.user.getScope(s).excludedDomains,['excluded.test']);
+ await assert.rejects(f.manager.fetch(s,'https://excluded.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
 });

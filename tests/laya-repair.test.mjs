@@ -300,7 +300,7 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  const pending=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'unknown effects'});assert.equal(pending.value.approval,'pending');assert.equal(hits,2);assert.match(pending.value.reason,/POST \/opaque/);assert.match(pending.value.reason,/risk=unknown/);assert.doesNotMatch(pending.value.reason,/高风险\/不确定\/矛盾结论转人工/);
  risk='low';verdict='allow';effect='read';
  const repeat=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'try again'});assert.equal(repeat.value.pendingApprovalId,pending.value.pendingApprovalId);assert.equal(hits,2);
- risk='high';
+ risk='high';effect='destructive';
  const high=await h.run('src_http',{method:'GET',url:'https://fixture.test/action',justification:'possible harmful side effect'});assert.equal(high.value.approval,'pending');assert.equal(hits,2);
  fail=true;
  const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);

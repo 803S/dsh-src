@@ -12,6 +12,7 @@ function statusLabel(status: SrcProjectionUserTodo['status']): string {
 }
 
 function approvalTitle(approval: SrcProjectionPendingApproval): string {
+  if (approval.method === 'TASK') return '目标操作审批'
   if (approval.method === 'ASSET') return `确认资产归属：${approval.url}`
   if (approval.method === 'SCOPE') return `确认测试范围：${approval.url}`
   return `${approval.method} ${approval.url}`
@@ -84,16 +85,15 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
       setBusy(false)
     }
   }
-  const statusText = approval.status === 'approved' ? '已批准' : approval.status === 'rejected' ? '已拒绝' : '等待决定'
+  const statusText = approval.executionState === 'failed-before-send' ? '未发送' : approval.executionState === 'unknown' ? '结果待核对' : approval.status === 'approved' ? '已批准' : approval.status === 'rejected' ? '已拒绝' : '等待决定'
   return <article className={`${css.actionCard} ${css.approvalCard}`} data-testid="src-approval-card">
     <div className={css.actionIcon} data-status={approval.status}>{approval.method === 'ASSET' ? '◎' : '!'}</div>
     <div className={css.actionBody}>
-      <div className={css.actionHeading}><span className={css.kindLabel}>{approval.category || '人工审批'}</span><span className={`${css.statusPill} ${approval.status === 'pending' ? css.status_pending : approval.status === 'approved' ? css.status_done : css.status_abandoned}`}>{statusText}</span></div>
+      <div className={css.actionHeading}><span className={css.kindLabel}>{approval.category?.startsWith('egress/') ? '请求审批' : approval.category || '人工审批'}</span><span className={`${css.statusPill} ${approval.status === 'pending' ? css.status_pending : approval.status === 'approved' ? css.status_done : css.status_abandoned}`}>{statusText}</span></div>
       <h3>{approvalTitle(approval)}</h3>
-      <p className={css.consequenceHint}>{approval.method === 'SCOPE' ? '确认范围本身不会发送目标请求。' : approval.method === 'ASSET' ? '确认后该注册域及其子域会进入可测试范围。' : '批准后会按冻结的请求参数执行一次，可能产生业务副作用。'}</p>
-      <div className={css.actionMeta}><code>{approval.id}</code>{approval.executionState && <span>执行状态：{approval.executionState}</span>}</div>
+      <div className={css.actionMeta}><code>{approval.id}</code></div>
       <ApprovalExplanationCard request={approval} />
-      {approval.reason && <p className={css.reason}><strong>{approval.status === 'pending' ? '分类理由' : '执行前记录'}：</strong>{approval.reason}</p>}
+      {approval.reason && <details className={css.requestDetails}><summary>查看判定记录</summary><pre>{approval.reason}</pre></details>}
       {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看请求报文'}</summary><pre>{approval.method} {approval.url}{approval.headers ? `\n${approval.headers}` : ''}{approval.body ? `\n\n${approval.body}` : ''}</pre></details>}
       {isPending && runCommand && approval.executionState !== 'executing' && approval.executionState !== 'unknown' && <div className={css.actionButtons}>
         {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
@@ -113,7 +113,7 @@ export function ActionCenter({ src, t, runCommand }: { readonly src: SrcProjecti
   const pendingTodos = todos.filter(todo => todo.status === 'pending')
   const pendingApprovals = approvals.filter(approval => approval.status === 'pending')
   return <div className={css.root} data-testid="src-action-center">
-    <section className={css.actionHero}><div><span className={css.sectionKicker}>ACTION CENTER</span><h2>把需要人工判断的事情集中处理</h2><p>审批会说明操作目的、潜在后果和恢复条件；待办完成后会写回当前 SRC 会话，agent 才会继续推进。</p></div><div className={css.actionSummary}><strong>{pendingTodos.length + pendingApprovals.length}</strong><span>待处理</span></div></section>
+    <section className={css.actionHero}><div><span className={css.sectionKicker}>ACTION CENTER</span><h2>把需要人工判断的事情集中处理</h2><p>只挂起对应操作；其他独立工作继续进行。</p></div><div className={css.actionSummary}><strong>{pendingTodos.length + pendingApprovals.length}</strong><span>待处理</span></div></section>
     {feedback && <div className={css.feedback} role="status">{feedback}</div>}
     <div className={css.columns}>
       <section className={css.column}><header className={css.columnHeader}><div><span className={css.columnKicker}>USER TASKS</span><h2>用户待办</h2></div><span className={css.countBadge}>{pendingTodos.length}</span></header>{todos.length === 0 ? <div className={css.empty}>暂无用户待办</div> : todos.map(todo => <TodoCard key={todo.id} todo={todo} runCommand={runCommand} onFeedback={setFeedback} />)}</section>

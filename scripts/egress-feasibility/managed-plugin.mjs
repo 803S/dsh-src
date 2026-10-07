@@ -514,6 +514,7 @@ export function apply(ctx, config) {
       ctx.on('tools/result',async(exec,result)=>{
         if(scopeHandled||exec.agent?.session.id!==agent.session.id||!result.value?.pendingApprovalId||result.value.reason!=='scope-confirmation-required')return;
         scopeHandled=true;
+        if(process.env.DSH_EVAL_SRC_PROBES==='1'){await finish('error',new Error('明确人类资产仍产生范围审批'));return;}
         try{
           const id=result.value.pendingApprovalId;
           const scope=await manager.user.inspect(agent.session.id,id);
@@ -525,7 +526,7 @@ export function apply(ctx, config) {
       });
     }
     if(resumeSession){const {resumeDurableApproval}=await import('./durable-approval-model.mjs');await resumeDurableApproval(ctx,agent,manager,process.env.DSH_EVAL_RESUME_APPROVAL,log);}
-    else agent.followup(createUserMessage({ content: [{ type: 'text', text: config.task }], source: { kind: 'user' } }));
+    else agent.followup(createUserMessage({ content: [{ type: 'text', text: config.task }], source: { kind: 'user', ...(process.env.DSH_EVAL_SRC_PROBES==='1'?{rpcId:'fixture-user-input'}:{}) } }));
     // Do not exit when commander first yields: background child completion can wake it again.
     let quiet = 0;
     while (!finished) {
