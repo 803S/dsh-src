@@ -151,6 +151,16 @@ try {
  await card.getByRole('button',{name:'核验未发送并重试',exact:true}).click();await card.getByRole('button',{name:'确认无副作用，发送一次',exact:true}).click();
 
  assert.equal(await card.getByRole('button',{name:'拒绝',exact:true}).isEnabled(),true);
+ await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'authorized',executionError:''};renderSrc();});
+ assert.equal(await card.getByRole('button',{name:'核验并继续执行',exact:true}).isEnabled(),true);
+ assert.equal(await card.getByRole('button',{name:'拒绝',exact:true}).isEnabled(),true);
+ await card.getByRole('button',{name:'拒绝',exact:true}).click();await card.getByRole('button',{name:'确认拒绝',exact:true}).click();
+ assert.ok(await p.evaluate(()=>commands.includes('/src-approve approval-1 reject')));
+ await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],executionState:'unknown',executionError:'ECONNREFUSED'};renderSrc();});
+ await card.getByText('执行记录：ECONNREFUSED',{exact:true}).waitFor();
+ assert.match(await card.innerText(),/ECONNREFUSED/);assert.match(await card.innerText(),/目标出口范围与审批核对/);
+ assert.equal(await card.getByRole('button').count(),0);
+ await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'failed-before-send',executionError:'SRC_GATE_RESOURCE_REQUIRES_REVIEW'};renderSrc();});
  await p.setViewportSize({width:390,height:844});assert.ok(await card.evaluate(e=>e.scrollWidth<=e.clientWidth+1));await card.screenshot({path:path.join(output,'approval-compact-mobile.png')});
  await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();assert.match(await card.innerText(),/template/);
  await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();

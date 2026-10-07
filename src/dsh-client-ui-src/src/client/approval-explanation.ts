@@ -9,6 +9,19 @@ export type ApprovalExplanationInput = {
   layaAdvice?: string
   safetyPlan?: {backupRef?:string; snapshotVerified?:boolean; recovery?:string; validationError?:string}
   writeOutcome?: {warning?:string}
+  status?: string
+  executionState?: string
+  executionError?: string
+}
+
+export function approvalNeedsDecision(input: ApprovalExplanationInput): boolean {
+  return input.status==='pending'||input.category==='egress/task'&&input.status==='approved'&&(
+    input.executionState==='authorized'||input.executionState==='failed-before-send'
+    &&input.executionError==='SRC_GATE_RESOURCE_REQUIRES_REVIEW'&&approvalCanConfirmRead(input));
+}
+
+export function approvalNeedsAttention(input: ApprovalExplanationInput): boolean {
+  return approvalNeedsDecision(input)||input.category==='egress/task'&&['unknown','failed-before-send','cancelled'].includes(input.executionState??'');
 }
 
 const boundedText=(value:string,limit:number)=>value.length>limit?value.slice(0,limit)+'…':value;

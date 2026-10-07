@@ -130,6 +130,26 @@ export function apply(ctx, config) {
     // Fixture-only configured mode, not a forged user approval or production change.
     if(config.fileMode)agent.session.append('sandbox/mode',{mode:config.fileMode});
     const manager=await ctx.srcEgress.ready();
+    const interruptApproval=async(approvalId,action)=>{
+      const {SrcStore}=await import('../../lib/src.js');
+      const update=SrcStore.prototype.updateApprovalExecution,controller=new AbortController();
+      let recorded;
+      SrcStore.prototype.updateApprovalExecution=async function(session,id,patch){
+        const result=await update.call(this,session,id,patch);
+        if(session===agent.session.id&&id===approvalId&&patch.userDecision===action){
+          recorded=await this.getPendingApproval(session,id);
+          controller.abort(new Error('fixture cancellation after durable human decision'));
+        }
+        return result;
+      };
+      try{
+        await ctx.commands.execute(agent,`/src-approve ${approvalId} ${action==='allow'?'allow-read':action} 本机测试决策落库后取消`,[],controller.signal).catch(()=>{});
+      }finally{SrcStore.prototype.updateApprovalExecution=update;}
+      if(!recorded||recorded.userDecision!==action)throw new Error('原生审批未经过真实持久化');
+      const state=await manager.user.inspect(agent.session.id,approvalId);
+      if(action==='reject'&&state.state!=='denied'||action==='allow'&&recorded.executionState!=='authorized')throw new Error('原生中断状态不正确');
+      log({type:'native-interrupted-approval',approvalId,action,recordedState:recorded.executionState,ledgerState:state.state});
+    };
     await metrics?.mark('before-tools');
     if(config.onboarding&&config.directToolProbe){
       if(!config.directToolProbe)throw new Error('Onboarding fixture currently requires explicit ToolRuntime mode; never count it as model testing');
@@ -187,7 +207,9 @@ export function apply(ctx, config) {
         log({type:'verified-delete-runtime',snapshot:snapshot.snapshotRef,prepared:prepared.approvalId,outcome});
         const after=await call('src_http',{url:config.origin+'/after-put',method:'GET',justification:'待审后的独立读取'});
         if(after.status!==200)throw new Error('待审阻塞独立工作');
-        const reject=await ctx.commands.execute(agent,`/src-approve ${put.pendingApprovalId} reject 不执行空PUT探测`,[],AbortSignal.timeout(15000));
+        const reject=process.env.DSH_EVAL_INTERRUPTED_APPROVAL==='1'
+          ? (await interruptApproval(put.pendingApprovalId,'reject'),{result:{kind:'success',text:'原生取消后拒绝已落账'}})
+          : await ctx.commands.execute(agent,`/src-approve ${put.pendingApprovalId} reject 不执行空PUT探测`,[],AbortSignal.timeout(15000));
         if(reject.result.kind!=='success')throw new Error('拒绝未成功');
         log({type:'approval-repair-runtime',read:read.status,pending:put.pendingApprovalId,approve,reject,after:after.status});
       }
@@ -209,6 +231,7 @@ export function apply(ctx, config) {
         if(lost?.expectedDisconnect!==true)throw new Error('靶场未实际接收并断连 '+JSON.stringify(lost));
         const opaque=await call('src_http',{url:config.origin+'/opaque-operation',method:'POST',headers:{'Content-Type':'application/json'},body:'{"operation":87139}',justification:'接口语义未知，需要用户确认'});
         if(!opaque.pendingApprovalId)throw new Error('不明业务操作未等待人类 '+JSON.stringify(opaque));
+        if(process.env.DSH_EVAL_INTERRUPTED_APPROVAL==='1')await interruptApproval(opaque.pendingApprovalId,'allow');
         const manual=await ctx.commands.execute(agent,`/src-approve ${opaque.pendingApprovalId} allow-read 人类确认本地合成接口仅返回固定文本，不执行业务动作`,[],AbortSignal.timeout(30000));
         if(manual?.result.kind!=='success')throw new Error('原生人工接管失败 '+JSON.stringify(manual));
         const replay=await call('src_http',{url:config.origin+'/opaque-operation',method:'GET',justification:'原结果未知请求不得重放'}).catch(error=>({blocked:true,error:String(error)}));
