@@ -25,7 +25,8 @@
 - 回归首轮暴露旧测试期待泛化OUT_OF_SCOPE，以及fixture缺callId；已调整为新的明确分类/合法fixture，未改为放行。真实浏览器fixture缺confidence导致自动读取被挂审，补足合成风险契约后正常通过。
 - 最终发布前全量582/582通过，UI类型检查/构建/浏览器交互、源码卫生及preset一致性通过。真实浏览器边界回归复跑通过。
 - 从唯一main目录部署Web/headless，各116个lib运行时文件哈希一致；Web保留原监听参数优雅重启为PID8971，426会话均idle。实际Web展示完整HTTPS :3000目标及研究记录核对区域，零pageerror；未重放目标请求。
-- Jev配置、范围文件、绑定key部署前后哈希不变。备份/日志位于 `/private/tmp/dsh-local125.VLAoXF`。Git与发行待提交后补记。
+- Jev配置、范围文件、绑定key部署前后哈希不变。备份/日志位于 `/private/tmp/dsh-local125.VLAoXF`。
+- Git修复提交 `d7bf94e`、标签 `v0.1.0-local.125` 已推送，[正式发行](https://github.com/803S/dsh-src/releases/tag/v0.1.0-local.125)已发布。安装包2,081,735字节，经GitHub asset API独立下载核验SHA256：`52007b12d9513870998d7f63412064b3cc4e5f78f6530f422828fb532e36b704`。
 
 ## 保留边界
 
