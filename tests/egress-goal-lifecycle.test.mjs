@@ -49,7 +49,7 @@ test('goal reset during scope confirmation cannot rebind the confirmed origins o
  };
  await manager.user.decide(session,scope.approvalId,'allow');
  assert.equal(reset,true);assert.deepEqual(manager.user.getScope(session).origins,[original]);
- await assert.rejects(manager.fetch(session,other+'/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.deepEqual(sent,[]);
+ await assert.rejects(manager.fetch(session,other+'/read'),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});assert.deepEqual(sent,[]);
  assert.equal(await (await manager.fetch(session,original+'/read')).text(),'fixture');
  const dangerous=await pending(manager,session,original+'/delete',{method:'DELETE'});
  await manager.user.decide(session,dangerous.approvalId,'reject');

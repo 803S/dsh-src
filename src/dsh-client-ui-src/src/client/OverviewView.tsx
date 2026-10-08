@@ -61,7 +61,7 @@ export function OverviewView({ src, t, onNavigate }: OverviewViewProps) {
       <section className={css.hero}>
         <div className={css.heroCopy}>
           <div className={css.eyebrow}><span className={css.liveDot} /> SRC ENGAGEMENT · {runningIntents > 0 ? '正在运行' : '已记录'}</div>
-          <h2>{src.goal?.target || '未设置目标'}</h2>
+          <h2>{src.goal?.scopeOrigin || src.goal?.target || '未设置目标'}</h2>
           <p>{src.goal?.objective || '等待 agent 记录本次挖掘目标与验证目的。'}</p>
           <div className={css.heroMeta}>
             {src.goal?.authorization ? <span className={css.metaPill}>授权 · {src.goal.authorization}</span> : <span className={`${css.metaPill} ${css.metaPillWarning}`}>尚未声明授权</span>}
@@ -121,6 +121,7 @@ export function OverviewView({ src, t, onNavigate }: OverviewViewProps) {
           </div>
         </section>
       </div>
+      {src.observations.length > 0 && <section className={css.panel} aria-label="研究记录完整性"><h3>研究记录核对</h3><p>HTTP 证据 {src.observations.length} 条（含不同记录层，不等于独立请求或测试覆盖）；未关联方向 {src.observations.filter(row => !row.intentId).length} 条。研究 {src.research.length} 项 · 覆盖记录 {src.coverage.length} 项 · 检查点 {src.checkpoints.length} 项。</p>{src.nodes.some(node => node.kind === 'intent' && node.status === 'planned' && src.observations.some(row => row.intentId === node.id)) && <p>有方向已有请求证据但仍为 planned，需按实际工作更新状态；不自动标成完成或已验证。</p>}</section>}
       <p className={css.disclaimer}>{t('report.hint')} · 数据来自当前会话的权威 SRC 状态</p>
     </div>
   )

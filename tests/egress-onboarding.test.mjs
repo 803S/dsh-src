@@ -322,7 +322,7 @@ test('明确的人类单资产直接进入精确出口范围，不再开局挂�
  await f.manager.user.seedScope(session,userSession(session,`针对该资产进行 src 漏洞挖掘，不进行资产收集，只针对该资产：\n${origin}`));
  assert.deepEqual(f.manager.user.getScope(session).origins,[origin]);
  assert.equal((await f.manager.fetch(session,origin+'/read')).status,200);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
- await assert.rejects(f.manager.fetch(session,'http://127.0.0.1:23457/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,1);
+ await assert.rejects(f.manager.fetch(session,'http://127.0.0.1:23457/read'),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});assert.equal(f.sent.length,1);
  await f.manager.close();
  const reopened=await createEgressManager({home:f.home,allowLoopbackFixtures:true,storeFor:async()=>f.store,assess:async()=>low});t.after(()=>reopened.close());
  assert.deepEqual(reopened.user.getScope(session).origins,[origin]);

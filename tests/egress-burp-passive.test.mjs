@@ -164,7 +164,7 @@ test('Burp transport failure is unknown, never replayed, and blocks HTTP/curl al
  const again=pending(await f.run());assert.equal(again.sent,false);await assert.rejects(f.manager.fetch('s',origin+'/read'));assert.equal(f.sent.length,1);assert.equal(f.reads.length,0);
 });
 test('Burp cannot expand scope or launder a pending destructive HTTP operation',async t=>{
- const f=await setup(t);await assert.rejects(f.run({...args(),targetPort:49124,content:args().content.replaceAll('49123','49124')}),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,0);
+ const f=await setup(t);await assert.rejects(f.run({...args(),targetPort:49124,content:args().content.replaceAll('49123','49124')}),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});assert.equal(f.sent.length,0);
  await assert.rejects(f.manager.fetch('s',origin+'/delete',{method:'DELETE'}));
  const held=pending(await f.run(args('DELETE','/delete')));assert.equal(held.approvalId,[...f.rows.keys()][0]);assert.equal(f.rows.size,1);assert.equal(f.sent.length,0);
 });

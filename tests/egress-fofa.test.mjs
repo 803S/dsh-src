@@ -39,7 +39,7 @@ test('unregistered FOFA tool is rejected before manager, credentials or any send
  let execute;
  const ctx={effect(){},on(event,handler){if(event==='tools/execute')execute=handler;},shell:{srcEgressPolicyVersion:1},tools:{get:()=>undefined}};
  installEgressExecution(ctx,{}, {own(){},ready(){assert.fail('Unavailable tool opened manager');}});
- await assert.rejects(execute({...exec({}),agent:{session:{id:'s'}}},()=>assert.fail('Unconfined provider called')),{code:'SRC_GATE_UNAVAILABLE_TOOL'});
+ await assert.rejects(execute({...exec({}),callId:'unavailable-fofa-fixture',agent:{session:{id:'s'}}},()=>assert.fail('Unconfined provider called')),{code:'SRC_GATE_UNAVAILABLE_TOOL'});
 });
 test('FOFA oversized rows and decode failures report after-send errors, not zero traffic',async t=>{
  const {run}=await fixture(t,async()=>Response.json({results:[['a'.repeat(2049),'192.0.2.1',80]]}));

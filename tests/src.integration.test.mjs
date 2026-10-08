@@ -4842,6 +4842,20 @@ test("[local.68 #20] scan_surface 前缀分簇：多簇+跨前缀提示触发多
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('local.125: error templates do not discover applications; missing length stays unknown', async () => {
+ const h=harness(),exec=h.exec('scan125-template');await h.run('src_add_goal',{target:'https://fixture.test:3000',objective:'template test'},exec);
+ const original=globalThis.fetch;
+ try {
+  globalThis.fetch=async()=>new Response('<title>404</title><script src="/_next/a.js"></script>',{status:404,headers:{'content-type':'text/html'}});
+  const scan=await h.run('src_scan_surface',{baseUrl:'https://fixture.test:3000',paths:['/api','/admin','/docs']},exec);
+  assert.equal(scan.responses,3);assert.equal(scan.hints,0);assert.equal(scan.multiBackendNote,undefined);assert.equal(scan.results[0].length,null);assert.ok(scan.results[0].sampleBytes>0);
+  await h.run('src_set_goal_target',{target:'fixture.test'},exec);
+  let sends=0;globalThis.fetch=async()=>{sends++;return new Response('unexpected')};
+  await assert.rejects(h.run('src_http',{url:'https://fixture.test:5001/',method:'GET',justification:'must stay exact'},exec),{code:'SRC_GATE_OUT_OF_SCOPE'});
+  assert.equal(sends,0);
+ } finally {globalThis.fetch=original;}
+});
+
 /* ==================== [local.68 #19 尾款] 靶场产出回归：未授权可达 finding 端到端入库 ====================
  * plan §10 ①：断言「finding ≥N 且含未授权可达类」，把 #11b 锁进每版自动回归——直击
  * 「测试全绿、实战产出为零」盲区：不是驱动模型，而是用靶场真实端点走完整 agent 链路

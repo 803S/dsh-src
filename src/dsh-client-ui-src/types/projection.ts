@@ -13,6 +13,7 @@ export type SrcEdgeKind = 'spawns' | 'yields' | 'derived_from' | 'proves' | 'par
 export type SrcIntentStatus = 'planned' | 'running' | 'completed' | 'blocked' | 'failed' | 'deprecated'
 
 export interface SrcProjectionGoal {
+  readonly scopeOrigin?: string
   readonly id: string
   readonly target: string
   readonly objective: string

@@ -358,7 +358,7 @@ function ModernEngagementHeader({ src, t, onNavigate }: { readonly src: SrcProje
     <div className={css.engagementTop}>
       <div className={css.engagementCopy}>
         <div className={css.eyebrow}><span className={css.liveDot} /> SRC ENGAGEMENT <span className={css.eyebrowDivider}>/</span> {status}</div>
-        <div className={css.titleLine}><h1>{src.goal?.target || '未设置目标'}</h1>{src.goal?.authorization && <span className={css.authorizationBadge} title={src.goal.authorization}>授权 · {src.goal.authorization}</span>}</div>
+        <div className={css.titleLine}><h1>{src.goal?.scopeOrigin || src.goal?.target || '未设置目标'}</h1>{src.goal?.authorization && <span className={css.authorizationBadge} title={src.goal.authorization}>授权 · {src.goal.authorization}</span>}</div>
         <p className={css.objective}>{src.goal?.objective || '等待 agent 记录本次挖掘目标与验证目的。'}</p>
         <div className={css.headerMeta}><span>最近活动 {activityText}</span>{src.apiDiscovery && src.apiDiscovery.total > 0 && <span>API 发现 {src.apiDiscovery.total}</span>}</div>
       </div>

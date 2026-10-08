@@ -5,7 +5,9 @@ import path from 'node:path';
 import {tmpdir} from 'node:os';
 import {resolveBrowserRuntime} from '../lib/src/egress/browser-runtime.js';
 import {projectBrowserOutput,browserProjectionDecision} from '../lib/src/egress/browser-output.js';
-import {isBrowserTool} from '../lib/src/egress/browser-adapter.js';
+import {createBrowserAdapter,isBrowserTool} from '../lib/src/egress/browser-adapter.js';
+import {withEgressExecution} from '../lib/src/egress/runtime.js';
+import {assertKnownTarget} from '../lib/src/egress/target-context.js';
 test('browser runtime uses installed owner inventory and existing executable only',async t=>{
  const home=await mkdtemp(path.join(tmpdir(),'browser-runtime-'));t.after(()=>rm(home,{recursive:true,force:true}));
  const pkg=path.join(home,'cap/node_modules/@playwright/mcp'),cacheDir=path.join(home,'cache');await mkdir(pkg,{recursive:true});
@@ -40,4 +42,19 @@ test('rich browser output never overrides post-execution block, rewrite or cance
  assert.equal(browserProjectionDecision(p,{signal:AbortSignal.abort()},result,accept),accept);
  assert.equal(browserProjectionDecision(p,{}, {isError:true,value:p.value},accept),accept);
  assert.equal(browserProjectionDecision(p,{}, {value:{content:['changed']}},accept),accept);
+});
+test('browser adapter surfaces trusted network denial without falsifying native 403 or widening navigation',async()=>{
+ let observer,mode='blocked',executed=0;
+ const native={content:[{type:'text',text:'HTTP status: 403 Forbidden'}]};
+ const ctx={effect(){},on(){},tools:{get:()=>({})},get:()=>({resolve:()=>({})})};
+ const manager={checkTarget:(_,url)=>assertKnownTarget({origins:['https://fixture.test:3000']},url),watchNetwork:(_,fn)=>{observer=fn;return()=>{observer=undefined}},sessionProxy:async()=>{}};
+ const client={request:async(method)=>{if(method==='tools/list')return {tools:[{name:'browser_navigate'},{name:'browser_evaluate'}]};executed++;if(mode==='blocked')observer({kind:'denied',origin:'http://127.0.0.1:5001',code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});return native;}};
+ const adapter=createBrowserAdapter(ctx,{domain:async()=>({})},{createSessions:()=>({run:async(_,fn)=>fn(client),close:async()=>{}}),resolveRuntime:async()=>({})});
+ const exec={name:'mcp__playwright__browser_navigate',arguments:{url:'https://fixture.test:3000/apps'},agent:{session:{id:'fixture',header:{cwd:'/tmp'}}}};
+ const run=()=>withEgressExecution({exec,sessionId:'fixture',manager},()=>adapter.execute(exec,[]));
+ const blocked=await run();assert.deepEqual(blocked.value.content,native.content);assert.match(blocked.content[0].text,/本地被阻断/);assert.equal(observer,undefined);
+ mode='real';const actual=await run();assert.deepEqual(actual.content,native.content);
+ const before=executed;exec.arguments.url='http://127.0.0.1:5001/';await assert.rejects(run(),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});assert.equal(executed,before);
+ exec.arguments.url='https://fixture.test:5001/';await assert.rejects(run(),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(executed,before);
+ await adapter.close();
 });
