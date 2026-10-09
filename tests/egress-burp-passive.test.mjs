@@ -92,15 +92,13 @@ test('Jev unknown holds Burp before dispatch; user approval sends captured bytes
  assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
  await assert.rejects(f.manager.user.decide('s',row.id,'allow'));assert.equal(f.sent.length,1);
 });
-test('Burp unknown operations retain safety requirements and use native send only after fresh approval',async t=>{
+test('Burp unknown operations execute the exact frozen bytes after human approval',async t=>{
  const f=await setup(t,{assess:()=>({...low,effect:'unknown',action:'pending'})});const raw=args('POST','/compute','{"x":1}');
  const held=pending(await f.run(raw));assert.equal(f.sent.length,0);
- await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_SAFETY_PLAN_REQUIRED'});
- const next=await f.manager.preparePending('s',held.approvalId,{effect:'compute',object:'synthetic computation',recovery:'No persistent mutation in the owned fixture'});
- assert.match(f.rows.get(next.approvalId).reason,/"fallback":false/);assert.doesNotMatch(f.rows.get(next.approvalId).reason,/判定null/);
- assert.equal(f.sent.length,0);await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'));
- await f.manager.user.decide('s',next.approvalId,'allow');assert.deepEqual(f.sent[0].args,raw);assert.equal(f.calls(),1);assert.equal(f.reads.length,0);
- assert.equal(f.rows.get(next.approvalId).responseStatus,0);assert.match(f.rows.get(next.approvalId).responseBody,/Burp MCP/);
+ const result=await f.manager.user.decide('s',held.approvalId,'allow');
+ assert.equal(result.executionState,'executed');assert.deepEqual(f.sent[0].args,raw);assert.equal(f.calls(),1);assert.equal(f.reads.length,0);
+ assert.equal(f.rows.get(held.approvalId).responseStatus,0);assert.match(f.rows.get(held.approvalId).responseBody,/Burp MCP/);
+ await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'));assert.equal(f.sent.length,1);
 });
 test('Burp delete preserves backup/precondition/verification: only the frozen primary call uses Burp',async t=>{
  let deleted=false;const f=await setup(t,{assess:plan=>plan.entries[0].request.method==='DELETE'?{...low,effect:'destructive',risk:'high',action:'pending'}:low,send:async()=>{deleted=true;return {content:[{type:'text',text:'native delete response'}]};},read:()=>new Response(deleted?'after':'before')});
@@ -238,7 +236,7 @@ test('Burp会话冷却后重新载入不要求重启整个服务，用户新上�
 test('旧unknown Burp单可由人类确认低影响后原样发送一次，不调用directFetch',async t=>{
  const f=await setup(t,{assess:()=>({...low,effect:'unknown',risk:'unknown',action:'pending'})});
  const raw=args('POST','/render','{"template":12345}'),copy=structuredClone(raw),held=pending(await f.run(raw));
- assert.equal(f.sent.length,0);await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow'),{code:'SRC_GATE_SAFETY_PLAN_REQUIRED'});
- await f.manager.user.decide('s',held.approvalId,'allow-read');assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
+ assert.equal(f.sent.length,0);await f.manager.user.decide('s',held.approvalId,'allow');
+ await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow-read'));assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
  await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow-read'));assert.equal(f.sent.length,1);
 });

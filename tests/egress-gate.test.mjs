@@ -381,16 +381,11 @@ test('manager human single read executes frozen bytes once; rejects model replay
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
   assert.equal(f.sends(),1);
 });
-test('manager unknown single cannot be clicked through without safety; supersession never reassesses',async t=>{
+test('manager unknown single is human-final after approval; supersession remains optional',async t=>{
   const f=await managerFixture(t,{advice:{...low,effect:'unknown',action:'pending'}});
   await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/compute',{method:'POST',body:'x'}),code('PENDING_OR_REJECTED'));
   const [row]=f.rows.values();
-  await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SAFETY_PLAN_REQUIRED'));
-  assert.equal(f.sends(),0);
-  const task=await f.manager.preparePending('s',row.id,{effect:'compute',object:'synthetic non-persistent compute',recovery:'no external state change'});
-  assert.notEqual(task.approvalId,row.id);assert.equal(f.calls(),1);
-  await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('STALE_APPROVAL'));
-  assert.equal((await f.manager.user.decide('s',task.approvalId,'allow')).executionState,'executed');
+  assert.equal((await f.manager.user.decide('s',row.id,'allow')).executionState,'executed');
   assert.equal(f.sends(),1);
 });
 test('manager scope changes invalidate pending execution but review remains actionable',async t=>{
@@ -757,18 +752,19 @@ for(const body of ['', '{"values":{}}', '{"template":12345}'])test('未知参数
  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/render',{method:'POST',body}),code('PENDING_OR_REJECTED'));
  const [row]=f.rows.values();assert.equal(JSON.parse(row.body).safety,null);
  await f.manager.user.inspect('s',row.id);assert.equal(f.sends(),0);
- await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SAFETY_PLAN_REQUIRED'));
+ assert.equal((await f.manager.user.decide('s',row.id,'allow')).executionState,'executed');
+ assert.equal(f.sends(),1);
  const decisions=await Promise.allSettled([f.manager.user.decide('s',row.id,'allow-read'),f.manager.user.decide('s',row.id,'allow-read')]);
- assert.equal(decisions.filter(d=>d.status==='fulfilled').length,1);assert.equal(f.sends(),1);assert.equal(f.rows.size,1);
- assert.equal(row.approvalSource,'human-command');assert.match(row.note,/人类确认冻结单笔/);
+ assert.equal(decisions.filter(d=>d.status==='fulfilled').length,0);assert.equal(f.sends(),1);assert.equal(f.rows.size,1);
+ assert.equal(row.approvalSource,'human-command');assert.equal(row.note,'');
  await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'),code('STALE_APPROVAL'));assert.equal(f.sends(),1);
 });
 
 for(const effect of ['write','destructive','external','auth'])test('人工低影响确认不能覆盖Jev已识别副作用 '+effect,async t=>{
  const f=await managerFixture(t,{advice:{...low,effect,risk:'high',action:'pending'}});
  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/action',{method:'POST',body:'{}'}));
- const [row]=f.rows.values();await assert.rejects(f.manager.user.decide('s',row.id,'allow-read'),code('SAFETY_PLAN_REQUIRED'));
- assert.equal(f.sends(),0);assert.equal(row.status,'pending');
+ const [row]=f.rows.values();assert.equal((await f.manager.user.decide('s',row.id,'allow')).executionState,'executed');
+ assert.equal(f.sends(),1);assert.equal(row.status,'approved');
 });
 
 for(const init of [{method:'PUT'},{method:'PATCH'},{method:'DELETE'},{method:'POST',headers:{'x-http-method-override':'DELETE'}}])test('人工低影响确认不能绕过方法和改写硬闸 '+JSON.stringify(init),async t=>{

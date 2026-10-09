@@ -109,9 +109,9 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
       {interrupted && <p>批准已记录；若执行已中断，可核验后继续，也可拒绝放弃。已有发送记录时不会重放。</p>}
       {approval.executionError && <p>执行记录：{approval.executionError}</p>}
       {approval.responseEvidenceId && <p>已关联响应证据：<code>{approval.responseEvidenceId}</code>，不需要重新抓包或重放。</p>}
-      {approval.executionState==='unknown' && <p>先核对目标结果，再通过下方“目标出口范围与审批核对”记录结论；不会自动重试。</p>}
+      {approval.executionState==='unknown' && <p>请求可能已经发送但结果未知；先核对目标结果，不能盲目重试。发送前中断则可恢复原冻结请求，发送后结果未知不会自动重放。</p>}
       {isPending && confirmRead && !retryUnsent && <p>Jev 未确定影响；核对报文后，可确认本笔仅仅读取、校验或计算，无写入、外发或资源耗尽，再单次放行。</p>}
-      {isPending && missingSafety && <p role="status">自动执行材料尚未完整；这不会禁用人工决定。请先看冻结请求和实际影响：可以拒绝，或明确批准这一次有界请求。覆盖/删除仍不会绕过备份、前置校验和回读要求。</p>}
+      {isPending && missingSafety && <details className={css.requestDetails}><summary>查看执行边界状态</summary><p>自动执行所需的内部安全材料尚未完整；这不会禁用人工决定。覆盖、删除仍要求备份、前置校验和回读。</p></details>}
       {isPending && runCommand && approval.executionState !== 'executing' && approval.executionState !== 'unknown' && <div className={css.actionButtons}>
         {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{interrupted?'核验并继续执行':retryUnsent?'核验未发送并重试':confirmRead?'确认低影响并放行':approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
           <label htmlFor={`approval-note-${approval.id}`}>{decision === 'allow' ? '批准前补充备注' : '拒绝原因'} <span>可选，会写入审计记录</span></label>

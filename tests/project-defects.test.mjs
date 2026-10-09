@@ -20,7 +20,7 @@ test("scan output exposes all accepted rows and distinguishes omitted inputs", (
 });
 import { reserveRequestStart } from "../lib/src/request-rate.js";
 import { applyCommittedCoverage } from "../lib/src/coverage-projection.js";
-import { approvalTarget, approvalBlockReason } from "../src/dsh-client-ui-src/src/client/approval-explanation.ts";
+import { approvalTarget, approvalBlockReason, approvalHumanSummary } from "../src/dsh-client-ui-src/src/client/approval-explanation.ts";
 
 test('审批卡只解释实际阻断判定，不编造方法后果或背书模型安全承诺',()=>{
  const input={method:'PUT',url:'https://fixture.invalid/settings',justification:'无任何副作用，立即可逆',reason:'执行前判定'+JSON.stringify({risk:'high',effect:'write',action:'pending'})};
@@ -29,6 +29,13 @@ test('审批卡只解释实际阻断判定，不编造方法后果或背书模�
  assert.match(approvalBlockReason({...input,reason:'执行前判定'+JSON.stringify({fallback:true})}),/未返回有效判定/);
  assert.match(approvalTarget({method:'GET',url:'bad'}),/无法解析/);
  assert.equal(approvalTarget({method:'ASSET',url:'partner.test'}),'*.partner.test');
+});
+
+test('审批卡第一屏使用自然语言说明实际后果，技术材料折叠',()=>{
+ const input={method:'TASK',url:'src-egress://fixture',body:JSON.stringify({entries:[{maxRequests:1,request:{method:'POST',url:'https://fixture.invalid/spip.php?page=spip_pass',body:'page=spip_pass&oubli=test%40example.invalid'}}],safety:null}),reason:'执行前判定'+JSON.stringify({effect:'external',risk:'high',action:'pending'})};
+ assert.match(approvalHumanSummary(input),/test@example.invalid/);
+ assert.match(approvalHumanSummary(input),/按原报文执行|只发送一次/);
+ assert.doesNotMatch(approvalHumanSummary(input),/安全材料|Jev/);
 });
 
 test("committed coverage replaces provisional IDs and restores calculated counts", () => {

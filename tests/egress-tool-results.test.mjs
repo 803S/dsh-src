@@ -38,6 +38,13 @@ test('人工批准 external/unknown 冻结任务不再要求模型伪造安全�
  const saved=await f.store.getPendingApproval(f.session.id,row.id);assert.equal(saved.responseStatus,204);assert.equal(saved.executionState,'executed');
 });
 
+test('人工批准高风险增删改请求是最终放行，但仍绑定原始冻结请求',async t=>{
+ const sent=[];const f=await fixture(t,{assess:async()=>({mode:'on',fallback:false,effect:'destructive',risk:'high',action:'pending',confidence:1}),send:async(u,i)=>{sent.push({url:String(u),method:i.method,body:String(i.body??'')});return new Response('deleted')},});
+ await assert.rejects(f.manager.fetch(f.session.id,'http://127.0.0.1:49123/items/7',{method:'DELETE'}),{code:'SRC_GATE_PENDING_OR_REJECTED'});
+ const row=(await f.store.sessionData(f.session.id)).pendingApprovals.find(r=>r.status==='pending');const result=await f.manager.user.decide(f.session.id,row.id,'allow','用户已核对这是授权靶场中的单笔删除测试');
+ assert.equal(result.executionState,'executed');assert.deepEqual(sent,[{url:'http://127.0.0.1:49123/items/7',method:'DELETE',body:''}]);
+});
+
 test('差分测试遇待审不继续派生变体，forceAfterProtection不能覆盖审批',async t=>{
  const f=await fixture(t);const research=await f.store.upsertResearch(f.session.id,{intentId:f.intentId,category:'authorization-bypass',hypothesis:'fixture',preconditions:[],status:'hypothesis',stopReason:'',evidence:[]});
  const result=await f.run('src_test_bypass',{intentId:f.intentId,researchId:research.id,category:'authorization-bypass',baseUrl:'http://127.0.0.1:49123',baseline:{path:'/catalog'},variants:[{path:'/catalog',headers:{'x-test':'1'}}],forceAfterProtection:true});

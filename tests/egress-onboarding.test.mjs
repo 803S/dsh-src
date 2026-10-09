@@ -134,9 +134,8 @@ test('normal read with schema-filled safety hints is assessed, not forced into a
  let pending;
  try {await f.manager.fetch(session,origin+'/delete',{method:'DELETE'}, {egressSafetyPlan:safety});}catch(error){pending=error;}
  assert.equal(pending.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(pending.reason,'safety-material-required');assert.ok(pending.approvalId);
- await assert.rejects(f.manager.user.decide(session,pending.approvalId,'allow'),{code:'SRC_GATE_SAFETY_PLAN_REQUIRED'});
- await assert.rejects(f.manager.fetch(session,origin+'/delete',{method:'DELETE'}),{code:'SRC_GATE_PENDING_OR_REJECTED',approvalId:pending.approvalId});
- assert.equal(f.sent.length,1);
+ assert.equal((await f.manager.user.decide(session,pending.approvalId,'allow')).executionState,'executed');
+ assert.equal(f.sent.length,2);
 });
 
 import {renderHttp} from '../lib/src/evidence-output.js';

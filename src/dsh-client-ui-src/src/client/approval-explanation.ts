@@ -72,6 +72,30 @@ export function approvalRequestText(input: ApprovalExplanationInput): string {
   return `${input.method} ${input.url}${input.headers?'\n'+input.headers:''}${input.body?'\n\n'+input.body:''}`;
 }
 
+export function approvalHumanSummary(input: ApprovalExplanationInput): string {
+  if (input.method === 'SCOPE') return '这一步只确认精确测试范围，不会发送目标请求。'
+  if (input.method === 'ASSET') return '这一步只确认资产是否属于目标组织，不会因为确认归属而自动发送高风险请求。'
+  const stored = frozenTask(input)
+  const request = (Array.isArray(stored) ? stored : stored?.entries)?.[0]?.request
+  const assessment = assessmentOf(input)
+  if (!request) return '系统无法解析冻结请求；请先查看请求详情，不要批准无法核对的内容。'
+  const method = String(request.method ?? '请求')
+  const body = String(request.body ?? '')
+  const email = /(?:^|[&])(?:oubli|email|mail|to)=([^&]+)/i.exec(body)?.[1]
+  if (assessment.effect === 'external') {
+    if (email) {
+      let target = email
+      try { target = decodeURIComponent(email) } catch {}
+      return `${method} 请求可能向 ${target} 发送一封密码重置或通知邮件；批准后系统按原报文执行。发送前中断会恢复这笔请求，已发送但结果未知时不会盲目重放。`
+    }
+    return `${method} 请求可能产生站外副作用（例如邮件、短信或回调）；批准后系统按原报文执行。发送前中断会恢复，已发送但结果未知时不会盲目重放。`
+  }
+  if (assessment.effect === 'write' || assessment.effect === 'destructive') return `${method} 请求可能修改或删除目标数据；你的批准是这笔冻结请求的最终放行。系统会按原报文执行，发送前中断可恢复，不改参数或扩大次数。`
+  if (assessment.effect === 'auth') return `${method} 请求会执行一次认证或登录操作；你的批准只放行这笔冻结请求，发送前中断可恢复，不会爆破、循环尝试或扩大次数。`
+  if (assessment.effect === 'read' || assessment.effect === 'compute') return `${method} 请求用于读取、校验或计算；你的批准只放行这笔冻结请求，发送前中断可恢复，已发送但结果未知时不会盲目重放。`
+  return `系统暂时无法可靠判断这笔 ${method} 请求的实际影响；请核对冻结报文。批准后只执行原请求，发送前中断可恢复，不自动改参数或扩大次数。`
+}
+
 export function approvalOperation(input: ApprovalExplanationInput): string {
   const stored=frozenTask(input), request=(Array.isArray(stored)?stored:stored?.entries)?.[0]?.request;
   if(request?.method==='POST'){
