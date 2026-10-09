@@ -254,25 +254,10 @@ type TodoRow = {
   readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined
 }) {
 			const projected = useProjection("src");
-			const [authoritative, setAuthoritative] = useState<SrcProjection | null>(null);
-			const [stateError, setStateError] = useState('');
-			const commandRef = useRef(runCommand); commandRef.current = runCommand;
-			const projectionSignature = JSON.stringify(projected ?? null);
-			useEffect(() => {
-				let cancelled = false;
-				setAuthoritative(null);
-				if (!commandRef.current) return;
-				void commandRef.current('/src-authoritative-state').then(result => {
-					if (cancelled) return;
-					if (result.kind !== 'success') throw new Error(result.text);
-					setAuthoritative(JSON.parse(result.text)); setStateError('');
-				}).catch(e => {if (!cancelled) setStateError(String(e.message));});
-				return () => {cancelled = true};
-			}, [projectionSignature]);
-			const src = authoritative ?? projected;
+			const src = projected;
 			const [tab, setTab] = useState("explore");
 			if (src === void 0 || src === null) return<section className={css.root} data-testid="src-view"><div className={css.empty}>{t("view.empty")}</div><DomainDataView runCommand={runCommand} /></section>;
-			return<section className={css.root} data-testid="src-view"><div role="status">{stateError ? `权威状态加载失败：${stateError}；仅显示历史投影，操作已禁用。` : !authoritative && runCommand ? '正在核对权威状态…' : ''}</div><header className={css.card}>{src.goal !== null && src.goal.objective !== "" && <p className={css.objective}>目的：{src.goal.objective}</p>}<div className={css.cardTitle} style={{ alignItems: "center" }}><h2 className={css.target} style={{ fontSize: 18 }}>{src.goal === null ? "" : src.goal.target}</h2>{src.goal !== null && src.goal.authorization !== "" && <span className={css.badge} title={src.goal.authorization}>授权：{src.goal.authorization.length > 24 ? `${src.goal.authorization.slice(0, 24)}…` : src.goal.authorization}</span>}</div>{(() => {
+			return<section className={css.root} data-testid="src-view"><div role="status"></div><header className={css.card}>{src.goal !== null && src.goal.objective !== "" && <p className={css.objective}>目的：{src.goal.objective}</p>}<div className={css.cardTitle} style={{ alignItems: "center" }}><h2 className={css.target} style={{ fontSize: 18 }}>{src.goal === null ? "" : src.goal.target}</h2>{src.goal !== null && src.goal.authorization !== "" && <span className={css.badge} title={src.goal.authorization}>授权：{src.goal.authorization.length > 24 ? `${src.goal.authorization.slice(0, 24)}…` : src.goal.authorization}</span>}</div>{(() => {
 								const pendingTodos = (src.userTodos ?? []).filter((row) => row.status === "pending").length;
 								const pendingApprovals = (src.pendingApprovals ?? []).filter((row) => row.status === "pending").length;
 								/* [local.33] 认证预算：src_test_bypass 认证请求计数 used/limit（会话级）。≥80% 变警示色，触顶红。 */
@@ -303,7 +288,7 @@ type TodoRow = {
 									const n = badgeFor(tabKey);
 									if (n === 0) return null;
 									return<span className={`${css.tabBadge} ${tabKey === "todos" ? css.tabBadgeHot : ""}`}>{n}</span>;
-								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={authoritative ? runCommand : undefined} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <Fragment><div className={css.todoColumns}><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: 4 }}>待办事项</div><TodoListView src={src} t={t} runCommand={runCommand} /></div><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-state-error-primary, #c33)", marginBottom: 4 }}>⚠️ 待人工确认的请求</div><ApprovalListView src={src} t={t} runCommand={authoritative ? runCommand : undefined} /></div></div></Fragment>; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "domains": return <DomainDataView runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
+								})()}</button>)}</nav><div className={css.content}>{(() => { switch (tab) { case "explore": return <ExploreView src={src} t={t} />; case "findings": return <FindingsView src={src} t={t} runCommand={runCommand} />; case "assets": return <AssetsView src={src} t={t} />; case "timeline": return <TimelineView src={src} t={t} />; case "todos": return <Fragment><div className={css.todoColumns}><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-label-tertiary, #888)", marginBottom: 4 }}>待办事项</div><TodoListView src={src} t={t} runCommand={runCommand} /></div><div style={{ flex: "1 1 0", minWidth: 0 }}><div style={{ fontSize: 12, color: "var(--dsw-alias-state-error-primary, #c33)", marginBottom: 4 }}>⚠️ 待人工确认的请求</div><ApprovalListView src={src} t={t} runCommand={runCommand} /></div></div></Fragment>; case "infra": return <InfraView src={src} t={t} runCommand={runCommand} />; case "domains": return <DomainDataView runCommand={runCommand} />; case "report": return <ReportView src={src} t={t} />; default: return null; } })()}</div></section>;
 		}
 
 /**
@@ -374,37 +359,19 @@ export function SrcView({ useProjection, t, runCommand }: {
   readonly runCommand?: ((cmd: string) => Promise<{ kind: string; text: string }>) | undefined
 }) {
   const projected = useProjection('src')
-  const [authoritative, setAuthoritative] = useState<SrcProjection | null>(null)
-  const [stateError, setStateError] = useState('')
-  const commandRef = useRef(runCommand)
-  commandRef.current = runCommand
-  const projectionSignature = JSON.stringify(projected ?? null)
+  // The projection is the live session stream. Fetching the full authoritative
+  // state whenever it changes turns every observation into a second full-store
+  // read and made large sessions freeze while switching tabs.
   const [tab, setTab] = useState<ModernTab>('overview')
-
-  useEffect(() => {
-    let cancelled = false
-    setAuthoritative(null)
-    if (!commandRef.current) return
-    void commandRef.current('/src-authoritative-state').then(result => {
-      if (cancelled) return
-      if (result.kind !== 'success') throw new Error(result.text)
-      setAuthoritative(JSON.parse(result.text) as SrcProjection)
-      setStateError('')
-    }).catch(error => {
-      if (!cancelled) setStateError(String(error?.message ?? error))
-    })
-    return () => { cancelled = true }
-  }, [projectionSignature])
-
-  const src = authoritative ?? projected
+  const src = projected
   if (src === undefined || src === null) return <section className={css.root} data-testid="src-view"><div className={css.emptyState}><span className={css.emptyIcon}>◌</span><h2>{t('view.empty')}</h2><p>在 SRC 专业模式下发送目标与目的后，这里会自动建立研究工作台。</p></div><DomainDataView runCommand={runCommand} /></section>
 
   const pendingCount = src.userTodos.filter(row => row.status === 'pending').length + src.pendingApprovals.filter(row => row.status === 'pending').length
   const renderTab = () => {
     switch (tab) {
       case 'overview': return <OverviewView src={src} t={t} onNavigate={next => setTab(next as ModernTab)} />
-      case 'findings': return <FindingsView src={src} t={t} runCommand={authoritative ? runCommand : undefined} />
-      case 'todos': return <ActionCenter src={src} t={t} runCommand={authoritative ? runCommand : undefined} />
+      case 'findings': return <FindingsView src={src} t={t} runCommand={runCommand} />
+      case 'todos': return <ActionCenter src={src} t={t} runCommand={runCommand} />
       case 'explore': return <ExploreView src={src} t={t} />
       case 'assets': return <AssetsView src={src} t={t} />
       case 'timeline': return <TimelineView src={src} t={t} />
@@ -426,7 +393,7 @@ export function SrcView({ useProjection, t, runCommand }: {
   }
 
   return <section className={css.root} data-testid="src-view">
-    <div role="status" className={css.statusMessage}>{stateError ? `权威状态加载失败：${stateError}；仅显示历史投影，操作已禁用。` : !authoritative && runCommand ? '正在核对权威状态…' : ''}</div>
+    <div role="status" className={css.statusMessage}></div>
     <ModernEngagementHeader src={src} t={t} onNavigate={setTab} />
     <nav className={css.tabs} data-testid="src-tabs" aria-label="SRC 工作台导航"><div className={css.primaryTabs}>{MODERN_PRIMARY_TABS.map(renderNavButton)}</div><div className={css.utilityTabs}>{MODERN_UTILITY_TABS.map(renderNavButton)}</div></nav>
     <div className={css.content}>{renderTab()}</div>

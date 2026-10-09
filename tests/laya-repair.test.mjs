@@ -73,7 +73,7 @@ test('host dispatch: advisory shadow/on never becomes execution; spawn uses effe
   const intent = await h.run('src_add_intent', { title: 'bounded fixture', detail: 'read a local fixture' });
   assert.equal(intent.value.delegationAdvice.action, 'self');
   let state = (await h.run('src_state', {})).value;
-  assert.equal(state.intents.find(r => r.id === intent.value.id).delegationMode, 'unknown');
+  assert.equal(state.intents.find(r => r.id === intent.value.id).delegationMode, 'self');
   const failedUpdate = await h.run('src_update_intent', { intentId: intent.value.id, status: 'completed', delegationMode: 'delegate' });
   assert.equal(failedUpdate.isError, true);
   assert.equal(h.events.reduce(applySrcEvent, srcInitialState).nodes.find(r => r.id === intent.value.id).status, 'planned');

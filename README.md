@@ -6,6 +6,13 @@
 
 ---
 
+## 最新更新：local.126（2026-10-09）
+
+- 修复CVE会话暴露的审批不可点击、审批后证据回链丢失、SRC全量状态读取卡顿、Jev delegate只记录不派发、公开CVE搜索逐引擎卡60秒等问题。
+- 人工审批与自动安全材料分离；冻结请求可明确批准/拒绝，执行结果自动关联response evidence，不要求用户重复提供已存在的数据包。
+- SRC UI使用实时projection，不再每条证据重新读取全量权威状态；Jev有效delegate会消费为真实src_recon/src_audit/src_verify子agent派发。
+- 完整回归583/583，真实Chrome行动中心验证通过。[CVE会话修复审计与验收](docs/implementation/cve-session-repair-20261009.md)。
+
 ## 最新更新：local.125（2026-10-08）
 
 - **不再混淆目标与本机**：页面中的localhost/127地址不获得授权；显式导航提前检查，页面自动请求/重定向仍受实际网关约束，不擅自替换域名或扩展端口。

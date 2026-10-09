@@ -158,6 +158,8 @@ export interface SrcProjectionPendingApproval {
   readonly status: 'pending' | 'approved' | 'rejected'
   readonly note: string
   readonly responseStatus: number
+  readonly responseEvidenceId?: string
+  readonly responseBody?: string
   readonly createdAt: number
   /** [local.54] 凭据引用（credential://<hash>）——待审行不存明文凭据，重放时由后端从本地凭证库取。 */
   readonly credentialRef: string | undefined

@@ -27,6 +27,17 @@ test('凭据验证待审立即返回原审批号，不继续猜测、不计已�
  assert.equal(f.sends(),0);assert.equal(result.triedCount,0);assert.equal(result.requiresDecision,true);assert.ok(result.pendingApprovalId);
  const data=await f.store.sessionData(f.session.id);assert.equal(data.pendingApprovals.filter(r=>r.status==='pending').length,1);assert.equal(data.coverage[0].status,'blocked');
 });
+test('人工批准 external/unknown 冻结任务不再要求模型伪造安全材料，且只发送一次',async t=>{
+ // This exercises the human decision lane, not Jev automatic approval.
+
+ const sent=[];const f=await fixture(t,{assess:async()=>({mode:'on',fallback:false,effect:'external',risk:'high',action:'pending',confidence:1}),send:async(u,i)=>{sent.push({url:String(u),body:String(i.body??'')});return new Response(null,{status:204});}});
+ await assert.rejects(f.manager.fetch(f.session.id,'http://127.0.0.1:49123/reset',{method:'POST',body:'email=fixture@example.invalid'}),{code:'SRC_GATE_PENDING_OR_REJECTED'});
+ const row=(await f.store.sessionData(f.session.id)).pendingApprovals.find(r=>r.status==='pending');assert.ok(row);
+ const result=await f.manager.user.decide(f.session.id,row.id,'allow','用户明确批准本次有界外发测试');
+ assert.equal(result.executionState,'executed');assert.equal(sent.length,1);assert.equal(sent[0].body,'email=fixture@example.invalid');
+ const saved=await f.store.getPendingApproval(f.session.id,row.id);assert.equal(saved.responseStatus,204);assert.equal(saved.executionState,'executed');
+});
+
 test('差分测试遇待审不继续派生变体，forceAfterProtection不能覆盖审批',async t=>{
  const f=await fixture(t);const research=await f.store.upsertResearch(f.session.id,{intentId:f.intentId,category:'authorization-bypass',hypothesis:'fixture',preconditions:[],status:'hypothesis',stopReason:'',evidence:[]});
  const result=await f.run('src_test_bypass',{intentId:f.intentId,researchId:research.id,category:'authorization-bypass',baseUrl:'http://127.0.0.1:49123',baseline:{path:'/catalog'},variants:[{path:'/catalog',headers:{'x-test':'1'}}],forceAfterProtection:true});

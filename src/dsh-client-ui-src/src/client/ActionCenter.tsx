@@ -74,9 +74,12 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
   const interrupted = approval.category==='egress/task' && approval.status==='approved' && approval.executionState==='authorized'
   const isPending = approvalNeedsDecision(approval)
   const missingSafety = approvalMissingSafety(approval)
+  // Automatic safety material is not a prerequisite for a human decision.
+  // The frozen request remains bounded; the card must let the user reject it
+  // or explicitly accept the displayed side effect.
   const confirmRead = approvalCanConfirmRead(approval)
   const send = async () => {
-    if (!runCommand || busy || decision === 'allow' && missingSafety) return
+    if (!runCommand || busy) return
     setBusy(true)
     try {
       const trimmed = note.trim()
@@ -101,14 +104,16 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
       <ApprovalExplanationCard request={approval} />
       {approval.reason && <details className={css.requestDetails}><summary>查看判定记录</summary><pre>{approval.reason}</pre></details>}
       {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看冻结请求（脱敏，非抓包）'}</summary><pre>{approvalRequestText(approval)}</pre></details>}
+      {approval.responseBody && <details className={css.requestDetails}><summary>查看已保存响应（不重放）</summary><pre>{approval.responseBody}</pre></details>}
       {retryUnsent && <p>此前批准后被资源锁拦住，未发送。重新确认时先核验账本无发送记录，再执行原请求一次。</p>}
       {interrupted && <p>批准已记录；若执行已中断，可核验后继续，也可拒绝放弃。已有发送记录时不会重放。</p>}
       {approval.executionError && <p>执行记录：{approval.executionError}</p>}
+      {approval.responseEvidenceId && <p>已关联响应证据：<code>{approval.responseEvidenceId}</code>，不需要重新抓包或重放。</p>}
       {approval.executionState==='unknown' && <p>先核对目标结果，再通过下方“目标出口范围与审批核对”记录结论；不会自动重试。</p>}
       {isPending && confirmRead && !retryUnsent && <p>Jev 未确定影响；核对报文后，可确认本笔仅仅读取、校验或计算，无写入、外发或资源耗尽，再单次放行。</p>}
-      {isPending && missingSafety && <p role="status">暂不可执行：先由 AI 使用 src_egress_prepare 补齐实际影响及安全材料（覆盖/删除需备份、前置校验和回读）。批准备注不能代替这些材料；也可拒绝此项。</p>}
+      {isPending && missingSafety && <p role="status">自动执行材料尚未完整；这不会禁用人工决定。请先看冻结请求和实际影响：可以拒绝，或明确批准这一次有界请求。覆盖/删除仍不会绕过备份、前置校验和回读要求。</p>}
       {isPending && runCommand && approval.executionState !== 'executing' && approval.executionState !== 'unknown' && <div className={css.actionButtons}>
-        {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy || missingSafety} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{missingSafety?'需补执行材料':interrupted?'核验并继续执行':retryUnsent?'核验未发送并重试':confirmRead?'确认低影响并放行':approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
+        {!decisionOpen ? <><button type="button" className={css.dangerButton} disabled={busy} onClick={() => { setDecision('allow'); setNote(''); setDecisionOpen(true) }}>{interrupted?'核验并继续执行':retryUnsent?'核验未发送并重试':confirmRead?'确认低影响并放行':approvalActionLabel(approval, true)}</button><button type="button" className={css.ghostButton} disabled={busy} onClick={() => { setDecision('reject'); setNote(''); setDecisionOpen(true) }}>{approvalActionLabel(approval, false)}</button></> : <div className={css.noteForm}>
           <label htmlFor={`approval-note-${approval.id}`}>{decision === 'allow' ? '批准前补充备注' : '拒绝原因'} <span>可选，会写入审计记录</span></label>
           <textarea id={`approval-note-${approval.id}`} autoFocus rows={2} value={note} placeholder={decision === 'allow' ? '例如：确认这是授权测试账号' : '例如：可能影响真实用户，不批准'} onChange={event => setNote(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send() } if (event.key === 'Escape') setDecisionOpen(false) }} />
           <div><button type="button" className={css.ghostButton} onClick={() => setDecisionOpen(false)}>取消</button><button type="button" className={decision === 'allow' ? css.dangerButton : css.successButton} disabled={busy} onClick={() => void send()}>{busy ? '发送中…' : decision === 'allow' ? confirmRead?'确认无副作用，发送一次':'确认批准' : '确认拒绝'}</button></div>
