@@ -4295,8 +4295,12 @@ test("[local.60] src_user_todo 更新模式不再强制 title（schema+execute+f
   assert.equal(h.tools.get("src_user_todo").parameters.properties.title.required, void 0, "schema title 必须 optional");
   const parent = h.exec("l60todo");
   await h.run("src_add_goal", { target: "todo.test", objective: "todo 验证" }, parent);
-  const created = await h.run("src_user_todo", { title: "下载小程序确认真实运单号", detail: "用户协同项" }, parent);
+  const intent = await h.run("src_add_intent", { title: "待办关联验证", detail: "todo", goalId: "goal-1" }, parent);
+  const created = await h.run("src_user_todo", { intentId: intent.id, targetUrl: "https://todo.test/login", title: "下载小程序确认真实运单号", detail: "用户协同项" }, parent);
   assert.match(created.id, /^userTodo-\d+$/);
+  assert.equal(created.intentId, intent.id);
+  assert.equal(created.targetUrl, "https://todo.test/login");
+  await assert.rejects(() => h.run("src_user_todo", { userTodoId: "userTodo-999", status: "done" }, parent), /不存在于本会话/);
   const updated = await h.run("src_user_todo", { userTodoId: created.id, status: "done" }, parent);
   assert.equal(updated.status, "done");
   assert.equal(updated.title, "下载小程序确认真实运单号", "更新模式保留原标题");
