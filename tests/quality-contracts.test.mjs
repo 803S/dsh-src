@@ -8,7 +8,7 @@ import {stateFromStore} from '../lib/src/store-projection.js';
 import {saveResponseSnapshot,readResponseSnapshot,validateWritePlan} from '../lib/src/write-safety.js';
 import {makeManifest,computeCoverage} from '../lib/src/endpoint-manifest.js';
 import {findingFingerprint,verificationOf} from '../lib/src/verification.js';
-import {publishReportArtifact,checkArtifactRecords} from '../lib/src/artifact-manifest.js';
+import {publishReportArtifact,checkArtifactRecords,markReportArtifactsStale} from '../lib/src/artifact-manifest.js';
 import { executeWithWriteSafety } from '../lib/src/write-executor.js';
 import {relevantSearchResults} from '../lib/src/web-search-provider.js';
 
@@ -98,6 +98,7 @@ test('independent review invalidates when a finding changes',()=>{
 
 test('artifact verification hashes actual files and detects later corruption',async t=>{
  const home=await sandbox(t);const row=await publishReportArtifact('session-fixture','fixture.invalid','# Test report');await checkArtifactRecords('session-fixture','fixture.invalid',[row]);
+ const root=(await import('../lib/src/artifacts.js')).artifactsRoot('session-fixture',{target:'fixture.invalid'});assert.equal(await markReportArtifactsStale('session-fixture','fixture.invalid','finding changed'),1);const manifest=JSON.parse(await fs.readFile(path.join(root,row.path+'.manifest.json'),'utf8'));assert.equal(manifest.stale,true);assert.equal(manifest.staleReason,'finding changed');
  const {artifactsRoot}=await import('../lib/src/artifacts.js');await fs.writeFile(path.join(artifactsRoot('session-fixture',{target:'fixture.invalid'}),row.path),'changed');await assert.rejects(()=>checkArtifactRecords('session-fixture','fixture.invalid',[row]),/已变更/);
 });
 
