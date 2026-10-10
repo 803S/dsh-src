@@ -4916,7 +4916,7 @@ test("[opt Phase 0] 优化开关：默认值正确、非法值回落、env 惰�
   const flags = await import("../lib/src/flags.js");
   flags.resetFlagsForTests();
   assert.equal(flags.srcTelemetryFlag(), "shadow", "telemetry 默认 shadow");
-  assert.equal(flags.srcStateVersionFlag(), "1", "state 默认 legacy");
+  assert.equal(flags.srcStateVersionFlag(), "1", "库默认保留legacy兼容；生产启动脚本显式切summary");
   assert.equal(flags.srcOrchestratorFlag(), "off", "orchestrator 默认 off");
   assert.equal(flags.srcRouteV2Flag(), "off", "route v2 默认 off");
   /* 非法值回落默认 */

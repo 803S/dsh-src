@@ -3,13 +3,14 @@
 # 用法：bash ~/Software/dsh-src/scripts/start-dsh-web.sh
 # 开关改这里（全部惰性求值，改完重跑本脚本生效）：
 #   DSH_SRC_TELEMETRY=off|shadow|on   （默认 shadow：独立 JSONL，永不进 prompt）
-#   DSH_SRC_STATE_VERSION=1|2         （默认 1，A/B 后再翻 2）
+#   DSH_SRC_STATE_VERSION=1|2         （默认 2：有界 summary；旧全量仅显式 detail=legacy）
 #   DSH_SRC_ORCHESTRATOR=off|shadow|on（本轮只到 shadow）
 #   DSH_SRC_ROUTE_V2=off|shadow|on    （灰度数据达标后才开）
 #   DSH_SRC_LAYA_NEXT=off|shadow|on     （默认 off：生产不启用每轮 next-action 建议）
+#   DSH_SRC_BASH_GATE=off|shadow|ask    （默认 ask：bash写/破坏性命令人工确认）
 set -u
 export DSH_SRC_TELEMETRY="${DSH_SRC_TELEMETRY:-shadow}"
-export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-1}"
+export DSH_SRC_STATE_VERSION="${DSH_SRC_STATE_VERSION:-2}"
 export DSH_SRC_ORCHESTRATOR="${DSH_SRC_ORCHESTRATOR:-off}"
 export DSH_SRC_ROUTE_V2="${DSH_SRC_ROUTE_V2:-off}"
 export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
@@ -18,6 +19,7 @@ export DSH_SRC_EVENT_STORE="${DSH_SRC_EVENT_STORE:-shadow}"
 # next-action/tool-advisory 不进生产主循环，风险审批硬闸仍保留。
 export DSH_SRC_LAYA_TIMEOUT_MS="${DSH_SRC_LAYA_TIMEOUT_MS:-120000}"
 export DSH_SRC_LAYA_NEXT="${DSH_SRC_LAYA_NEXT:-off}"
+export DSH_SRC_BASH_GATE="${DSH_SRC_BASH_GATE:-ask}"
 export DSH_SRC_LAYA_DELEGATE="${DSH_SRC_LAYA_DELEGATE:-on}"
 export DSH_SRC_LAYA_SKILL="${DSH_SRC_LAYA_SKILL:-on}"
 export DSH_SRC_LAYA_DECISION="${DSH_SRC_LAYA_DECISION:-on}"
@@ -80,5 +82,5 @@ for i in $(seq 1 40); do
 done
 [ "$API_READY" = 1 ] || { cat /tmp/dsh-web-health.log >&2; echo "DSH API health check failed" >&2; exit 1; }
 cat /tmp/dsh-web-health.log
-echo "event_store=$DSH_SRC_EVENT_STORE telemetry=$DSH_SRC_TELEMETRY state=$DSH_SRC_STATE_VERSION orch=$DSH_SRC_ORCHESTRATOR route_v2=$DSH_SRC_ROUTE_V2"
+echo "event_store=$DSH_SRC_EVENT_STORE telemetry=$DSH_SRC_TELEMETRY state=$DSH_SRC_STATE_VERSION bash_gate=$DSH_SRC_BASH_GATE orch=$DSH_SRC_ORCHESTRATOR route_v2=$DSH_SRC_ROUTE_V2"
 echo "http://localhost:3080/management.html -> $CODE (PID $NEW, log $LOG)"

@@ -599,7 +599,7 @@ store/schema/approval gate  >  工具参数和错误描述  >  主 prompt 决策
 
 - ~~在 `lib/src/tools/index.js` 抽出 `buildSrcDecisionView`~~ → 实际实现：src_state execute 内 v2 视图分支（legacyView 提取为局部 const，三条 v2 视图在其后分支构建）。
 - ~~增加 v2 schema、`src_get_evidence`、分页和 `detail` 参数~~ → 全部落地：`detail` enum 参数（summary/evidence/orchestration/legacy，非法值被 schema 闸直接拒——dsh-tools 对参数 enum 严格校验）；`src_get_evidence({ids, full})` 新工具（按 id 拉取 fact/obs/finding/asset/research/intent 正文，默认 4KB 截断、full:true 放宽 32KB、≤32 个 id）；未做分页（evidenceIndex.recent 12 + byIntent 计数已覆盖，按 id 拉取替代分页）。
-- ~~保留 legacy render，但默认只返回 summary~~ → 默认仍 legacy/v1（DSH_SRC_STATE_VERSION=2 才切 summary；v1 兼容窗口 30 天，用户侧未切前不动默认——顺丰重跑链路零风险）。
+- ~~保留 legacy render，但默认只返回 summary~~ → 生产默认 summary/v2（DSH_SRC_STATE_VERSION=2）；旧全量 v1 仅显式 detail=legacy 或测试夹具使用，避免大命令结果继续进入历史。
 - 增加 facts omitted、finding evidence 永不裁剪和关键 blocker 快照测试 → 全部落地（tests +1 = 177/177 绿：v2 三视图结构断言 + src_get_evidence 混合 id/未找到/截断/full + token 体积 < legacy×0.4 + flag=2 切换 + 工具清单冻结闸更新 45 工具）。
 - 实现要点（防回炉）：①src_state 输出 schema 的 17 处 `required: true` 必须剥离（dsh-tools 对 output schema 强制 required 存在性校验，v2 输出缺 v1 数组字段会被拒；且 required 只能 true 或缺省，`required: false` 编译期报 unsupported schema）②v2 输出禁 undefined 污染（childSessionId ?? "" 同 local.15 口径）③新工具进工具清单冻结闸（tests local.50a）与 toolFilter deny 名单无关（deny 模式未 deny 即可用）。
 
