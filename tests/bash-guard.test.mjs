@@ -13,6 +13,14 @@ test("bash 闸：对 scope 目标的 curl 写动词在 shadow/ask 下都被识�
 	assert.equal(ask.verdict, "ask");
 });
 
+test("bash 闸：curl 隐式 POST 数据选项也触发", () => {
+	for (const option of ["-d", "--data", "--data-raw", "--data-binary", "--data-urlencode"]) {
+		const r = classifyBashCommand(`curl ${option} '{"x":1}' http://8.147.132.32:40590/api`, { scopeHosts: ["8.147.132.32"], mode: "ask" });
+		assert.equal(r.verdict, "ask", option);
+		assert.ok(r.signals.some((s) => s.kind === "http-write" && s.method === "POST"), option);
+	}
+});
+
 test("bash 闸：只读 GET/OPTIONS/TRACE 探测不触发", () => {
 	const cmd = 'curl -s -i http://8.147.132.32:40590/ ; curl -s -I --max-time 10 http://8.147.132.32:40590/; curl -X OPTIONS $T/; curl -X TRACE $T/';
 	const r = classifyBashCommand(cmd, { scopeHosts: ["8.147.132.32"], mode: "ask" });
