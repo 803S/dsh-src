@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { Context } from '@deepseek-ai/cordis';
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt';
-import { ToolRuntime } from '@deepseek-ai/dsh-tools';
+import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools';
 import { apply as applySrc, __resetSharedDomainOpensForTests, applySrcEvent, srcInitialState } from '../lib/src.js';
 import { apply as applySubagent } from '../lib/src-subagent.js';
 import { saveDecisionSettings } from '../lib/src/decision/service-settings.js';
@@ -57,6 +57,25 @@ async function fixture(t) {
   assert.equal(goal.isError, false, JSON.stringify(goal));
   return { ctx, home, parent, run, events, tables, agents, spawn: () => spawnSpec, failFollowup: value => followupFails = value };
 }
+
+test('bash gate runs through ToolRuntime approval service: reject sends nothing; allowed-once executes exactly once', async t => {
+  const h = await fixture(t), oldMode = process.env.DSH_SRC_BASH_GATE;
+  process.env.DSH_SRC_BASH_GATE = 'ask';
+  let executions = 0, asked = [];
+  h.ctx.provide('approval', { async request(req) { asked.push(req); return asked.length === 1 ? 'rejected' : 'allowed-once'; } });
+  h.ctx.tools.register(defineTool({ name:'bash', description:'test-only fake shell', parameters:{ command:{type:'string',required:true} }, output:{schema:{type:'object',additionalProperties:true,properties:{}},render:(_a,v)=>[{type:'text',text:JSON.stringify(v)}]}, execute:async()=>{executions++;return {ok:true};} }));
+  try {
+    const command='curl -d \'x=1\' http://fixture.test/api/delete';
+    const rejected=await h.run('bash',{command});
+    assert.equal(rejected.isError,true);
+    assert.equal(executions,0,'拒绝不得执行命令');
+    assert.match(asked[0].reason,/POST 写请求/);
+    const allowed=await h.run('bash',{command});
+    assert.equal(allowed.isError,false, JSON.stringify(allowed));
+    assert.equal(executions,1,'allowed-once 恰好执行一次');
+    assert.equal(asked.length,2);
+  } finally { if(oldMode===undefined)delete process.env.DSH_SRC_BASH_GATE;else process.env.DSH_SRC_BASH_GATE=oldMode; }
+});
 
 test('host dispatch: advisory shadow/on never becomes execution; spawn uses effective route; explicit recovery preserves lineage', async t => {
   const h = await fixture(t), oldFetch = globalThis.fetch;
