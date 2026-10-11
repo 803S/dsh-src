@@ -1678,6 +1678,15 @@ test("[Phase 2] src_state v2 结构化视图 + src_get_evidence：索引化省 t
   assert.ok(got.items[0].found && got.items[0].content.includes("最早的证据"), "fact 正文可拉取");
   assert.ok(got.items[1].found && got.items[1].content.includes("未授权枚举"), "finding 正文可拉取");
   assert.equal(got.items[2].found, false, "未知 id found:false");
+  // approval-N 精确结果读取：不按最近请求猜测，必须返回执行状态和原始关联 evidenceId。
+  const pendingApproval = await h.run("src_http", { method: "POST", url: "https://example.test/api", justification: "fixture approval evidence" }, parent);
+  assert.equal(pendingApproval.approval, "pending");
+  const approvalEvidence = await h.run("src_get_evidence", { ids: [pendingApproval.pendingApprovalId] }, parent);
+  assert.equal(approvalEvidence.items[0].found, true);
+  assert.equal(approvalEvidence.items[0].kind, "approval");
+  assert.match(approvalEvidence.items[0].content, new RegExp(pendingApproval.pendingApprovalId));
+  assert.match(approvalEvidence.items[0].content, /未执行/);
+  assert.match(approvalEvidence.items[0].content, /执行状态：(?:未执行|queued|executing)/);
   // ⑦ 大 fact 截断：默认 4KB，full 放宽
   const bigFact = await h.run("src_add_fact", { intentId: intent.id, kind: "info", detail: "X".repeat(9000) }, parent);
   const trimmed = await h.run("src_get_evidence", { ids: [bigFact.id] }, parent);
@@ -4234,7 +4243,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 		"src_scan_surface", "src_test_bypass", "src_test_credential", "src_record_observation",
 		"src_user_todo", "src_import_traffic", "src_collect_dorks", "src_collect_passive", "src_submit",
 		"src_recover_child", "src_record_research", "src_get_infra", "src_list_capabilities", "src_add_capability",
-		"src_test_capability", "src_read_capability", "src_run_capability", "src_fetch_policy", "src_set_infra",
+		"src_test_capability", "src_read_capability", "src_run_capability", "src_read_public_source", "src_fetch_policy", "src_set_infra",
 		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
 		"src_record_coverage", "src_http", "src_add_goal", "src_add_intent", "src_update_intent", "src_add_fact",
 		"src_add_finding", "src_add_asset", "src_state", "src_supersede_knowledge", "src_get_evidence", "src_graph", "src_finalize_engagement", "src_report",

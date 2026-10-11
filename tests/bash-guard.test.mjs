@@ -49,7 +49,7 @@ test("bash 闸：扫描器识别与自然语言解释", () => {
 	assert.ok(r.signals.some((s) => s.kind === "scanner" && s.tool === "sqlmap"));
 	const text = explainBashGate(r.signals);
 	assert.match(text, /扫描器/);
-	assert.match(text, /不是安全保证/);
+	assert.match(text, /不扩大范围、次数或权限/);
 });
 
 test("bash 闸：findHttpWriteOps 对 -T/--upload-file 触发且 scope 判定不误报外站", () => {

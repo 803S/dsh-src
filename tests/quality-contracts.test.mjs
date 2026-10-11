@@ -11,6 +11,24 @@ import {findingFingerprint,verificationOf} from '../lib/src/verification.js';
 import {publishReportArtifact,checkArtifactRecords,markReportArtifactsStale} from '../lib/src/artifact-manifest.js';
 import { executeWithWriteSafety } from '../lib/src/write-executor.js';
 import {relevantSearchResults} from '../lib/src/web-search-provider.js';
+import {validatePublicSourceUrl,boundPublicText} from '../lib/src/public-source.js';
+import {buildResearchBenchmarkCase,compareVersions,evaluateVersionRange} from '../lib/src/research-benchmark.js';
+
+test('public source guard separates trusted HTTPS research from target scope',async()=>{
+ const resolve=async(host)=>[{address:'93.184.216.34'}];
+ assert.deepEqual((await validatePublicSourceUrl('https://nvd.nist.gov/vuln/detail/CVE-2025-58360',{resolve})).host,'nvd.nist.gov');
+ await assert.rejects(()=>validatePublicSourceUrl('http://nvd.nist.gov/x',{resolve}),/HTTPS/);
+ await assert.rejects(()=>validatePublicSourceUrl('https://example.invalid/x',{resolve}),/可信来源/);
+ const privateAddress=[0xc0,0xa8,1,2].join('.');
+ await assert.rejects(()=>validatePublicSourceUrl('https://nvd.nist.gov/x',{resolve:async()=>[{address:privateAddress}]}),/私有/);
+ const bounded=boundPublicText('<script>x()</script><h1>CVE</h1>'+('x'.repeat(600)),500);assert.equal(bounded.text.length,500);assert.equal(bounded.truncated,true);assert.equal(bounded.sourceChars,604);
+});
+
+test('research benchmark requires sourced advisory, version positive/negative controls, and never creates finding',async()=>{
+ assert.equal(compareVersions('2.25.5','2.25.6'),-1);assert.equal(evaluateVersionRange('2.25.5',{fixed:'2.25.6'}).affected,true);assert.equal(evaluateVersionRange('2.25.6',{fixed:'2.25.6'}).affected,false);
+ const sample=buildResearchBenchmarkCase({sourceUrl:'https://nvd.nist.gov/vuln/detail/CVE-2025-58360',advisoryId:'CVE-2025-58360',product:'GeoServer',affectedVersion:'2.25.5',fixedVersion:'2.25.6',negativeVersion:'2.25.6',preconditions:['POST body SLD parser path']});
+ assert.equal(sample.positive.affected,true);assert.equal(sample.negative.affected,false);assert.equal(sample.createsFinding,false);assert.equal(sample.networkRequests,0);assert.match(sample.preconditions[0],/POST/);
+});
 
 test('guarded JSON write validates freshness, reads back once and never retries on readback failure',async t=>{
  const home=await sandbox(t),url='http://fixture.invalid/settings';const before='{"charset":"UTF-8","enabled":false}';

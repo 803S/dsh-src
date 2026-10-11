@@ -59,8 +59,10 @@ async function fixture(t) {
 }
 
 test('bash gate runs through ToolRuntime approval service: reject sends nothing; allowed-once executes exactly once', async t => {
-  const h = await fixture(t), oldMode = process.env.DSH_SRC_BASH_GATE;
+  const h = await fixture(t), oldMode = process.env.DSH_SRC_BASH_GATE, oldRisk = process.env.DSH_SRC_LAYA_DECISION, oldFetch = globalThis.fetch;
   process.env.DSH_SRC_BASH_GATE = 'ask';
+  process.env.DSH_SRC_LAYA_DECISION = 'on';
+  globalThis.fetch = async () => new Response(JSON.stringify({ model:'jev-fixture', answers:{ decision:{ choice:'unknown', confidence:.95, probabilities:{read:0,compute:0,write:0,external:0,auth:0,destructive:0,unknown:1} } } }), {status:200,headers:{'content-type':'application/json'}});
   let executions = 0, asked = [];
   h.ctx.provide('approval', { async request(req) { asked.push(req); return asked.length === 1 ? 'rejected' : 'allowed-once'; } });
   h.ctx.tools.register(defineTool({ name:'bash', description:'test-only fake shell', parameters:{ command:{type:'string',required:true} }, output:{schema:{type:'object',additionalProperties:true,properties:{}},render:(_a,v)=>[{type:'text',text:JSON.stringify(v)}]}, execute:async()=>{executions++;return {ok:true};} }));
@@ -74,7 +76,7 @@ test('bash gate runs through ToolRuntime approval service: reject sends nothing;
     assert.equal(allowed.isError,false, JSON.stringify(allowed));
     assert.equal(executions,1,'allowed-once 恰好执行一次');
     assert.equal(asked.length,2);
-  } finally { if(oldMode===undefined)delete process.env.DSH_SRC_BASH_GATE;else process.env.DSH_SRC_BASH_GATE=oldMode; }
+  } finally { if(oldMode===undefined)delete process.env.DSH_SRC_BASH_GATE;else process.env.DSH_SRC_BASH_GATE=oldMode; if(oldRisk===undefined)delete process.env.DSH_SRC_LAYA_DECISION;else process.env.DSH_SRC_LAYA_DECISION=oldRisk; globalThis.fetch=oldFetch; }
 });
 
 test('host dispatch: advisory shadow/on never becomes execution; spawn uses effective route; explicit recovery preserves lineage', async t => {
