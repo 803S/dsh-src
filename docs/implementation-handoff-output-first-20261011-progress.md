@@ -45,9 +45,10 @@
 
 - bash 候选信号会把完整命令、cwd、目标、scopeOrigin、goal、intent、operationId 和信号交给 JEV risk-grade；
 - JEV fallback/unknown/high 或本机破坏性命令仍需人工确认；
-- JEV low 只是低影响候选，不授予 shell 网络权限；真正出网仍需已有 egress broker 的精确 scope、预算、原文和任务绑定；
+- JEV low 只是低影响候选，不授予 shell 网络权限；没有当前 egress execution/task 时，scope 目标命令会提示先建立精确 `src_egress_plan`，真正出网仍受 broker scope、预算、原文和任务绑定；
 - 宿主 `ToolRuntime` 测试验证拒绝不执行、allowed-once 恰好执行一次；隐式 curl POST 也覆盖；
 - 真实模型会话仍可能受上游 quota/429 阻断，未将入队算作 E2E 成功。
+- 硬破坏命令仍独立硬闸；Jev不能把删库/格式化改成低风险。
 
 ## 验收
 
