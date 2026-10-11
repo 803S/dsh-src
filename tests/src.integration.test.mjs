@@ -4241,7 +4241,7 @@ test("工具清单与注册顺序冻结 [local.50a 前置闸]", () => {
 	const h = harness();
 	assert.deepEqual([...h.tools.keys()], [
 		"src_scan_surface", "src_test_bypass", "src_test_credential", "src_record_observation",
-		"src_user_todo", "src_import_traffic", "src_collect_dorks", "src_collect_passive", "src_submit",
+		"src_account_assist", "src_user_todo", "src_import_traffic", "src_collect_dorks", "src_collect_passive", "src_submit",
 		"src_recover_child", "src_record_research", "src_get_infra", "src_list_capabilities", "src_add_capability",
 		"src_test_capability", "src_read_capability", "src_run_capability", "src_read_public_source", "src_fetch_policy", "src_set_infra",
 		"src_add_test_account", "src_record_domain_note", "src_list_domain_notes", "src_set_goal_target",
