@@ -6467,3 +6467,89 @@ test('覆盖状态写入校验与历史坏行兼容：不再拖垮整份权威�
  }
  const good=await h.run('src_record_coverage',{...args,endpointStatuses:{'/render':'tested'}},parent);assert.equal(good.id,row.id);assert.equal(h.domain.table('coverage').get(row.sessionId+':'+row.id).endpointStatuses['/render'],'tested');
 });
+
+/* [jev-approval-simplification 2026-10-12 §7/§10 矩阵11/17] 重复审批待办识别修复 + 持久化诚实。 */
+test("重复审批待办识别：退格正则修复后按动作意图+独立ID token 判定，auth-session 豁免", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests(); /* 隔离 harness 域，防全量跑时共享 open 缓存污染 */
+  const h = harness();
+  const parent = h.exec("todo-dedup-fixture");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "审批去重", authorization: "SRC" }, parent);
+  const now = Date.now();
+  await h.domain.table("pending_approvals").put(`${parent.agent.session.id}:approval-1`, { sessionId: parent.agent.session.id, id: "approval-1", status: "pending", method: "POST", url: "https://example.test/api/files", path: "/api/files", headers: "", body: "", category: "upload", reason: "高危上传", justification: "", note: "", responseStatus: 0, createdAt: now, updatedAt: now });
+  // 正例：标题+详情明确请求批准 approval-1 → 拒绝重复挂待办
+  await assert.rejects(
+    h.run("src_user_todo", { title: "请批准 approval-1", detail: "上传请求待审批，请用户批准" }, parent),
+    /approval-1/,
+    "明确请求批准已有审批时必须拒绝重复待办"
+  );
+  // 详情提及也计数（旧实现只看 title）
+  await assert.rejects(
+    h.run("src_user_todo", { title: "上传标记文件", detail: "对应审批 approval-1，等待批准后继续" }, parent),
+    /approval-1/
+  );
+  // ID 边界：approval-10 不应命中 approval-1 的去重（旧退格正则连合法待办都拦不掉）
+  const ten = await h.run("src_user_todo", { title: "处理 approval-10 的事", detail: "只涉及 approval-10" }, parent);
+  assert.equal(ten.status, "pending");
+  // 无批准动作意图、仅在背景提到审批 ID（如账号协助）→ 不拦
+  const passive = await h.run("src_user_todo", { title: "提供测试账号登录态", detail: "背景：编号 approval-1 仅为关联记录，无需操作" }, parent);
+  assert.equal(passive.status, "pending");
+  // auth-session 豁免：即使带批准字样+ID 也不拦（账号协助是独立工作项）
+  const authAssist = await h.run("src_user_todo", { title: "请批准后提供测试账号登录态 approval-1", detail: "批准审批后协助登录", kind: "auth-session" }, parent);
+  assert.equal(authAssist.status, "pending");
+});
+
+test("/src-todo 持久化诚实：失败报错不虚假成功；写成功但通知失败分开报告", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("todo-persist-fixture");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "待办反馈", authorization: "SRC" }, parent);
+  const todo = await h.run("src_user_todo", { title: "提供已登录 Burp 请求", detail: "登录后导出一条请求" }, parent);
+  const command = h.commands.get("src-todo");
+  assert.ok(command, "src-todo 命令已注册");
+  // 成功路径：持久化 + followup 转达，状态为 done
+  const followups = [];
+  const invocation = (raw, followupImpl) => ({ rawInput: raw, agent: { session: { id: parent.agent.session.id }, followup: followupImpl ?? (async (m) => { followups.push(m); return "msg-1"; }) } });
+  const ok = await command.handler(invocation(`${todo.id} done 已导出`));
+  assert.equal(ok.kind, "success");
+  assert.equal(followups.length, 1);
+  const stored = [...h.domain.table("user_todos").entries()].map(([, row]) => row).find((row) => row.id === todo.id);
+  assert.equal(stored.status, "done");
+  assert.match(stored.note, /已导出/);
+  // 持久化失败：kind=error、无 followup、状态不变（不虚假成功）
+  const realTable = h.domain.table.bind(h.domain);
+  const failingTable = new Proxy(realTable("user_todos"), { get: (target, prop) => prop === "put" ? async () => { throw new Error("fixture write failure"); } : Reflect.get(target, prop, target) });
+  h.domain.table = (name) => (name === "user_todos" ? failingTable : realTable(name));
+  const failed = await command.handler(invocation(`${todo.id} abandoned 不再需要`));
+  assert.equal(failed.kind, "error");
+  assert.match(failed.text, /未写入/);
+  assert.match(failed.text, /fixture write failure/);
+  assert.equal(followups.length, 1, "写入失败不得向 agent 投递虚假完成");
+  assert.equal([...h.domain.table("user_todos").entries()].map(([, row]) => row).find((row) => row.id === todo.id).status, "done", "失败写入不改变既有状态");
+  h.domain.table = realTable;
+  // 写成功但通知失败：kind=success，文本分别报告"已持久化"与"通知失败"，状态不重改
+  const notifyFail = await command.handler(invocation(`${todo.id} pending 重新打开`, async () => { throw new Error("fixture queue failure"); }));
+  assert.equal(notifyFail.kind, "success");
+  assert.match(notifyFail.text, /已持久化/);
+  assert.match(notifyFail.text, /通知 agent 失败/);
+  assert.equal([...h.domain.table("user_todos").entries()].map(([, row]) => row).find((row) => row.id === todo.id).status, "pending");
+});
+
+test("src_account_assist 更新不再用默认值覆盖标题/详情，也不再重置状态", async () => {
+  const h = harness();
+  const parent = h.exec("account-assist-fixture");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "账号协助", authorization: "SRC" }, parent);
+  const todo = await h.run("src_user_todo", { title: "提供测试账号A登录态", detail: "登录 example.test 后保持会话", kind: "auth-session" }, parent);
+  // 只补备注：标题/详情保留，状态不动（旧实现会把 title 覆盖成"用户账号协助"、detail 覆盖成缺省文案、status 重置 pending→不变）
+  const noted = await h.run("src_account_assist", { userTodoId: todo.id, note: "用户说明明天提供" }, parent);
+  assert.equal(noted.title, "提供测试账号A登录态");
+  assert.match(noted.detail, /登录 example\.test/);
+  assert.equal(noted.status, "pending");
+  // 显式完成：状态更新为 done
+  const done = await h.run("src_account_assist", { userTodoId: todo.id, status: "done", note: "已提供" }, parent);
+  assert.equal(done.status, "done");
+  // 之后再只补备注：状态不得被重置回 pending（旧实现 status: args.status || "pending" 的回归）
+  const later = await h.run("src_account_assist", { userTodoId: todo.id, note: "补充记录" }, parent);
+  assert.equal(later.status, "done", "仅补备注不得把 done 重置回 pending");
+});

@@ -58,25 +58,35 @@ async function fixture(t) {
   return { ctx, home, parent, run, events, tables, agents, spawn: () => spawnSpec, failFollowup: value => followupFails = value };
 }
 
-test('bash gate runs through ToolRuntime approval service: reject sends nothing; allowed-once executes exactly once', async t => {
-  const h = await fixture(t), oldMode = process.env.DSH_SRC_BASH_GATE, oldRisk = process.env.DSH_SRC_LAYA_DECISION, oldFetch = globalThis.fetch;
+test('bash gate: local-dangerous ask goes through ToolRuntime approval service; http-write no longer pre-executes Jev or double-asks', async t => {
+  const h = await fixture(t), oldMode = process.env.DSH_SRC_BASH_GATE, oldFetch = globalThis.fetch;
   process.env.DSH_SRC_BASH_GATE = 'ask';
-  process.env.DSH_SRC_LAYA_DECISION = 'on';
-  globalThis.fetch = async () => new Response(JSON.stringify({ model:'jev-fixture', answers:{ decision:{ choice:'unknown', confidence:.95, probabilities:{read:0,compute:0,write:0,external:0,auth:0,destructive:0,unknown:1} } } }), {status:200,headers:{'content-type':'application/json'}});
+  /* [jev-approval-simplification §4B/§8 local.130] 新契约：
+   * ① pre-execute 不再调 Jev（旧路径对写信号 bash 直接 Jev，低影响候选因 execute 阶段才建立的 ALS 必 deny）；
+   * ② 本机破坏性命令：确定性 ask → ToolRuntime approval service（reject 不执行 / allowed-once 恰一次）；
+   * ③ bash http-write（curl -d 等）不在入口挂起：唯一有效判定在出口边界（proxy claim → broker 携完整冻结请求），
+   *    出口边界行为由 egress-onboarding 线缆测试覆盖；本测试的 fake shell 不经过代理，故只断言入口不再拦。 */
+  let jevCalls = 0;
+  globalThis.fetch = async () => { jevCalls++; return new Response('{}', { status: 500 }); };
   let executions = 0, asked = [];
   h.ctx.provide('approval', { async request(req) { asked.push(req); return asked.length === 1 ? 'rejected' : 'allowed-once'; } });
   h.ctx.tools.register(defineTool({ name:'bash', description:'test-only fake shell', parameters:{ command:{type:'string',required:true} }, output:{schema:{type:'object',additionalProperties:true,properties:{}},render:(_a,v)=>[{type:'text',text:JSON.stringify(v)}]}, execute:async()=>{executions++;return {ok:true};} }));
   try {
-    const command='curl -d \'x=1\' http://fixture.test/api/delete';
-    const rejected=await h.run('bash',{command});
+    const dangerous='curl -X POST http://fixture.test/api/wipe && rm -rf /';
+    const rejected=await h.run('bash',{command:dangerous});
     assert.equal(rejected.isError,true);
     assert.equal(executions,0,'拒绝不得执行命令');
-    assert.match(asked[0].reason,/POST 写请求/);
-    const allowed=await h.run('bash',{command});
+    assert.match(asked[0].reason,/本机破坏性命令/);
+    assert.equal(jevCalls,0,'破坏性命令的ask是确定性规则，不等待Jev');
+    const allowed=await h.run('bash',{command:dangerous});
     assert.equal(allowed.isError,false, JSON.stringify(allowed));
     assert.equal(executions,1,'allowed-once 恰好执行一次');
     assert.equal(asked.length,2);
-  } finally { if(oldMode===undefined)delete process.env.DSH_SRC_BASH_GATE;else process.env.DSH_SRC_BASH_GATE=oldMode; if(oldRisk===undefined)delete process.env.DSH_SRC_LAYA_DECISION;else process.env.DSH_SRC_LAYA_DECISION=oldRisk; globalThis.fetch=oldFetch; }
+    const post=await h.run('bash',{command:'curl -d \'x=1\' http://fixture.test/api/delete'});
+    assert.equal(post.isError,false);
+    assert.equal(jevCalls,0,'pre-execute 不再调用 Jev（唯一判定在出口边界）');
+    assert.equal(asked.length,2,'http-write 不再产生入口审批卡');
+  } finally { if(oldMode===undefined)delete process.env.DSH_SRC_BASH_GATE;else process.env.DSH_SRC_BASH_GATE=oldMode; globalThis.fetch=oldFetch; }
 });
 
 test('host dispatch: advisory shadow/on never becomes execution; spawn uses effective route; explicit recovery preserves lineage', async t => {
