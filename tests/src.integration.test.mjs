@@ -6499,6 +6499,49 @@ test("重复审批待办识别：退格正则修复后按动作意图+独立ID t
   assert.equal(authAssist.status, "pending");
 });
 
+/* [审计 2026-10-13 §2 最小任务①/②] 审批是单点挂起：不得复制成“请批准”待办；待审未处理不得被写成 false-positive。 */
+test("不写审批ID但指向待审队列的“请批准”待办同样拒绝，独立工作项仍可创建", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("todo-queue-dedup-fixture");
+  await h.run("src_add_goal", { target: "https://example.test", objective: "待审队列去重", authorization: "SRC" }, parent);
+  const sid = parent.agent.session.id, now = Date.now();
+  await h.domain.table("pending_approvals").put(`${sid}:approval-3`, { sessionId: sid, id: "approval-3", status: "pending", method: "POST", url: "https://example.test/index.php?m=admin&c=login&a=registerhandle", path: "/index.php", headers: "", body: "", category: "egress/task", reason: "有界任务待审（业务数据写入，或对象归属不明）", justification: "", note: "", responseStatus: 0, createdAt: now, updatedAt: now });
+  // 真实观测到的复制待办：标题请求批准“待审请求”但不写 approval ID（旧的 token 匹配漏过）
+  await assert.rejects(
+    h.run("src_user_todo", { title: "是否批准对目标执行写入类认证逻辑测试（注册/登录，共 4 个待审请求）", detail: "目标注册接口待审，请用户批准后继续写入测试" }, parent),
+    /approval-3/,
+    "指向待审队列的“请批准”待办必须拦在审批区之外"
+  );
+  // 不同工作项仍可创建：只请用户提供输入、不请求批准
+  const input = await h.run("src_user_todo", { title: "提供后台登录态", detail: "用于越权矩阵，与另一条线并行；不需要授权写入" }, parent);
+  assert.equal(input.status, "pending");
+  // 只提及待审、无批准动作意图的关联记录也不拦
+  const related = await h.run("src_user_todo", { title: "整理注册接口的返回差异", detail: "背景：该方向有 1 个待审请求仍在队列，这里只记录观察" }, parent);
+  assert.equal(related.status, "pending");
+});
+
+test("待审审批不是证伪证据：引用 pending ID 的 false-positive 被拒，改记 blocked 成功", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const parent = h.exec("research-pending-fixture");
+  const goal = await h.run("src_add_goal", { target: "https://example.test", objective: "待审方向定性", authorization: "SRC" }, parent);
+  const intent = await h.run("src_add_intent", { title: "注册逻辑测试", goalId: goal.id }, parent);
+  const sid = parent.agent.session.id, now = Date.now();
+  await h.domain.table("pending_approvals").put(`${sid}:approval-5`, { sessionId: sid, id: "approval-5", status: "pending", method: "POST", url: "https://example.test/index.php?m=admin&c=login&a=registerhandle", path: "/index.php", headers: "", body: "", category: "egress/task", reason: "有界任务待审（单次登录/注册验证）", justification: "", note: "", responseStatus: 0, createdAt: now, updatedAt: now });
+  await assert.rejects(
+    h.run("src_record_research", { intentId: intent.id, category: "authentication-bypass", hypothesis: "开放注册可创建后台账号", status: "false-positive", stopReason: "approval-5 待审未处理，判为不可利用" }, parent),
+    /待审审批 approval-5/,
+    "审批未处理不等于假设被证伪"
+  );
+  const blocked = await h.run("src_record_research", { intentId: intent.id, category: "authentication-bypass", hypothesis: "开放注册可创建后台账号", status: "blocked", stopReason: "approval-5 待用户决定写入测试", evidence: ["pending approval-5"] }, parent);
+  assert.ok(blocked.id, "诚实出口 blocked 必须可用");
+  const fp = await h.run("src_record_research", { intentId: intent.id, category: "parser-discrepancy", hypothesis: "路径规范化差异", status: "false-positive", stopReason: "已换 5 种形态重试仍 404" }, parent);
+  assert.ok(fp.id, "不引用待审 ID 的普通 false-positive 不受影响");
+});
+
 test("/src-todo 持久化诚实：失败报错不虚假成功；写成功但通知失败分开报告", async () => {
   const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
   __resetSharedDomainOpensForTests();

@@ -163,3 +163,41 @@ test("jev-client wire: scan-plan taskSpec carries task context beside the presen
   assert.equal(captured.state.task?.purpose, "有界目录探测", "task 上下文与 plan 同送，计划不再与动机脱节");
   assert.match(JSON.stringify(captured.state.plan), /fixture\.test\/a/, "展示形态的 plan 仍含每个请求");
 });
+
+/* [审计 2026-10-13 §1/最小任务④] 出口闸（broker→advisor）的 risk-grade/scan-plan 判定以前完全不进 telemetry：
+ * 复核会话内层确实调用了 Jev（fallback:false, mode:"on"），但当天 JSONL 只有 delegate/skill、risk-grade=0，
+ * 审计据此误判“没有 Jev 风险调用证据”。这里钉住旁路发射：判定的关键字段与会话可归因，
+ * 且绝不携带请求正文/凭据。 */
+test("broker 出口判定补 telemetry：risk-grade/scan-plan 可归因、无正文泄露、失败不影响判定", async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "src-jev-telemetry-"));
+  const env = { ...process.env };
+  process.env.DSH_HOME = home;
+  process.env.DSH_SRC_LAYA_DECISION = "on";
+  t.after(async () => { for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key]; Object.assign(process.env, env); await fs.rm(home, { force: true, recursive: true }); });
+  const { flushDefaultTelemetry } = await import("../lib/src/telemetry/events.js");
+  const request = { method: "POST", url: "https://fixture.test/index.php?m=admin&c=login&a=registerhandle", headers: [["content-type", "application/x-www-form-urlencoded"]], bodyBase64: b64("username=srctest_fixture&password=telemetry-secret-in-body") };
+  const plan = { maxRequests: 1, scopeRevision: 1, purpose: "单笔注册写入审核", entries: [{ maxRequests: 1, request }] };
+  const exec = { agent: { session: { id: "telemetry-fixture" } }, callId: "call-risk-1", name: "src_http", verifiedTestObjects: ["testobj-1"] };
+  const decided = await assessEgressPlan(plan, exec, async () => ({ action: "pending", effect: "write", risk: "high", mode: "on", fallback: false, objectClass: "business-or-unknown", source: "jev", probabilities: { write: 0.8 } }));
+  assert.equal(decided.effect, "write", "telemetry 旁路必须原样透传判定结果（不得变成 Promise 包装差异）");
+  const scanRequest = { ...request, method: "GET", bodyBase64: "" };
+  const batch = { maxRequests: 2, scopeRevision: 1, purpose: "有界目录探测", entries: [{ maxRequests: 1, request: scanRequest }, { maxRequests: 1, request: { ...scanRequest, url: "https://fixture.test/index.php?m=home&c=archive&a=search" } }] };
+  await assessEgressPlan(batch, { ...exec, callId: "call-risk-2" }, async () => ({ action: "pending", effect: "unknown", risk: "unknown", mode: "on", fallback: true, errorType: "SERVICE_DOWN" }));
+  await flushDefaultTelemetry();
+  const dir = path.join(home, "storages", "src-telemetry");
+  const rows = (await Promise.all((await fs.readdir(dir)).filter((f) => f.endsWith(".jsonl")).map((f) => fs.readFile(path.join(dir, f), "utf8"))))
+    .flatMap((text) => text.split("\n").filter(Boolean)).map((line) => JSON.parse(line));
+  const decisions = rows.filter((row) => row.event === "laya.decision");
+  assert.equal(decisions.length, 2, "每笔出口判定都要落一条可核验事件");
+  const graded = decisions.find((row) => row.payload.callId === undefined && row.payload.taskType === "risk-grade" && row.payload.effect === "write");
+  assert.ok(graded, "risk-grade 判定必须进 telemetry");
+  assert.equal(graded.sessionId, "telemetry-fixture", "事件可按会话归因");
+  assert.equal(graded.payload.risk, "high");
+  assert.equal(graded.payload.objectClass, "business-or-unknown");
+  assert.equal(graded.payload.verifiedTestObjectCount, 1, "受控测试对象数量随判定旁路记账");
+  const scan = decisions.find((row) => row.payload.taskType === "scan-plan");
+  assert.ok(scan, "scan-plan 判定同样进 telemetry");
+  assert.equal(scan.payload.fallback, true);
+  assert.equal(scan.payload.errorType, "SERVICE_DOWN");
+  assert.ok(!JSON.stringify(rows).includes("telemetry-secret-in-body"), "telemetry 旁路不得携带请求正文");
+});
