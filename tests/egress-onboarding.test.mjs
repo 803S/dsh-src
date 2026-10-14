@@ -330,9 +330,9 @@ test('多域声明一次到位：域内子域发现自动放行不再挂范围�
  const dns=(await import('node:dns/promises')).default,{syncBuiltinESMExports}=await import('node:module');
  const original=dns.lookup,lookups=[];dns.lookup=async(host)=>{lookups.push(host);return [{address:'127.0.0.1',family:4}];};syncBuiltinESMExports();t.after(()=>{dns.lookup=original;syncBuiltinESMExports();});
  const f=await fixture(t),s='multi-domain';
- // 用户一份任务里写了两个品牌资产（一个通配域 + 一个 URL）。
+ // 用户一份任务里写了两个品牌资产（一个通配域 + 一个 URL）。URL 的 host 也会推出所属注册域。
  await f.manager.user.seedScope(s,userSession(s,'目标资产：\n*.fixture.test\nhttps://app.fixture.invalid/login'));
- assert.deepEqual(f.manager.user.getScope(s).domains,['fixture.test']);
+ assert.deepEqual(f.manager.user.getScope(s).domains,['fixture.invalid','fixture.test']);
  assert.deepEqual(f.manager.user.getScope(s).origins,['https://app.fixture.invalid']);
  // 资产收集发现的子域（另一个 origin）直接发；不产生任何审批行。
  assert.equal((await f.manager.fetch(s,'https://api.fixture.test:8443/read')).status,200);
@@ -340,9 +340,18 @@ test('多域声明一次到位：域内子域发现自动放行不再挂范围�
  // 域外目标:本地拒发且不挂卡（归属性确认单才是新主域的入口）。
  await assert.rejects(f.manager.fetch(s,'https://evil.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});
  assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ // 只写了一个子域 URL，也等于声明该注册域：兄弟子域直接发。
+ await f.manager.user.seedScope('inferred',userSession('inferred','目标资产：https://www.fixture.test/login。'));
+ assert.deepEqual(f.manager.user.getScope('inferred').domains,['fixture.test']);
+ assert.equal((await f.manager.fetch('inferred','https://api.fixture.test/read')).status,200);
+ // 共享托管顶点不推父域：a.github.io 声明不授权 b.github.io（各属不同租户）。
+ await f.manager.user.seedScope('shared',userSession('shared','目标资产：https://a.github.io/x。'));
+ assert.deepEqual(f.manager.user.getScope('shared').domains,[]);
+ await assert.rejects(f.manager.fetch('shared','https://b.github.io/x'),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ assert.equal((await f.manager.fetch('shared','https://a.github.io/y')).status,200);
 });
 
-test('模型、引用、合成回注、子会话不能伪造原始人类范围，撤回不回吃旧授权',()=>{
+test('模型、引用、合成回注、子会话不能伪造原始人类范围，撤回不回吃旧授权',async()=>{
  const text='针对该资产测试 http://127.0.0.1:23456';
  for(const source of [{kind:'user'},{kind:'tool',rpcId:'fake'},{kind:'assistant',rpcId:'fake'}])assert.deepEqual(explicitUserOrigins(userSession('s',text,source)),[]);
  const child=userSession('s',text);child.header={parentSession:'parent'};assert.deepEqual(explicitUserOrigins(child),[]);
@@ -352,8 +361,12 @@ test('模型、引用、合成回注、子会话不能伪造原始人类范围�
  assert.deepEqual(explicitUserOrigins(userSession('s',text+' 和 http://127.0.0.1:23457')),['http://127.0.0.1:23456','http://127.0.0.1:23457']);
  // 同一份消息里被用户排除的写在同一行 → 整行不授权。
  assert.deepEqual(explicitUserOrigins(userSession('s','针对 http://127.0.0.1:23456 测试\nhttp://127.0.0.1:23457 不要测试')),['http://127.0.0.1:23456']);
- // 带凭据的 URL 不得作为范围来源（整份消息作废）。
- assert.deepEqual(explicitUserOrigins(userSession('s','针对 http://user:pass@127.0.0.1:23456 测试 http://127.0.0.1:23457')),[]);
+ // 带凭据的 URL 照常授权：origin 本就不含凭据，范围账本/回放里不落凭据，不因此丢掉用户写下的目标。
+ const cred=userSession('s','针对 https://user:pass@www.example.com/login 测试 http://127.0.0.1:23457');
+ assert.deepEqual(explicitUserOrigins(cred),['http://127.0.0.1:23457','https://www.example.com']);
+ const {explicitUserScope}=await import('../lib/src/egress/user-scope.js');
+ assert.deepEqual(explicitUserScope(cred),{origins:['http://127.0.0.1:23457','https://www.example.com'],domains:['example.com']});
+ assert.ok(!JSON.stringify(explicitUserScope(cred)).includes('pass'),'范围里不得出现凭据');
  // 没有目标句标志的闲聊不授权。
  assert.deepEqual(explicitUserOrigins(userSession('s','这活挺累的，先看看 http://127.0.0.1:23456 吧')),[]);
 });
@@ -379,13 +392,29 @@ test('人类声明的目标是域空间：裸域给默认HTTP/HTTPS+整域，通
  const {explicitUserScope}=await import('../lib/src/egress/user-scope.js');
  assert.deepEqual(explicitUserScope(userSession('s','针对 example.co.uk 进行测试')),{origins:['http://example.co.uk','https://example.co.uk'],domains:['example.co.uk']});
  assert.deepEqual(explicitUserScope(userSession('s','针对 *.example.co.uk 进行SRC漏洞挖掘')),{origins:[],domains:['example.co.uk']});
- assert.deepEqual(explicitUserScope(userSession('s','针对 a.example.com 和 b.example.com 测试')),{origins:['http://a.example.com','http://b.example.com','https://a.example.com','https://b.example.com'],domains:['a.example.com','b.example.com']});
- // 混合形态（URL+通配+裸域）一份消息全收；URL 只给精确 origin。
- assert.deepEqual(explicitUserScope(userSession('s','目标资产：sf.com、*.sf-express.com、https://api.example.net/login')),{origins:['http://sf.com','https://api.example.net','https://sf.com'],domains:['sf-express.com','sf.com']});
+ assert.deepEqual(explicitUserScope(userSession('s','针对 a.example.com 和 b.example.com 测试')),{origins:['http://a.example.com','http://b.example.com','http://example.com','https://a.example.com','https://b.example.com','https://example.com'],domains:['a.example.com','b.example.com','example.com']});
+ // 混合形态（URL+通配+裸域）一份消息全收；URL 给精确 origin + 所属注册域。
+ assert.deepEqual(explicitUserScope(userSession('s','目标资产：sf.com、*.sf-express.com、https://api.example.net/login')),{origins:['http://sf.com','https://api.example.net','https://sf.com'],domains:['example.net','sf-express.com','sf.com']});
  // 列表写法：首行声明，后续行只列域名。
- assert.deepEqual(explicitUserScope(userSession('s','目标资产如下：\nagencies.example.com\npartner.example.com')),{origins:['http://agencies.example.com','http://partner.example.com','https://agencies.example.com','https://partner.example.com'],domains:['agencies.example.com','partner.example.com']});
+ assert.deepEqual(explicitUserScope(userSession('s','目标资产如下：\nagencies.example.com\npartner.example.com')),{origins:['http://agencies.example.com','http://example.com','http://partner.example.com','https://agencies.example.com','https://example.com','https://partner.example.com'],domains:['agencies.example.com','example.com','partner.example.com']});
  // 邮箱等带 @ 的 token 不能被当成目标域。
  assert.deepEqual(explicitUserScope(userSession('s','目标：sf.com；联系我 me@corp.example')),{origins:['http://sf.com','https://sf.com'],domains:['sf.com']});
+});
+
+test('子域只推「剥一层的父域」：公共后缀与共享托管顶点一律不剥',async()=>{
+ const {explicitUserScope}=await import('../lib/src/egress/user-scope.js');
+ // 子域 → 父域（只剥一层）：“写下一个子域 URL”不等于把整个注册域都授权出去。
+ assert.deepEqual(explicitUserScope(userSession('s','目标：https://www.example.com/login 测试')).domains,['example.com']);
+ // 更深一层只剥一层：就不推到底（宁少不多，缺的那层由用户写域名或点确认卡补）
+ assert.deepEqual(explicitUserScope(userSession('s','目标：https://api.staging.example.co.uk/x 测试')).domains,['staging.example.co.uk']);
+ // 父域恰好是公共后缀 → 不剥（www.example.co.uk 剥到 co.uk 会把整个 ccTLD 授权出去）
+ assert.deepEqual(explicitUserScope(userSession('s','目标：https://a.b.com.cn/x 测试')).domains,['b.com.cn']);
+ assert.deepEqual(explicitUserScope(userSession('s','目标：https://foo.com.cn/y 测试')).domains,['foo.com.cn']);
+ assert.deepEqual(explicitUserScope(userSession('s','目标：https://co.uk/x 测试')).domains,[]);
+ // 共享托管顶点/其下：a.github.io 声明不等于 github.io 授权（子域各属不同租户）
+ for(const host of ['a.github.io','app.vercel.app','bucket.s3.amazonaws.com','x.herokuapp.com'])assert.deepEqual(explicitUserScope(userSession('s',`目标：https://${host}/x 测试`)).domains,[],host);
+ // IP 不推域
+ assert.deepEqual(explicitUserScope(userSession('s','目标：http://127.0.0.1:23456/ 测试')).domains,[]);
 });
 test('整域确认后否决子域优先于父域授权，拒绝跨重启保留',async t=>{
  const f=await fixture(t),s='domain-denial';
