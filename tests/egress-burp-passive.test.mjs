@@ -27,16 +27,18 @@ const h1='mcp__burp__send_http1_request',h2='mcp__burp__send_http2_request';
 const origin='http://127.0.0.1:49123';
 const low={mode:'on',fallback:false,risk:'low',effect:'read',action:'allow',confidence:.95};
 const sha=text=>createHash('sha256').update(text).digest('hex');
-function args(method='GET',url='/read',body=''){
+// 默认带上可疑语义词（op=verify）：本地不把这类读取当“明确只读”豁免，仍走判定服务，
+// 这样本文件才能验证“原生 Burp 通道也要过审批车道”的不变量。
+function args(method='GET',url='/read?op=verify',body=''){
  return {targetHostname:'127.0.0.1',targetPort:49123,usesHttps:false,content:`${method} ${url} HTTP/1.1\r\nHost: 127.0.0.1:49123\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`};
 }
-function args2(){return {targetHostname:'127.0.0.1',targetPort:49123,usesHttps:false,pseudoHeaders:{':method':'GET',':scheme':'http',':authority':'127.0.0.1:49123',':path':'/read'},headers:{accept:'*/*'},requestBody:''};}
+function args2(){return {targetHostname:'127.0.0.1',targetPort:49123,usesHttps:false,pseudoHeaders:{':method':'GET',':scheme':'http',':authority':'127.0.0.1:49123',':path':'/read?op=verify'},headers:{accept:'*/*'},requestBody:''};}
 test('Burp HTTP1/HTTP2 inputs are inspected without rewriting the frozen native invocation',()=>{
  const raw=args('POST','/query?a=1&a=2','{"text":"中文"}'),copy=structuredClone(raw),value=inspectBurpRequest(h1,raw);
  assert.deepEqual(value.args,copy);assert.equal(Buffer.from(value.request.bodyBase64,'base64').toString(),'{"text":"中文"}');
  assert.equal(value.request.url,origin+'/query?a=1&a=2');assert.ok(Object.isFrozen(value.args));assert.equal(value.digest.length,64);
  raw.content='DELETE /changed HTTP/1.1\r\n\r\n';assert.deepEqual(value.args,copy);
- const two=args2(),parsed=inspectBurpRequest(h2,two);assert.equal(parsed.request.url,origin+'/read');assert.deepEqual(parsed.request.headers,[['accept','*/*']]);assert.deepEqual(parsed.args,two);
+ const two=args2(),parsed=inspectBurpRequest(h2,two);assert.equal(parsed.request.url,origin+'/read?op=verify');assert.deepEqual(parsed.request.headers,[['accept','*/*']]);assert.deepEqual(parsed.args,two);
 });
 test('Burp cannot hide targets, request bodies, framing or extra invocations in raw arguments',()=>{
  const bad=[
@@ -110,8 +112,8 @@ test('Burp delete preserves backup/precondition/verification: only the frozen pr
 
 test('前置GET隐藏副作用、语义未知或Jev失败时，不能当只读检查发送',async t=>{
  for(const phase of ['precondition','verification'])for(const advice of [{...low,effect:'destructive',risk:'high',action:'pending'},{...low,effect:'unknown',risk:'unknown',action:'pending'},{fallback:true}]){
-  const f=await setup(t,{assess:plan=>plan.entries[0].request.url.endsWith('/unsafe-check')?advice:low});
-  const before=origin+(phase==='precondition'?'/unsafe-check':'/state'),after=origin+(phase==='verification'?'/unsafe-check':'/state');
+  const f=await setup(t,{assess:plan=>plan.entries[0].request.url.includes('/unsafe-check')?advice:low});
+  const before=origin+(phase==='precondition'?'/unsafe-check?op=verify':'/state'),after=origin+(phase==='verification'?'/unsafe-check?op=verify':'/state');
   const backupRef=await saveResponseSnapshot(f.home,'s',before,'before','text/plain');
   const held=pending(await f.run(args('DELETE','/item')));
   const next=await f.manager.preparePending('s',held.approvalId,{effect:'delete',object:'owned item',recovery:'restore fixture',backupRef,precondition:{request:{url:before,method:'GET'},status:200,bodySha256:sha('before')},verification:{request:{url:after,method:'GET'},status:200,bodySha256:sha('after')}});
@@ -159,7 +161,7 @@ for(const invalidate of ['reject','scope','reset','dispose','tool','cancel','aud
 test('Burp transport failure is unknown, never replayed, and blocks HTTP/curl aliases',async t=>{
  const f=await setup(t,{send:()=>{throw new Error('connection lost after dispatch');}});
  await assert.rejects(f.run(),error=>error.safeNotSent===false);assert.equal(f.sent.length,1);
- const again=pending(await f.run());assert.equal(again.sent,false);await assert.rejects(f.manager.fetch('s',origin+'/read'));assert.equal(f.sent.length,1);assert.equal(f.reads.length,0);
+ const again=pending(await f.run());assert.equal(again.sent,false);await assert.rejects(f.manager.fetch('s',origin+'/read?op=verify'),{code:'SRC_GATE_PENDING_OR_REJECTED'});assert.equal(f.sent.length,1);assert.equal(f.reads.length,0);
 });
 test('Burp cannot expand scope or launder a pending destructive HTTP operation',async t=>{
  const f=await setup(t);await assert.rejects(f.run({...args(),targetPort:49124,content:args().content.replaceAll('49123','49124')}),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});assert.equal(f.sent.length,0);

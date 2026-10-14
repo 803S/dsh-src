@@ -251,7 +251,11 @@ test('host Skill recommendation -> read -> real dispatch -> evidence; no duplica
   const first = await h.run('src_http', request);
   assert.equal(first.isError, false, JSON.stringify(first));
   assert.match(first.value.skillHint, /zfixture.md/);
-  assert.match(first.content[0].text, /Jev风险审批评估/);
+  // 明确只读的 GET 由本地硬规则直接放行、不调用判定服务（因此没有 Jev 风险行）；
+  // 审批门不在读路径上，技能提醒也不能绕过它（写/影响类与待审断言见下面的 Jev HTTP gate 测试）。
+  assert.equal(first.value.decisionAuthority, 'hard-rules');
+  assert.equal(first.value.riskAdvice, undefined);
+  assert.doesNotMatch(first.content[0].text, /Jev风险审批评估/);
   assert.equal(skillCalls, 1);
   const read = await h.run('src_read_capability', { id: 'clown-src-playbook', file });
   assert.equal(read.isError, false);
@@ -332,9 +336,10 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  risk='low';verdict='allow';effect='read';
  const repeat=await h.run('src_http',{method:'POST',url:'https://fixture.test/opaque',body:'{}',justification:'try again'});assert.equal(repeat.value.pendingApprovalId,pending.value.pendingApprovalId);assert.equal(hits,2);
  risk='high';effect='destructive';
- const high=await h.run('src_http',{method:'GET',url:'https://fixture.test/action',justification:'possible harmful side effect'});assert.equal(high.value.approval,'pending');assert.equal(hits,2);
+ // 读方法命中可疑语义词 → 本地不豁免、交判定服务：高危结论仍必须等人审。
+ const high=await h.run('src_http',{method:'GET',url:'https://fixture.test/action?op=verify',justification:'possible harmful side effect'});assert.equal(high.value.approval,'pending');assert.equal(hits,2);
  fail=true;
- const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);
+ const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public?op=verify',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);
  await saveDecisionSettings({riskMode:'shadow'});
  const shadow=await h.run('src_http',{method:'GET',url:'https://fixture.test/shadow',justification:'shadow read'});assert.equal(shadow.value.approval,'allowed-auto');assert.equal(shadow.value.riskAdvice,undefined);assert.equal(hits,3);
  /* [2026-10-13 用户指令] 只读不因越界被挡：新主域 GET 直接发（命中 fixture fetch 即已发送）；

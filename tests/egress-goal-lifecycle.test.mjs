@@ -91,7 +91,8 @@ test('failed approval persistence never exposes an active scan grant',async t=>{
  await store.initGoal(session,{target:'127.0.0.1',objective:'Approval persistence failure'});
  await manager.user.setScope(session,[original]);
  // The advisor defers this exact bounded read to human approval.
- const request={url:original+'/catalog',method:'GET',headers:[['authorization','Bearer fixture']]};
+ // 读方法 + 可疑语义词 → 本地不豁免（明确只读才直接放行），仍由判定服务的 pending 结论转人工。
+ const request={url:original+'/catalog?op=verify',method:'GET',headers:[['authorization','Bearer fixture']]};
  const task=await manager.propose(session,{entries:[{request,maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture with explicit credential approval'});
  assert.equal(task.state,'pending');
  const update=store.updateApprovalExecution.bind(store);
@@ -105,7 +106,7 @@ test('failed approval persistence never exposes an active scan grant',async t=>{
 test('pending audit write cannot be raced into an active grant or a second decision',async t=>{
  const {store,start,sent}=await setup(t,{action:'pending'}),manager=await start(),session='waiting-decision';
  await store.initGoal(session,{target:'127.0.0.1',objective:'Approval write barrier'});await manager.user.setScope(session,[original]);
- const url=original+'/read',task=await manager.propose(session,{entries:[{request:{url,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
+ const url=original+'/read?op=verify',task=await manager.propose(session,{entries:[{request:{url,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
  const update=store.updateApprovalExecution.bind(store);let release,entered;
  const waiting=new Promise(resolve=>entered=resolve),barrier=new Promise(resolve=>release=resolve);
  store.updateApprovalExecution=async(...args)=>{entered();await barrier;return update(...args);};
@@ -121,7 +122,7 @@ test('pending audit write cannot be raced into an active grant or a second decis
 test('removed approval row cannot activate cached task',async t=>{
  const {store,start,sent}=await setup(t,{action:'pending'}),manager=await start(),session='deleted-decision';
  await store.initGoal(session,{target:'fixture.invalid',objective:'Deleted audit'});await manager.user.setScope(session,[original]);
- const task=await manager.propose(session,{entries:[{request:{url:original+'/read',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
+ const task=await manager.propose(session,{entries:[{request:{url:original+'/read?op=verify',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
  await store.deleteTargetData('fixture.invalid',await store.planTargetDeletion('fixture.invalid'));
  await assert.rejects(manager.user.decide(session,task.approvalId,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});assert.deepEqual(sent,[]);
 });
@@ -150,7 +151,7 @@ test('domain deletion cancels late scope and task approvals after their audit wr
   await store.initGoal(session,{target:session+'.invalid',objective:'Late approval must not revive authority'});
   if(kind==='task')await manager.user.setScope(session,[original]);
   /* 范围类待审必须由写/影响类请求触发（只读不再挂范围卡）。 */
-  const task=kind==='scope'?await pending(manager,session,original+'/read',{method:'POST'}):await manager.propose(session,{entries:[{request:{url:original+'/read',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
+  const task=kind==='scope'?await pending(manager,session,original+'/read',{method:'POST'}):await manager.propose(session,{entries:[{request:{url:original+'/read?op=verify',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
   const update=store.updateApprovalExecution.bind(store);let release,entered;
   const barrier=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);
   store.updateApprovalExecution=async(...args)=>{const result=await update(...args);entered();await barrier;return result;};

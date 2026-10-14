@@ -81,7 +81,8 @@ test("影响未定单笔待审：写明这是单点挂起、可直接放行，�
   const session = randomUUID(), origin = "http://127.0.0.1:23456";
   await f.manager.user.setScope(session, [origin]);
   let pending;
-  try { await f.manager.fetch(session, `${origin}/read-only`, { method: "GET" }); } catch (error) { pending = error; }
+  // 明确只读的 GET 现在直接放行；要走到“影响未定→单点挂起”只能靠命中判定车道的读方法（读 + 可疑语义词）。
+  try { await f.manager.fetch(session, `${origin}/read-only?op=verify`, { method: "GET" }); } catch (error) { pending = error; }
   assert.equal(pending?.code, "SRC_GATE_PENDING_OR_REJECTED");
   assert.equal(pending.reason, "human-impact-confirmation-required");
   assert.ok(pending.approvalId);
@@ -140,6 +141,7 @@ test("危险误放回归：批量/无归属删除与归属不明写入不自动�
   assert.equal(sample.targetRequestsSent, 0, "评测样本本身不得发送目标请求");
   // 判定摘要只允许枚举字段（不回灌 provider 原文/请求密钥）
   const summary = reviewSummary({ ...allow, effect: "write", objectClass: "business-or-unknown", reason: "secret free text", apiKey: "sk-leak" });
-  assert.deepEqual(Object.keys(summary).sort(), ["action", "effect", "fallback", "hardVeto", "hostExecution", "mode", "objectClass", "risk"].sort());
+  // authority 记录本次判定由谁作出（本地确定危害终审 / 本地明确只读放行 / 判定服务 / 人工）。
+  assert.deepEqual(Object.keys(summary).sort(), ["action", "authority", "effect", "fallback", "hardVeto", "hostExecution", "mode", "objectClass", "risk"].sort());
   assert.ok(!JSON.stringify(summary).includes("sk-leak"));
 });

@@ -30,7 +30,13 @@ test('Jev execution contract: low impact allows generic POST; errors/high/unknow
   assert.equal(httpDecisionPolicy(genericPost,{...low,...patch},'on').require,true);
  }
  assert.equal(httpDecisionPolicy(readRule,undefined,'on').require,true);
- assert.equal(httpDecisionPolicy({...genericPost,category:'破坏性写入'},low,'on').require,true);
- assert.equal(httpDecisionPolicy({...genericPost,category:'越权删改'},low,'on').require,true);
+ // 本地确定危害：显式 hardBoundary 才终审（旧版按 category 名猜，已删除）。
+ assert.equal(httpDecisionPolicy({...genericPost,hardBoundary:true,category:'破坏性写入'},low,'on').require,true);
+ assert.equal(httpDecisionPolicy({...genericPost,hardBoundary:true,category:'破坏性写入'},low,'on').authority,'hard-boundary');
+ assert.match(httpDecisionPolicy({...genericPost,hardBoundary:true,reason:'path 含强删改语义词'},low,'on').reason,/判定服务无权覆盖/);
+ // 本地明确只读：直接放行，不调用也不等待判定服务。
+ assert.equal(httpDecisionPolicy({...readRule,verdict:'read-clear',reason:'读方法无语义词'},undefined,'on').require,false);
+ assert.equal(httpDecisionPolicy({...readRule,verdict:'read-clear'},undefined,'on').authority,'hard-rules');
+ assert.match(httpDecisionPolicy({...readRule,verdict:'read-clear'},undefined,'on').reason,/未调用判定服务/);
  for(const mode of ['off','shadow']) {assert.equal(httpDecisionPolicy(readRule,undefined,mode).require,false);assert.equal(httpDecisionPolicy(genericPost,low,mode).require,true);}
 });

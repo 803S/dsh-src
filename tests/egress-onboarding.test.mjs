@@ -50,16 +50,16 @@ async function fixture(t,{advice=low}={}){
 test('fresh session: 写类首请求挂范围确认，读类首请求不再挂卡，都不预置授权',async t=>{
  const f=await fixture(t),session=randomUUID(),url='http://127.0.0.1:23456/';
  // [2026-10-13 用户指令] 读取/枚举/探测不因范围被挡：新鲜会话的只读直接发，只记只读通道。
- const read=await f.manager.fetch(session,url);assert.equal(read.status,200);assert.deepEqual(f.manager.user.getScope(session).origins,[]);assert.deepEqual(f.manager.user.getScope(session).readOrigins,['http://127.0.0.1:23456']);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ const read=await f.manager.fetch(session,url);assert.equal(read.status,200);assert.deepEqual(f.manager.user.getScope(session).origins,[]);assert.deepEqual(f.manager.user.getScope(session).readOrigins,['http://127.0.0.1:23456']);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);assert.equal(f.assessments(),0,'只读通道不调用判定服务');
  // 写类首请求：本地没有任何声明范围 → 挂范围确认单，未发送。
  const options={headers:{'User-Agent':'curl/8.7.1',Accept:'*/*'},method:'POST'};
  let blocked;try{await f.manager.fetch(session,'http://127.0.0.1:23457/',options);}catch(e){blocked=e;}
- assert.equal(blocked.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(blocked.reason,'scope-confirmation-required');assert.ok(blocked.approvalId);assert.equal(f.sent.length,1);assert.equal(f.assessments(),1);
+ assert.equal(blocked.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(blocked.reason,'scope-confirmation-required');assert.ok(blocked.approvalId);assert.equal(f.sent.length,1);assert.equal(f.assessments(),0);
  const pending=[...f.rows.values()][0];assert.equal(pending.method,'SCOPE');assert.equal(pending.category,'egress/scope');
  // The response to the actual request—not fixture setup—triggers the user action.
  const decision=await f.manager.user.decide(session,blocked.approvalId,'allow','Confirm the requested loopback fixture only');
  assert.equal(decision.sent,false);assert.equal(f.sent.length,1);
- const response=await f.manager.fetch(session,'http://127.0.0.1:23457/',options);assert.equal(await response.text(),'normal-response');assert.equal(f.sent.length,2);assert.equal(f.assessments(),2);assert.equal(f.sent[1].headers['user-agent'],'curl/8.7.1');assert.equal(f.sent[1].headers.accept,'*/*');
+ const response=await f.manager.fetch(session,'http://127.0.0.1:23457/',options);assert.equal(await response.text(),'normal-response');assert.equal(f.sent.length,2);assert.equal(f.assessments(),1);assert.equal(f.sent[1].headers['user-agent'],'curl/8.7.1');assert.equal(f.sent[1].headers.accept,'*/*');
  // Scope confirmation does not authorize a DELETE, even if advisor says low.
  await assert.rejects(f.manager.fetch(session,'http://127.0.0.1:23457/',{method:'DELETE'}),{code:'SRC_GATE_PENDING_OR_REJECTED'});assert.equal(f.sent.length,2);
 });
@@ -117,7 +117,7 @@ test('single-request advisor receives actual method URL and headers, not an opaq
 });
 
 import {allowsLowImpact} from '../lib/src/egress/decision-policy.js';
-import {requiresHuman} from '../lib/src/egress/plan.js';
+import {requiresHuman, readClearRequest} from '../lib/src/egress/plan.js';
 test('validated read/low/allow is not overridden by an uncalibrated aggregate-confidence threshold',()=>{
  assert.equal(allowsLowImpact({...low,confidence:.42}),true);
  assert.equal(allowsLowImpact({...low,effect:'compute'}),true);
@@ -130,12 +130,13 @@ test('credentials alone are not a destructive action; method overrides and indir
  for(const patch of [{headers:[...request.headers,['x-http-method-override','DELETE']]}])assert.equal(requiresHuman({entries:[{request:{...request,...patch}}]}),true);
 });
 
-test('normal read with schema-filled safety hints is assessed, not forced into a mutation lane', async t => {
+test('normal read with schema-filled safety hints stays a read, not forced into a mutation lane', async t => {
  const f=await fixture(t),session=randomUUID(),origin='http://127.0.0.1:23456';
  await f.manager.user.setScope(session,[origin]);
  const safety={effect:'read',object:'GET /read response',recovery:'',semantics:'replace',backupRef:'',precondition:{},verification:{},irreversibleAcknowledgement:''};
  const result=await f.manager.fetch(session,origin+'/read',{}, {egressSafetyPlan:safety});
- assert.equal(result.status,200);assert.equal(f.assessments(),1);assert.equal(f.sent.length,1);
+ // 明确只读的 GET 由本地硬规则直接放行：不调用判定服务，也不被 schema 填充的安全材料改写成写通道。
+ assert.equal(result.status,200);assert.equal(f.assessments(),0);assert.equal(f.sent.length,1);
  let pending;
  try {await f.manager.fetch(session,origin+'/delete',{method:'DELETE'}, {egressSafetyPlan:safety});}catch(error){pending=error;}
  assert.equal(pending.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(pending.reason,'safety-material-required');assert.ok(pending.approvalId);
@@ -272,19 +273,19 @@ test('pending native scan renders its exact resume task and does not claim a com
 test('review distinguishes active, completed, denied and restart-preserved plans without sending',async t=>{
  const f=await fixture(t,{advice:{...low,effect:'unknown',risk:'unknown',action:'pending'}}),session='review-lifecycle',origin='http://127.0.0.1:23456';
  await f.manager.user.setScope(session,[origin]);
- const body={entries:[{request:{url:origin+'/catalog',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'native review lifecycle'};
+ const body={entries:[{request:{url:origin+'/catalog?op=verify',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'native review lifecycle'};
  const pending=await f.manager.prepareToolTask(session,body,{});
  await f.manager.user.decide(session,pending.approvalId,'allow');
  assert.equal((await f.manager.user.inspect(session,pending.approvalId)).state,'active');assert.equal(f.sent.length,0);
  await f.manager.prepareToolTask(session,body,{},pending.id);
- await f.manager.fetch(session,origin+'/catalog',{}, {egressTaskId:pending.id});
+ await f.manager.fetch(session,origin+'/catalog?op=verify',{}, {egressTaskId:pending.id});
  f.manager.completeToolTask(session,pending.id);
  let view=await f.manager.user.inspect(session,pending.approvalId);
  assert.equal(view.state,'completed_tool');assert.equal(view.used,1);assert.equal(view.executable,false);assert.equal(view.sendsRequest,false);
- const second={...body,entries:[{request:{url:origin+'/unstarted',method:'GET'},maxRequests:1}]};
+ const second={...body,entries:[{request:{url:origin+'/unstarted?op=verify',method:'GET'},maxRequests:1}]};
  const unused=await f.manager.prepareToolTask(session,second,{});
  await f.manager.user.decide(session,unused.approvalId,'allow');
- const rejected=await f.manager.prepareToolTask(session,{...body,entries:[{request:{url:origin+'/rejected',method:'GET'},maxRequests:1}]},{});
+ const rejected=await f.manager.prepareToolTask(session,{...body,entries:[{request:{url:origin+'/rejected?op=verify',method:'GET'},maxRequests:1}]},{});
  await f.manager.user.decide(session,rejected.approvalId,'reject');
  assert.equal((await f.manager.user.inspect(session,rejected.approvalId)).state,'denied');
  await f.manager.close();
@@ -455,7 +456,7 @@ test('先否决域名不阻塞其他明确人类资产初始化，也不能丢�
  await assert.rejects(f.manager.fetch(s,'https://excluded.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
 });
 
-test('来源IP探测交给Jev，但方法/路由改写和编码歧义仍硬拦',async t=>{
+test('来源IP探测走只读通道，但方法/来源改写与编码歧义都不算明确只读',async t=>{
  const f=await fixture(t),origin='http://127.0.0.1:23456',session='ip-probe';
  await f.manager.user.setScope(session,[origin]);
  for(const value of ['127.0.0.1','::1','192.0.2.1, 127.0.0.1']){
@@ -468,7 +469,10 @@ test('来源IP探测交给Jev，但方法/路由改写和编码歧义仍硬拦',
   await assert.rejects(f.manager.fetch(session,request.url,{headers:{[name]:value}}),{code:'SRC_GATE_PENDING_OR_REJECTED'});
  }
  assert.equal(f.sent.length,3);
- assert.equal(requiresHuman({entries:[{request:{url:origin+'/%25252525252525252541',headers:[]}}]}),true);
+ // 编码歧义（多层嵌套）不再由本地终审：交判定服务看全文，也不当明确只读直接放行。
+ assert.equal(requiresHuman({entries:[{request:{url:origin+'/%25252525252525252541',headers:[]}}]}),false);
+ assert.equal(readClearRequest({url:origin+'/%25252525252525252541',method:'GET',headers:[],bodyBase64:''}),false);
+ assert.equal(readClearRequest({url:origin+'/%64elete',method:'GET',headers:[],bodyBase64:''}),false);
 });
 
 import {createEgressBroker} from '../lib/src/egress/broker.js';

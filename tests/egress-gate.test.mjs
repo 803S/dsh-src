@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { canonicalRequest, normalizePlan, requiresHuman } from '../lib/src/egress/plan.js';
+import { canonicalRequest, normalizePlan, requiresHuman, readClearRequest } from '../lib/src/egress/plan.js';
 import { createEgressBroker } from '../lib/src/egress/broker.js';
 import { createAssessmentQueue } from '../lib/src/egress/assessment-queue.js';
 import { constrainSpawnSpec } from '../lib/src/egress/executor.js';
@@ -14,7 +14,9 @@ test('proxy strips only benign single-hop persistence headers before both claim 
 });
 const scope = { origins: ['https://fixture.invalid'], revision: 'user-scope-1', credentialRevision: 'account-1' };
 const low = { fallback: false, mode: 'on', action: 'allow', effect: 'read', risk: 'low', confidence: .98 };
-const request = (patch = {}) => ({ url: 'https://fixture.invalid/catalog', method: 'GET', headers: [], bodyBase64: '', ...patch });
+// 夹具请求：读方法 + 可疑语义词（op=verify）——本地规则不豁免、交判定服务，旧契约（每个托管请求都调 Jev）仍被覆盖。
+// 明确只读的 GET 现在由本地硬规则直接放行、不调用判定服务，另有专门测试（见文件末尾“本地规则先行”）。
+const request = (patch = {}) => ({ url: 'https://fixture.invalid/catalog?op=verify', method: 'GET', headers: [], bodyBase64: '', ...patch });
 const input = (patch = {}) => ({ entries: [{ request: request(), maxRequests: 3 }], maxRequests: 3, minIntervalMs: 250, lifetimeMs: 10000, purpose: 'Read fixture catalog', ...patch });
 function fixture(t, { assess, file = ':memory:', key = randomBytes(32) } = {}) {
   let clock = 1000, currentScope = structuredClone(scope), calls = 0;
@@ -42,7 +44,7 @@ test('canonical requests preserve query, body bytes and every semantic header', 
   for (const headers of [[['X-A', '1'], ['x-a', '2']], [['Host', 'other.invalid']], [['Content-Length', '1']], [['Connection', 'close']], [['Transfer-Encoding', 'chunked']], [['Upgrade', 'websocket']], [['X-A', 'a\r\nb']]]) {
     assert.throws(() => canonicalRequest(request({ headers })));
   }
-  assert.throws(() => canonicalRequest(request({ bodyBase64: 'YQ==' })), code('READ_BODY'));
+  assert.throws(() => canonicalRequest(request({ method: 'GET', bodyBase64: 'YQ==' })), code('READ_BODY'));
   assert.throws(() => canonicalRequest(request({ method: 'CONNECT' })), code('UNSUPPORTED_METHOD'));
   assert.throws(() => canonicalRequest(request({ method: 'POST', bodyBase64: 'YQ' })), code('INVALID_BODY'));
 });
@@ -269,6 +271,8 @@ test('proxy control API binds session/task on server, cannot approve or finish a
 
 // Manager seams use only loopback synthetic targets and an in-memory UI store.
 import { createEgressManager } from '../lib/src/egress/manager.js';
+// 判定类 URL：读方法 + 可疑语义词 → 本地规则不豁免，交判定服务。
+const judgedUrl='http://127.0.0.1:49123/catalog?op=verify';
 async function managerFixture(t, {advice=low,home,send}={}) {
   const directory=home??mkdtempSync(path.join(tmpdir(),'egress-manager-'));
   const rows=new Map(); let calls=0, sends=0;
@@ -333,9 +337,9 @@ test('主操作发出后证据失败：异常和审批都报告结果未知，�
 
 test('manager new implicit read gets a fresh assessment after success, never automatic replay',async t=>{
   const f=await managerFixture(t);
-  assert.equal((await f.manager.fetch('s','http://127.0.0.1:49123/catalog')).status,200);
+  assert.equal((await f.manager.fetch('s',judgedUrl)).status,200);
   assert.equal(f.calls(),1);assert.equal(f.sends(),1);
-  assert.equal((await f.manager.fetch('s','http://127.0.0.1:49123/catalog')).status,200);
+  assert.equal((await f.manager.fetch('s',judgedUrl)).status,200);
   assert.equal(f.calls(),2);assert.equal(f.sends(),2);
 });
 
@@ -358,7 +362,7 @@ test('低风险计算判定不能覆盖真实删除方法、危险路径或语�
  }
 });
 test('explicit single-request plan stays exhausted and does not become an implicit renewed grant',async t=>{
- const f=await managerFixture(t),url='http://127.0.0.1:49123/catalog';
+ const f=await managerFixture(t),url=judgedUrl;
  await f.manager.propose('s',{entries:[{request:{url,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:300000,purpose:'explicit finite scan'});
  await f.manager.fetch('s',url);
  await assert.rejects(f.manager.fetch('s',url),code('BUDGET_EXHAUSTED'));
@@ -366,19 +370,19 @@ test('explicit single-request plan stays exhausted and does not become an implic
 });
 test('implicit read with uncertain transport outcome cannot be reassessed and silently replayed',async t=>{
  const f=await managerFixture(t,{send:async()=>{throw new Error('synthetic connection lost after dispatch');}});
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),/synthetic connection lost/);
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ await assert.rejects(f.manager.fetch('s',judgedUrl),/synthetic connection lost/);
+ await assert.rejects(f.manager.fetch('s',judgedUrl));
  assert.equal(f.calls(),1);assert.equal(f.sends(),1);
 });
 test('manager human single read executes frozen bytes once; rejects model replay',async t=>{
   const f=await managerFixture(t,{advice:{...low,action:'pending'}});
-  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),code('PENDING_OR_REJECTED'));
+  await assert.rejects(f.manager.fetch('s',judgedUrl),code('PENDING_OR_REJECTED'));
   const [row]=f.rows.values();
   assert.equal((await f.manager.user.inspect('s',row.id)).state,'pending');
   assert.equal((await f.manager.user.decide('s',row.id,'allow')).executionState,'executed');
   assert.equal(f.calls(),1);assert.equal(f.sends(),1);
   await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('STALE_APPROVAL'));
-  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+  await assert.rejects(f.manager.fetch('s',judgedUrl));
   assert.equal(f.sends(),1);
 });
 test('manager unknown single is human-final after approval; supersession remains optional',async t=>{
@@ -390,7 +394,7 @@ test('manager unknown single is human-final after approval; supersession remains
 });
 test('manager scope changes invalidate pending execution but review remains actionable',async t=>{
   const f=await managerFixture(t,{advice:{...low,action:'pending'}});
-  await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+  await assert.rejects(f.manager.fetch('s',judgedUrl));
   const [row]=f.rows.values();
   await f.manager.user.setScope('s',['http://127.0.0.1:49124']);
   assert.equal((await f.manager.user.inspect('s',row.id)).state,'stale');
@@ -401,7 +405,7 @@ test('manager shutdown during assessment publishes no approval and sends nothing
   let resolveAdvice;
   const waiting=new Promise(resolve=>{resolveAdvice=resolve;});
   const f=await managerFixture(t,{advice:waiting});
-  const request=f.manager.fetch('s','http://127.0.0.1:49123/catalog');
+  const request=f.manager.fetch('s',judgedUrl);
   const rejected=assert.rejects(request,code('CLOSED'));
   await new Promise(resolve=>setImmediate(resolve));
   const closing=f.manager.close();resolveAdvice(low);
@@ -447,7 +451,7 @@ test('proxy idle eligibility preserves unspent live tasks but not exhausted or e
 test('人工待审跨三十天与重启保留原编号及冻结请求，人工批准只执行一次',async t=>{
  let clock=Date.now();
  const f=await managerFixture(t,{advice:{...low,action:'pending'}});
- const url='http://127.0.0.1:49123/catalog';
+ const url=judgedUrl;
  await assert.rejects(f.manager.fetch('s',url));
  const [old]=f.rows.values();await f.manager.close();clock+=30*86400000;
  let sends=0;
@@ -464,7 +468,7 @@ test('人工待审跨三十天与重启保留原编号及冻结请求，人工�
 test('uncertain host execution is one-shot; user reconciliation requires evidence and fresh approval',async t=>{
  let fail=true;
  const f=await managerFixture(t,{advice:{...low,action:'pending'},send:async()=>{if(fail)throw new Error('synthetic connection reset after dispatch');return new Response('ok');}});
- const url='http://127.0.0.1:49123/catalog';
+ const url=judgedUrl;
  await assert.rejects(f.manager.fetch('s',url));const [old]=f.rows.values();
  await assert.rejects(f.manager.user.decide('s',old.id,'allow'));
  assert.equal(old.executionState,'unknown');assert.equal(f.sends(),1);
@@ -544,7 +548,7 @@ test('native scan cleanup never clears an unknown outcome or another session tas
 test('ordinary parallel requests queue behind four Jev evaluations instead of failing the fifth',async t=>{
  let active=0,peak=0,release;const held=new Promise(resolve=>release=resolve);
  const f=fixture(t,{assess:async()=>{active++;peak=Math.max(peak,active);await held;active--;return low;}});
- const work=Promise.allSettled(Array.from({length:8},(_,i)=>f.broker.propose('burst',input({entries:[{request:request({url:`https://fixture.invalid/read/${i}`}),maxRequests:1}],maxRequests:1}))));
+ const work=Promise.allSettled(Array.from({length:8},(_,i)=>f.broker.propose('burst',input({entries:[{request:request({url:`https://fixture.invalid/read/${i}?op=verify`}),maxRequests:1}],maxRequests:1}))));
  await new Promise(resolve=>setImmediate(resolve));release();const results=await work;
  assert.equal(results.filter(r=>r.status==='fulfilled'&&r.value.state==='active').length,8,JSON.stringify(results));
  assert.equal(peak,4);
@@ -574,19 +578,19 @@ test('排队审核仍检查实际范围变更，但等待不消耗执行窗口',
 test('queued plans stay frozen, destructive requests remain pending and cancellation grants nothing',async t=>{
  let release;const held=new Promise(resolve=>release=resolve);const f=fixture(t,{assess:async()=>{await held;return low;}});
  const starts=Array.from({length:4},(_,i)=>f.broker.propose('s'+i,input()));
- const frozen=input({entries:[{request:request({url:'https://fixture.invalid/queued'}),maxRequests:1}],maxRequests:1});
+ const frozen=input({entries:[{request:request({url:'https://fixture.invalid/queued?op=verify'}),maxRequests:1}],maxRequests:1});
  const queued=f.broker.propose('queued',frozen);frozen.entries[0].request.url='https://fixture.invalid/delete';
  const danger=f.broker.propose('danger',input({entries:[{request:request({method:'DELETE'}),maxRequests:1}],maxRequests:1}));
  const abort=new AbortController();const cancelled=assert.rejects(f.broker.propose('cancelled',input(),{signal:abort.signal}),/stop queued/);abort.abort(new Error('stop queued'));
  release();await Promise.all(starts);await cancelled;
- const result=await queued;assert.equal(f.broker.commandPlane.inspect('queued',result.id).plan.entries[0].request.url,'https://fixture.invalid/queued');
+ const result=await queued;assert.equal(f.broker.commandPlane.inspect('queued',result.id).plan.entries[0].request.url,'https://fixture.invalid/queued?op=verify');
  assert.equal((await danger).state,'pending');assert.equal(f.calls(),6);
 });
 
 test('manager admits an ordinary burst into the bounded review queue without dropping later requests',async t=>{
  let release;const advice=new Promise(resolve=>release=resolve);const f=await managerFixture(t,{advice});
  const origin='http://127.0.0.1:49123';
- const work=Promise.allSettled([...Array.from({length:8},(_,i)=>f.manager.fetch('s',origin+'/read/'+i)),f.manager.fetch('s',origin+'/delete',{method:'DELETE'})]);
+ const work=Promise.allSettled([...Array.from({length:8},(_,i)=>f.manager.fetch('s',origin+'/read/'+i+'?op=verify')),f.manager.fetch('s',origin+'/delete',{method:'DELETE'})]);
  await new Promise(resolve=>setTimeout(resolve,20));assert.equal(f.calls(),4);release(low);
  const results=await work;
  assert.ok(results.slice(0,8).every(r=>r.status==='fulfilled'&&r.value.status===200),JSON.stringify(results));
@@ -596,7 +600,7 @@ test('manager admits an ordinary burst into the bounded review queue without dro
 
 test('pending history retains actual contradictory Jev classification through host-lane conversion',async t=>{
  const f=await managerFixture(t,{advice:{...low,risk:'unknown',raw:'private-provider-prose'}});
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),code('PENDING_OR_REJECTED'));
+ await assert.rejects(f.manager.fetch('s',judgedUrl),code('PENDING_OR_REJECTED'));
  const row=[...f.rows.values()][0];
  assert.match(row.reason,/"risk":"unknown"/);assert.match(row.reason,/"action":"allow"/);
  assert.match(row.reason,/"hardVeto":false/);assert.ok(!JSON.stringify(row).includes('private-provider-prose'));
@@ -621,7 +625,7 @@ test('待审积压不占满内存配额，跨重启恢复密文且绑定原会�
  const dir=mkdtempSync(path.join(tmpdir(),'egress-pending-durable-'));t.after(()=>rmSync(dir,{recursive:true,force:true}));
  const file=path.join(dir,'ledger.sqlite'),key=randomBytes(32),f=fixture(t,{file,key,assess:()=>({...low,action:'pending'})});
  const tasks=[];
- for(let i=0;i<140;i++)tasks.push(await f.broker.propose('s1',input({entries:[{request:request({url:`https://fixture.invalid/item/${i}`,headers:[['authorization','Bearer frozen-secret']]}),maxRequests:1}],maxRequests:1})));
+ for(let i=0;i<140;i++)tasks.push(await f.broker.propose('s1',input({entries:[{request:request({url:`https://fixture.invalid/item/${i}?op=verify`,headers:[['authorization','Bearer frozen-secret']]}),maxRequests:1}],maxRequests:1})));
  f.broker.close();assert.equal(readFileSync(file).includes(Buffer.from('frozen-secret')),false);
  const g=fixture(t,{file,key});g.tick(90*86400000);
  const first=g.broker.commandPlane.inspect('s1',tasks[0].id);assert.equal(first.state,'pending');assert.equal(first.expires,null);
@@ -687,7 +691,7 @@ test('显式无效计算检查不能被忽略或发送',async t=>{
 });
 
 test('审计写入失败不消耗原待审单，并发批准也只能发送一次',async t=>{
- const f=await managerFixture(t,{advice:{...low,action:'pending'}});await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}});await assert.rejects(f.manager.fetch('s',judgedUrl));
  const [row]=f.rows.values(),update=f.store.updateApprovalExecution;f.store.updateApprovalExecution=async()=>{throw new Error('audit unavailable');};
  await assert.rejects(f.manager.user.decide('s',row.id,'allow'));assert.equal(f.sends(),0);
  f.store.updateApprovalExecution=update;const results=await Promise.allSettled([f.manager.user.decide('s',row.id,'allow'),f.manager.user.decide('s',row.id,'allow')]);
@@ -697,30 +701,71 @@ test('审计写入失败不消耗原待审单，并发批准也只能发送一�
 test('待办写入中断后重新读取同请求补齐原任务卡片，不产生无编号永久锁',async t=>{
  const f=await managerFixture(t,{advice:{...low,action:'pending'}}),add=f.store.addPendingApproval;
  f.store.addPendingApproval=async()=>{throw new Error('store unavailable');};
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));
+ await assert.rejects(f.manager.fetch('s',judgedUrl));
  f.store.addPendingApproval=add;
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'),e=>e.approvalId==='approval-1');
+ await assert.rejects(f.manager.fetch('s',judgedUrl),e=>e.approvalId==='approval-1');
  assert.equal(f.calls(),1);await f.manager.user.decide('s','approval-1','allow');assert.equal(f.sends(),1);
 });
 
-test('域名中的危险词不能把普通读取误判为高危动作',()=>{
- for(const host of ['mail','payment','upload','command','dropbox'])assert.equal(requiresHuman({entries:[{request:request({url:`https://${host}.fixture.invalid/read`})}]}),false);
- assert.equal(requiresHuman({entries:[{request:request({url:'https://mail.fixture.invalid/delete'})}]}),false,'路径交给语义审核，不单凭名字定性');
+test('主机名中的危险词不参与判定；确定危害词与可疑词分层处理',()=>{
+ // 主机名/域名从不参与请求语义判定（租户边界另由范围门负责）。
+ for(const host of ['mail','payment','upload','command','dropbox','delete'])assert.equal(requiresHuman({entries:[{request:request({url:`https://${host}.fixture.invalid/read`})}]}),false,host);
+ // 路径里的“确定危害”词：本地终审，不再交给语义审核。
+ for(const url of ['https://fixture.invalid/delete','https://fixture.invalid/deleteUser?id=1','https://mail.fixture.invalid/run?operation=reset'])assert.equal(requiresHuman({entries:[{request:request({url})}]}),true,url);
+ // 只是可疑、不构成确定危害的词：本地不终审，交判定服务判语义。
+ for(const url of ['https://fixture.invalid/api/v1/users/verify','https://fixture.invalid/api/v1/user/unbind','https://fixture.invalid/api/v1/mail/send']){
+  const req=request({url});
+  assert.equal(requiresHuman({entries:[{request:req}]}),false,url);
+  assert.equal(readClearRequest(req),false,url+' 不得被当成明确只读直接放行');
+ }
 });
 
-// [审批收缩 2026-10-14] 读方法的编码歧义不再升为本地硬闸（审计 approval-4：GET ...&info=1% 被本地误挂人工闸），
-// 但仍不得做成自动放行：最终由 Jev 判定；可写方法的编码歧义、二次编码与方法改写头保持硬闸。
-test('编码歧义硬闸只对可写方法保留，读方法交Jev判定',()=>{
- for(const method of ['GET','HEAD','OPTIONS']){
-  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/article?info=1%'})}]}),false,method+' 裸%');
-  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/%2525252541'})}]}),false,method+' 二次编码');
- }
- for(const method of ['POST','PUT','PATCH','DELETE']){
-  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/article?info=1%'})}]}),true,method+' 裸%');
-  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/%2525252541'})}]}),true,method+' 二次编码');
- }
- // 方法/路由改写头对读方法仍是硬闸。
+// [审批收缩 2026-10-14] 本地硬闸只保留“确定危害”（干净删改词、解码后命中的删改词、方法/路由改写头）；
+// 编码歧义（裸%、二次编码）与状态变更词不再由本地终审——审计 approval-4 的 GET ...&info=1% 曾被本地误挂人工闸，
+// 现在这类请求交给判定服务判语义：判不准才挂审批，明确无害就放行。
+test('本地硬闸只保留确定危害，编码歧义与可疑词一律交判定服务',()=>{
+ for(const url of ['https://fixture.invalid/delete','https://fixture.invalid/%64elete','https://fixture.invalid/deleteUser'])
+  for(const method of ['GET','POST','PUT','PATCH'])assert.equal(requiresHuman({entries:[{request:request({method,url})}]}),true,method+' '+url);
+ // 编码歧义读方法：不终审（交判定服务），也不再是自动放行（不是 read-clear）。
+ for(const url of ['https://fixture.invalid/article?info=1%','https://fixture.invalid/%2525252541','https://fixture.invalid/api/v1/logout'])
+  assert.equal(requiresHuman({entries:[{request:request({method:'GET',url})}]}),false,url);
+ // 方法/路由改写头是硬闸。
  for(const [name,value] of [['x-http-method-override','DELETE'],['x-original-url','/delete'],['x-rewrite-url','/delete']])assert.equal(requiresHuman({entries:[{request:request({method:'GET',headers:[[name,value]]})}]}),true,name);
+ // 伪造来源类头不算改写（否则正常代理链读取会被误拦）。
+ for(const name of ['x-forwarded-for','x-real-ip'])assert.equal(requiresHuman({entries:[{request:request({method:'GET',headers:[[name,'203.0.113.9']]})}]}),false,name);
+});
+
+// [审批收缩 2026-10-14] 本地规则先行：明确只读的请求不调用判定服务、直接放行、不建卡。
+test('明确只读的读方法不调用判定服务、不建卡、直接放行',async t=>{
+ const f=fixture(t);
+ const task=await f.broker.propose('s1',input({entries:[{request:request({url:'https://fixture.invalid/api/v1/users/query?userId=3'}),maxRequests:3}]}));
+ assert.equal(task.state,'active');assert.equal(f.calls(),0,'本地只读不得调用判定服务');
+ assert.equal(task.review.effect,'read');assert.equal(task.review.authority,'hard-rules');assert.equal(task.review.mode,'not-applicable');
+ assert.ok(f.broker.dataPlane.claim('s1',task.id,request({url:'https://fixture.invalid/api/v1/users/query?userId=3'})).dispatchId);
+});
+
+test('明确只读的读方法在判定服务不可用时同样放行',async t=>{
+ const f=fixture(t,{assess:()=>{throw new Error('synthetic decision service down');}});
+ const task=await f.broker.propose('s1',input({entries:[{request:request({url:'https://fixture.invalid/catalog'}),maxRequests:1}],maxRequests:1}));
+ assert.equal(task.state,'active');assert.equal(f.calls(),0);
+});
+
+test('本地确定危害即使判定服务判低风险也只挂起，且自动放行被锁死',async t=>{
+ const f=fixture(t,{assess:()=>low});
+ const task=await f.broker.propose('s1',input({entries:[{request:request({method:'GET',url:'https://fixture.invalid/deleteUser?id=1'}),maxRequests:1}],maxRequests:1}));
+ assert.equal(task.state,'pending');assert.equal(task.review.hardVeto,true);assert.equal(task.review.authority,'hard-boundary');
+});
+
+test('路径里的删改词终审，主机名不参与分类判定',async t=>{
+ // 主机名不参与分类：同样是只读路径，危险域名不改变本地判定。
+ for(const host of ['fixture.invalid','mail.fixture.invalid','payment.fixture.invalid','dropbox.fixture.invalid'])assert.equal(readClearRequest(request({url:`https://${host}/api/v1/users/query`})),true,host);
+ const f=fixture(t);
+ const benign=request({url:'https://fixture.invalid/api/v1/users/query?userId=3'});
+ assert.equal((await f.broker.propose('s1',input({entries:[{request:benign,maxRequests:1}],maxRequests:1}))).state,'active');
+ assert.equal(f.calls(),0);
+ // 路径里的删改词：终审挂起，不看主机名。
+ const dangerous=request({url:'https://fixture.invalid/api/v1/deleteUser'});
+ assert.equal((await f.broker.propose('s1',input({entries:[{request:dangerous,maxRequests:1}],maxRequests:1}))).state,'pending');
 });
 
 test('补材料后发布中断可从旧编号恢复同一新单，正文和安全材料均不重建',async t=>{
@@ -735,7 +780,7 @@ test('补材料后发布中断可从旧编号恢复同一新单，正文和安�
 });
 
 test('bash计划待审及人工批准都不抢占独立bash，显式恢复后只绑定一次实际启动',async t=>{
- const f=await managerFixture(t,{advice:{...low,action:'pending'}}),body={entries:[{request:{url:'http://127.0.0.1:49123/catalog',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:10000,purpose:'有界扫描'};
+ const f=await managerFixture(t,{advice:{...low,action:'pending'}}),body={entries:[{request:{url:judgedUrl,method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:10000,purpose:'有界扫描'};
  const task=await f.manager.proposeShellTask('s',body,{});assert.equal(task.state,'pending');
  assert.throws(()=>f.manager.claimShellTask('s',task.id),code('STALE_SHELL_TASK'));
  const decision=await f.manager.user.decide('s',task.approvalId,'allow');assert.equal(decision.resumeTool,'src_egress_plan');
@@ -748,13 +793,13 @@ test('bash计划待审及人工批准都不抢占独立bash，显式恢复后只
 
 test('范围变更后旧单不能批准，但用户仍能明确拒绝清理待办',async t=>{
  const f=await managerFixture(t,{advice:{...low,action:'pending'}});
- await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/catalog'));const [row]=f.rows.values();
+ await assert.rejects(f.manager.fetch('s',judgedUrl));const [row]=f.rows.values();
  await f.manager.user.setScope('s',['http://127.0.0.1:49123']);
  await assert.rejects(f.manager.user.decide('s',row.id,'allow'),code('SCOPE_CHANGED'));
  assert.equal((await f.manager.user.decide('s',row.id,'reject')).state,'denied');assert.equal(row.status,'rejected');assert.equal(f.sends(),0);
 });
 
-for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']]},{method:'POST',url:'https://fixture.invalid/%2525252541'}])test('旧单补材料不能绕过写入/改写/编码闸 '+JSON.stringify(patch),async t=>{
+for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']]},{method:'POST',url:'https://fixture.invalid/deleteOrder'}])test('旧单补材料不能绕过写入/改写/确定危害闸 '+JSON.stringify(patch),async t=>{
  const f=fixture(t),req=request(patch);
  const task=await f.broker.propose('legacy-negative',input({entries:[{request:req,maxRequests:1}],maxRequests:1,hostExecution:{request:req,safety:null}}));
  assert.equal(task.state,'pending');

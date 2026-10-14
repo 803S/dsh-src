@@ -2394,10 +2394,15 @@ test("[local.26] classifyHttpRequest 破坏性词作为 GET 也挂：cancelOrder
   assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/orders/cancelOrder", headers: { authorization: "t" } }).category, "破坏性写入");
   assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/deleteUser", headers: { authorization: "t" } }).category, "破坏性写入");
 });
-test("[local.26] classifyHttpRequest SMS 发包（软约束）：GET + 无 token + 读语义放行（设计可接受）", () => {
-  /* sentVerificationCode 是 GET+副作用词但无破坏性词、非写方法 → 放行；发包拦截是软约束。 */
+test("[local.26] classifyHttpRequest SMS 发包：读方法但命中可疑语义词，改交判定服务（不再本地放行）", () => {
+  /* sentVerificationCode 是 GET+副作用词：旧实现按“GET+无 token”本地放行属于设计可接受的风险；
+     用户指令 2026-10-14 后，本地只在“读方法且无任何可疑语义词”时才豁免，sms 命中可疑词 → 交判定服务（失败一律挂人工）。 */
   const v = classifyHttpRequest({ method: "GET", path: "/api/v1/sms/sentVerificationCode?regionCode=JP&phoneNumber=9012345670", headers: {} });
-  assert.equal(v.require, false);
+  assert.equal(v.verdict, "needs-judgement");
+  assert.equal(v.delegate, true);
+  assert.equal(v.require, true);
+  assert.equal(v.category, "只读疑义");
+  assert.match(v.reason, /sms/);
 });
 
 /* [local.26] 模块一-路线A：src_http 工具集成——本地 mock HTTP 服务器（127.0.0.1，非厂商域名）。

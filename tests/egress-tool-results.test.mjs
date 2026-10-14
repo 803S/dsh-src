@@ -47,7 +47,7 @@ test('人工批准高风险增删改请求是最终放行，但仍绑定原始�
 
 test('差分测试遇待审不继续派生变体，forceAfterProtection不能覆盖审批',async t=>{
  const f=await fixture(t);const research=await f.store.upsertResearch(f.session.id,{intentId:f.intentId,category:'authorization-bypass',hypothesis:'fixture',preconditions:[],status:'hypothesis',stopReason:'',evidence:[]});
- const result=await f.run('src_test_bypass',{intentId:f.intentId,researchId:research.id,category:'authorization-bypass',baseUrl:'http://127.0.0.1:49123',baseline:{path:'/catalog'},variants:[{path:'/catalog',headers:{'x-test':'1'}}],forceAfterProtection:true});
+ const result=await f.run('src_test_bypass',{intentId:f.intentId,researchId:research.id,category:'authorization-bypass',baseUrl:'http://127.0.0.1:49123',baseline:{path:'/catalog?op=verify'},variants:[{path:'/catalog?op=verify',headers:{'x-test':'1'}}],forceAfterProtection:true});
  assert.equal(f.sends(),0);assert.equal(result.requiresDecision,true);assert.ok(result.pendingApprovalId);assert.equal(result.triedCount,0);
  assert.equal((await f.store.sessionData(f.session.id)).coverage[0].status,'blocked');
 });
@@ -70,13 +70,21 @@ const fileAdvice=(plan,exec)=>{
 };
 const origin='http://127.0.0.1:49123',file=origin+'/uploads/fixture-only.txt';
 const fileSender=async(_url,init)=>init.method==='POST'?new Response('created',{status:201,headers:{Location:file,ETag:'"v1"'}}):init.method==='PUT'?new Response('updated',{headers:{ETag:'"v2"'}}):new Response(null,{status:204});
-test('无害上传、强版本绑定的自建文件覆盖/删除自动执行，重复删除不重发',async t=>{
+test('自建文件的覆盖按验证归属自动执行；DELETE 属确定危害只交人工，重复不重发',async t=>{
  const reviewed=[];const f=await fixture(t,{assess:(plan,exec)=>{reviewed.push(exec.verifiedTestObjects);return fileAdvice(plan,exec);},send:fileSender});
  await f.manager.fetch(f.session.id,origin+'/upload',{method:'POST',body:'fixture'});
  await f.manager.fetch(f.session.id,file,{method:'PUT',headers:{'If-Match':'"v1"'},body:'fixture-update'});
- await f.manager.fetch(f.session.id,file,{method:'DELETE',headers:{'If-Match':'"v2"'}});
- assert.equal(f.sends(),3);assert.equal(reviewed[0].length,0);assert.equal(reviewed[1][0].url,file);assert.equal(reviewed[2][0].etag,'"v2"');
- await assert.rejects(f.manager.fetch(f.session.id,file,{method:'DELETE',headers:{'If-Match':'"v2"'}}));assert.equal(f.sends(),3);
+ // 上传（write/new-test-file）与强版本绑定的覆盖（write/owned-test-file+If-Match）仍属有界自动通道：
+ assert.equal(f.sends(),2);assert.equal(reviewed[0].length,0);assert.equal(reviewed[1][0].url,file);assert.equal(reviewed[1][0].etag,'"v1"');
+ // DELETE 是本地确定危害（终审）：即使判定服务给出 destructive+已验归属，也不得自动发送，
+ // 而是挂成冻结单等人工/材料。归属证据仍交给判定服务作说明，不用于放行。
+ let pending;
+ try{await f.manager.fetch(f.session.id,file,{method:'DELETE',headers:{'If-Match':'"v2"'}});}catch(error){pending=error;}
+ assert.equal(pending?.code,'SRC_GATE_PENDING_OR_REJECTED');assert.ok(pending.approvalId,'确定危害必须留下可人工处理的冻结单');
+ assert.equal(f.sends(),2,'确定危害零发送');assert.equal(reviewed[2][0].etag,'"v2"');
+ // 重复同一 DELETE 不得重发，也不得把待审当成可用的旧授权。
+ await assert.rejects(f.manager.fetch(f.session.id,file,{method:'DELETE',headers:{'If-Match':'"v2"'}}),{code:'SRC_GATE_PENDING_OR_REJECTED'});
+ assert.equal(f.sends(),2);
 });
 for(const variant of ['no-proof','other-object','missing-version','changed-account','changed-tenant','stale-version'])test(`自称自己的文件不足以自动删改：${variant}`,async t=>{
  const f=await fixture(t,{assess:fileAdvice,send:fileSender});
@@ -100,14 +108,23 @@ test('追踪头变化不能洗掉人工拒绝，但不同只读操作不连带�
  await f.manager.fetch(f.session.id,origin+'/render',{method:'GET'});assert.equal(f.sends(),1);
 });
 
-test('存活探测待审不能记dead，也不能渲染成已完成',async t=>{
+test('存活探测属明确只读直接放行；探测未确认不得记 dead，也不得渲染成已完成',async t=>{
  const {resetFlagsForTests}=await import('../lib/src/flags.js');const old=process.env.DSH_SRC_SURVEY;resetFlagsForTests();process.env.DSH_SRC_SURVEY='on';
  t.after(()=>{resetFlagsForTests();if(old!==undefined)process.env.DSH_SRC_SURVEY=old;});
- const f=await fixture(t),seed=await f.store.addSurveySeed(f.session.id,{kind:'subdomain',value:'127.0.0.1',source:'user-list',note:'fixture'});
+ let drop=false;
+ const f=await fixture(t,{send:async()=>{if(drop)throw new Error('synthetic dropped connection');return new Response('invalid password',{status:401});}}),seed=await f.store.addSurveySeed(f.session.id,{kind:'subdomain',value:'127.0.0.1',source:'user-list',note:'fixture'});
  await f.manager.user.setScope(f.session.id,['http://127.0.0.1:49123','https://127.0.0.1']);
+ // ① 单次 GET 首页探测是明确只读：直接放行，不建审批卡，401/登录墙判 alive 不丢弃。
  const result=await f.run('src_survey_seed',{action:'probe',seedId:seed.seed.id});
- assert.equal(f.sends(),0);assert.equal(result.requiresDecision,true);assert.ok(result.pendingApprovalId);assert.equal((await f.store.sessionData(f.session.id)).facts.length,0);
- const text=f.render('src_survey_seed',result)[0].text;assert.match(text,/未完成/);assert.ok(text.includes(result.pendingApprovalId));
+ assert.equal(f.sends(),1);assert.equal(result.requiresDecision,undefined);assert.equal(result.pendingApprovalId,undefined);
+ assert.equal(result.counts.alive,1);assert.equal((await f.store.sessionData(f.session.id)).facts.length,0);
+ assert.match(f.render('src_survey_seed',result)[0].text,/→ alive/);
+ // ② 结果未知（传输断连）不得写死为 dead（那会防重探并污染资产判断），必须写成未完成。
+ drop=true;
+ const unknown=await f.run('src_survey_seed',{action:'probe',seedId:seed.seed.id});
+ assert.equal(f.sends(),2);assert.equal(unknown.requiresDecision,true);assert.equal(unknown.stopped,'outcome-unknown');assert.equal(unknown.sent,'unknown');
+ assert.equal((await f.store.sessionData(f.session.id)).facts.length,0,'未确认的探测不得记成 dead');
+ assert.match(f.render('src_survey_seed',unknown)[0].text,/未完成/);
 });
 
 test('同接口不同待审只读验证，批准一个只发送该冻结请求，不互锁',async t=>{

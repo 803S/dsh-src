@@ -31,17 +31,17 @@ async function fixture(t, {assess=()=>low, respond=(_req,res)=>res.end('ok')}={}
   t.after(async()=>{await manager.close();server.closeAllConnections();await new Promise(r=>server.close(r));await rm(home,{recursive:true,force:true});});
   return {get manager(){return manager;},origin,rows,store,arrivals,assessments,home,
     async restart(){await manager.close();manager=await open();},
-    check(path='/check'){return {request:{url:origin+path,method:'GET'},status:200,bodySha256:digest('ok')};},
+    check(path='/check'){return {request:{url:origin+path+'?op=verify',method:'GET'},status:200,bodySha256:digest('ok')};},
   };
 }
 
 test('自动低风险主请求也单独审核附带检查，拒绝危险检查时靶场零到达',async t=>{
-  const f=await fixture(t,{assess:plan=>plan.entries.length===1&&plan.entries[0].request.url.endsWith('/check')
+  const f=await fixture(t,{assess:plan=>plan.entries.length===1&&plan.entries[0].request.url.includes('/check')
     ? {...low,effect:'destructive',risk:'high',action:'pending'} : low});
   await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST',body:'{}'},
     {egressSafetyPlan:{effect:'compute',precondition:f.check()}}),code('UNSAFE_SAFETY_READ'));
   assert.deepEqual(f.arrivals,[]);
-  assert.ok(f.assessments.some(p=>p.entries.length===1&&p.entries[0].request.url.endsWith('/check')));
+  assert.ok(f.assessments.some(p=>p.entries.length===1&&p.entries[0].request.url.includes('/check')));
 });
 
 test('主操作断连不封锁已验证的独立检查，原主操作仍禁止重放',async t=>{
@@ -59,19 +59,19 @@ test('主操作断连不封锁已验证的独立检查，原主操作仍禁止�
 
 test('拒绝持久化后回合取消仍完成拒绝，不留下无法再次处理的待审锁',async t=>{
   const f=await fixture(t,{assess:()=>({...low,action:'pending'})});
-  await assert.rejects(f.manager.fetch('s',f.origin+'/main'));
+  await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}));
   const [row]=f.rows.values(),controller=new AbortController(),update=f.store.updateApprovalExecution;
   f.store.updateApprovalExecution=async(...args)=>{await update.apply(f.store,args);if(args[2].userDecision==='reject')controller.abort(new Error('fixture cancellation'));};
   await f.manager.user.decide('s',row.id,'reject','',controller.signal);
   await f.restart();
   assert.equal((await f.manager.user.inspect('s',row.id)).state,'denied');
-  await assert.rejects(f.manager.fetch('s',f.origin+'/main'),e=>e.state==='denied');
+  await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}),e=>e.state==='denied');
   assert.deepEqual(f.arrivals,[]);
 });
 
 test('授权记录已写入但未发送的中断单可以放弃，冷启动后不被迫执行',async t=>{
   const f=await fixture(t,{assess:()=>({...low,action:'pending'})});
-  await assert.rejects(f.manager.fetch('s',f.origin+'/main'));
+  await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}));
   const [row]=f.rows.values(),controller=new AbortController(),update=f.store.updateApprovalExecution;
   f.store.updateApprovalExecution=async(...args)=>{await update.apply(f.store,args);if(args[2].executionState==='authorized')controller.abort(new Error('fixture cancellation'));};
   await assert.rejects(f.manager.user.decide('s',row.id,'allow','',controller.signal));
@@ -85,7 +85,7 @@ test('授权记录已写入但未发送的中断单可以放弃，冷启动后�
 test('旧版已激活但零发送的人审计划可以拒绝，已有发送记录时不可伪装成未执行',async t=>{
   for(const sent of [false,true]){
     const f=await fixture(t,{assess:()=>({...low,action:'pending'})});
-    await assert.rejects(f.manager.fetch('s',f.origin+'/main'));
+    await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}));
     const [row]=f.rows.values();await f.manager.close();
     const db=new DatabaseSync(f.home+'/control/src-egress/ledger.sqlite'),id=row.url.slice('src-egress://'.length);
     const task=db.prepare('SELECT manifest FROM gate_tasks WHERE id=?').get(id),manifest=JSON.parse(task.manifest);
@@ -102,7 +102,7 @@ test('旧版已激活但零发送的人审计划可以拒绝，已有发送记�
 test('回读自身断连后核对整单能清理该单辅助锁，冷启后重新读取仍可达',async t=>{
   let readbacks=0;
   const f=await fixture(t,{assess:p=>p.entries.length>1?{...low,action:'pending'}:low,
-    respond:(req,res)=>req.url==='/check'&&++readbacks===2?req.socket.destroy():res.end('ok')});
+    respond:(req,res)=>req.url==='/check?op=verify'&&++readbacks===2?req.socket.destroy():res.end('ok')});
   await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST',body:'{}'},
     {egressSafetyPlan:{effect:'compute',precondition:f.check(),verification:f.check()}}));
   const [row]=f.rows.values();const result=await f.manager.user.decide('s',row.id,'allow');
@@ -128,7 +128,7 @@ test('正常自动计算只审核一次相同检查；检查取消或范围改�
       {signal:controller.signal,egressSafetyPlan:{effect:'compute',precondition:f.check(),verification:f.check()}});
     if(mode==='normal'){
       assert.equal(await(await run).text(),'ok');
-      assert.deepEqual(f.arrivals,[['GET','/check'],['POST','/main'],['GET','/check']]);
+      assert.deepEqual(f.arrivals,[['GET','/check?op=verify'],['POST','/main'],['GET','/check?op=verify']]);
     }else {await assert.rejects(run);assert.deepEqual(f.arrivals,[]);}
     assert.equal(f.assessments.length,2);
   }
@@ -136,7 +136,7 @@ test('正常自动计算只审核一次相同检查；检查取消或范围改�
 
 test('同一审批的授权写入过程中拒绝不抢跑；取消后仍可明确拒绝',async t=>{
   const f=await fixture(t,{assess:()=>({...low,action:'pending'})});
-  await assert.rejects(f.manager.fetch('s',f.origin+'/main'));
+  await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}));
   const [row]=f.rows.values(),controller=new AbortController(),update=f.store.updateApprovalExecution;
   let release,entered;const barrier=new Promise(r=>release=r),ready=new Promise(r=>entered=r);
   f.store.updateApprovalExecution=async(...args)=>{await update.apply(f.store,args);if(args[2].executionState==='authorized'){entered();await barrier;}};
@@ -148,7 +148,7 @@ test('同一审批的授权写入过程中拒绝不抢跑；取消后仍可明�
 });
 
 test('旧自动计划冷启补核验辅助请求，拒绝后不留下无审批编号的死锁',async t=>{
-  const f=await fixture(t,{assess:p=>p.entries.length===1&&p.entries[0].request.url.endsWith('/check')?{...low,effect:'destructive',risk:'high',action:'pending'}:low});
+  const f=await fixture(t,{assess:p=>p.entries.length===1&&p.entries[0].request.url.includes('/check')?{...low,effect:'destructive',risk:'high',action:'pending'}:low});
   const scope=f.manager.user.getScope('s');await f.manager.close();
   const key=await readFile(f.home+'/control/src-egress/binding-key'),filename=f.home+'/control/src-egress/ledger.sqlite';
   const broker=createEgressBroker({filename,key,scopeFor:()=>scope,assess:async()=>low});
@@ -168,7 +168,7 @@ test('旧自动计划冷启补核验辅助请求，拒绝后不留下无审批�
 
 test('旧版中断的拒绝可重复完成，不能改为批准或重新发送',async t=>{
   const f=await fixture(t,{assess:()=>({...low,action:'pending'})});
-  await assert.rejects(f.manager.fetch('s',f.origin+'/main'));
+  await assert.rejects(f.manager.fetch('s',f.origin+'/main',{method:'POST'}));
   const [row]=f.rows.values();
   Object.assign(row,{status:'rejected',userDecision:'reject',executionState:'rejected'});
   await f.restart();
@@ -192,5 +192,5 @@ test('审批审核期间核对旧锁不能抢跑写出相互矛盾的审批结�
   }finally{release();}
   assert.equal((await decision).executionState,'executed');
   assert.equal(row.executionState,'executed');assert.equal(row.status,'approved');
-  assert.deepEqual(f.arrivals,[['GET','/check'],['POST','/main']]);
+  assert.deepEqual(f.arrivals,[['GET','/check?op=verify'],['POST','/main']]);
 });
