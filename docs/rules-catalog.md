@@ -12,7 +12,8 @@
 | evidence id 必须可解析（concreteLossEvidence 指向本会话真实节点） | store addFinding 引用校验 | prompt 证据诚实段 | 顺丰会话实证（2026-09-08） |
 | HTTP 授权闸：破坏性/越权/未授权写请求异步挂起待审，fail-closed | src_http execute 判据 + approval-locks 硬闸 | src_http description【判据】【审批锁】 | local.26/31/54/60/67 迭代 |
 | 审批挂起期间同 host+path 禁止绕行（Burp MCP/curl 等通道直接拒绝） | approval-locks 桥接层拒绝 | src_http description【审批锁，硬闸】+ prompt 禁止绕行段 | 2026-08-22 Burp 破案（SSE 绕行路径封堵） |
-| 探测范围=goal 主域 ∪ 资产清单（资产清单即许可）；excluded 不放行 | 各探测工具 store 范围校验（报 outside the authorized goal host） | prompt 授权段；recon/audit persona【授权边界=资产清单】 | local.43 |
+| 范围闸只约束写/影响类（读/枚举/探测不受限）；写类授权=用户声明域名（整域）∪精确 origin；资产清单=归属与写许可来源 | src_http/src_scan_surface/src_collect_* store 判定 + egress 范围闸（写类报 SRC_GATE_OUT_OF_SCOPE） | prompt 授权段；recon/audit persona【只读不受限 / 写类看归属】 | local.43 → 2026-10-13 用户指令（只读不再被挡） |
+| excluded 资产（用户/agent 明确排除）读与写一律拦 | 各探测/发送工具 store 判定（报「已被资产清单标记 excluded」） | prompt 授权段 | local.43 演进 |
 | finalize 硬拦四项（pending 待办/blocked 无待办/可推导新方向/覆盖未标） | src_finalize_engagement execute | prompt 主循环 4 | local.44+ 迭代 |
 | finding 报告必填 rawRequest（Burp 格式）+ entryPoint + vulnType + attackChain | src_submit/finalize 门禁 | prompt 报告边界段 | local.60/72 |
 | intent 等价去重（同目标+范围+验证方法只留一个） | src_add_intent store 校验 | prompt 主循环 1 | local.12 |

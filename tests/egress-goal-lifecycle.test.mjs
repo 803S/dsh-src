@@ -26,11 +26,12 @@ const original='http://127.0.0.1:23456',other='http://127.0.0.1:34567';
 test('goal reset preserves scope rejections and approval IDs across manager restart',async t=>{
  const {store,start,sent}=await setup(t),session='goal-reset-rejection';let manager=await start();
  await store.initGoal(session,{target:'127.0.0.1',objective:'original work'});
- const first=await pending(manager,session,original+'/read');
+ // 范围卡只由写类请求产生（只读不挂卡）。
+ const first=await pending(manager,session,original+'/read',{method:'POST'});
  await manager.user.decide(session,first.approvalId,'reject');
  await store.initGoal(session,{target:'different.invalid',objective:'new work cannot erase rejection'});
- assert.equal((await pending(manager,session,original+'/read')).approvalId,first.approvalId);
- const second=await pending(manager,session,other+'/read');assert.notEqual(second.approvalId,first.approvalId);
+ assert.equal((await pending(manager,session,original+'/read',{method:'POST'})).approvalId,first.approvalId);
+ const second=await pending(manager,session,other+'/read',{method:'POST'});assert.notEqual(second.approvalId,first.approvalId);
  await manager.close();manager=await start();
  assert.equal((await manager.user.inspect(session,first.approvalId)).state,'rejected');
  assert.equal((await manager.user.inspect(session,second.approvalId)).state,'pending');
@@ -40,7 +41,7 @@ test('goal reset preserves scope rejections and approval IDs across manager rest
 test('goal reset during scope confirmation cannot rebind the confirmed origins or revive rejected tasks',async t=>{
  const {store,start,sent}=await setup(t),manager=await start(),session='goal-reset-confirming';
  await store.initGoal(session,{target:'127.0.0.1',objective:'original work'});
- const scope=await pending(manager,session,original+'/read');
+ const scope=await pending(manager,session,original+'/read',{method:'POST'});
  const update=store.updateApprovalExecution.bind(store);let reset=false;
  store.updateApprovalExecution=async(s,id,patch)=>{
   const row=await update(s,id,patch);
@@ -134,11 +135,12 @@ test('domain deletion removes durable scope and active grants without affecting 
  await store.deleteTargetData('removed.invalid',await store.planTargetDeletion('removed.invalid'));
  assert.equal(manager.user.getScope('removed'),undefined);
  assert.ok(manager.user.getScope('unrelated'));
- await assert.rejects(manager.fetch('removed',url));assert.equal(sent.length,0);
+ // 目标数据已删除：本会话的 goal 随之下线（任何方法都发不出去），且不产生残留授权。
+ await assert.rejects(manager.fetch('removed',url,{method:'POST'}));assert.equal(sent.length,0);
  assert.equal((await manager.fetch('unrelated',url)).status,200);
  await manager.close();manager=await start();assert.equal(manager.user.getScope('removed'),undefined);
  await store.initGoal('removed',{target:'removed.invalid',objective:'New explicit engagement'});
- const approval=await pending(manager,'removed',url);await manager.user.decide('removed',approval.approvalId,'allow');
+ const approval=await pending(manager,'removed',url,{method:'POST'});await manager.user.decide('removed',approval.approvalId,'allow');
  assert.equal((await manager.fetch('removed',original+'/fresh')).status,200);
 });
 
@@ -147,7 +149,8 @@ test('domain deletion cancels late scope and task approvals after their audit wr
   const {store,start,sent}=await setup(t,{action:'pending'}),manager=await start(),session='late-'+kind;
   await store.initGoal(session,{target:session+'.invalid',objective:'Late approval must not revive authority'});
   if(kind==='task')await manager.user.setScope(session,[original]);
-  const task=kind==='scope'?await pending(manager,session,original+'/read'):await manager.propose(session,{entries:[{request:{url:original+'/read',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
+  /* 范围类待审必须由写/影响类请求触发（只读不再挂范围卡）。 */
+  const task=kind==='scope'?await pending(manager,session,original+'/read',{method:'POST'}):await manager.propose(session,{entries:[{request:{url:original+'/read',method:'GET'},maxRequests:1}],maxRequests:1,minIntervalMs:250,lifetimeMs:30000,purpose:'Read fixture'});
   const update=store.updateApprovalExecution.bind(store);let release,entered;
   const barrier=new Promise(resolve=>release=resolve),waiting=new Promise(resolve=>entered=resolve);
   store.updateApprovalExecution=async(...args)=>{const result=await update(...args);entered();await barrier;return result;};

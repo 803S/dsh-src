@@ -47,44 +47,49 @@ async function fixture(t,{advice=low}={}){
  const manager=await createEgressManager({home,allowLoopbackFixtures:true,storeFor:async()=>store,assess:async()=>{assessments++;return advice;},directFetch:async(url,init)=>{sent.push({url,method:init.method,headers:init.headers});return new Response('normal-response');}});
  t.after(async()=>{await manager.close();await rm(home,{recursive:true,force:true});});return {manager,store,home,rows,sent,assessments:()=>assessments};
 }
-test('fresh session: first normal request creates scope confirmation, no preconfigured authorization',async t=>{
+test('fresh session: 写类首请求挂范围确认，读类首请求不再挂卡，都不预置授权',async t=>{
  const f=await fixture(t),session=randomUUID(),url='http://127.0.0.1:23456/';
- const options={headers:{'User-Agent':'curl/8.7.1',Accept:'*/*'}};
- let blocked;try{await f.manager.fetch(session,url,options);}catch(e){blocked=e;}
- assert.equal(blocked.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(blocked.reason,'scope-confirmation-required');assert.ok(blocked.approvalId);assert.equal(f.sent.length,0);assert.equal(f.assessments(),0);
+ // [2026-10-13 用户指令] 读取/枚举/探测不因范围被挡：新鲜会话的只读直接发，只记只读通道。
+ const read=await f.manager.fetch(session,url);assert.equal(read.status,200);assert.deepEqual(f.manager.user.getScope(session).origins,[]);assert.deepEqual(f.manager.user.getScope(session).readOrigins,['http://127.0.0.1:23456']);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ // 写类首请求：本地没有任何声明范围 → 挂范围确认单，未发送。
+ const options={headers:{'User-Agent':'curl/8.7.1',Accept:'*/*'},method:'POST'};
+ let blocked;try{await f.manager.fetch(session,'http://127.0.0.1:23457/',options);}catch(e){blocked=e;}
+ assert.equal(blocked.code,'SRC_GATE_PENDING_OR_REJECTED');assert.equal(blocked.reason,'scope-confirmation-required');assert.ok(blocked.approvalId);assert.equal(f.sent.length,1);assert.equal(f.assessments(),1);
  const pending=[...f.rows.values()][0];assert.equal(pending.method,'SCOPE');assert.equal(pending.category,'egress/scope');
  // The response to the actual request—not fixture setup—triggers the user action.
  const decision=await f.manager.user.decide(session,blocked.approvalId,'allow','Confirm the requested loopback fixture only');
- assert.equal(decision.sent,false);assert.equal(f.sent.length,0);
- const response=await f.manager.fetch(session,url,options);assert.equal(await response.text(),'normal-response');assert.equal(f.sent.length,1);assert.equal(f.assessments(),1);assert.equal(f.sent[0].headers['user-agent'],'curl/8.7.1');assert.equal(f.sent[0].headers.accept,'*/*');
+ assert.equal(decision.sent,false);assert.equal(f.sent.length,1);
+ const response=await f.manager.fetch(session,'http://127.0.0.1:23457/',options);assert.equal(await response.text(),'normal-response');assert.equal(f.sent.length,2);assert.equal(f.assessments(),2);assert.equal(f.sent[1].headers['user-agent'],'curl/8.7.1');assert.equal(f.sent[1].headers.accept,'*/*');
  // Scope confirmation does not authorize a DELETE, even if advisor says low.
- await assert.rejects(f.manager.fetch(session,url,{method:'DELETE'}),{code:'SRC_GATE_PENDING_OR_REJECTED'});assert.equal(f.sent.length,1);
+ await assert.rejects(f.manager.fetch(session,'http://127.0.0.1:23457/',{method:'DELETE'}),{code:'SRC_GATE_PENDING_OR_REJECTED'});assert.equal(f.sent.length,2);
 });
-test('scope pending requests deduplicate and rejection never grants or silently reprompts',async t=>{
+test('范围卡只由写类请求产生：挂起去重、拒绝即终态，且拒绝后连只读也不再发',async t=>{
  const f=await fixture(t),session=randomUUID(),url='http://127.0.0.1:23456/';
- const results=await Promise.allSettled(Array.from({length:5},()=>f.manager.fetch(session,url)));
+ const results=await Promise.allSettled(Array.from({length:5},()=>f.manager.fetch(session,url,{method:'POST'})));
  assert.equal(f.rows.size,1);const id=results[0].reason.approvalId;assert.ok(results.every(r=>r.status==='rejected'&&r.reason.approvalId===id));
- await f.manager.user.decide(session,id,'reject');await assert.rejects(f.manager.fetch(session,url),{code:'SRC_GATE_PENDING_OR_REJECTED',state:'rejected'});
+ await f.manager.user.decide(session,id,'reject');
+ // 人工明确拒绝的 origin：连只读也不发（询问式只读只在「没有人工拒绝」时放行）。
+ await assert.rejects(f.manager.fetch(session,url),{code:'SRC_GATE_PENDING_OR_REJECTED',state:'rejected'});
  assert.equal(f.rows.size,1);assert.equal(f.manager.user.getScope(session),undefined);assert.equal(f.sent.length,0);
  await assert.rejects(f.manager.user.decide(session,id,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
 });
 test('scope approval cannot cross sessions or overwrite a scope confirmed in the meantime',async t=>{
  const f=await fixture(t),url='http://127.0.0.1:23456/';let id;
- try{await f.manager.fetch('one',url);}catch(e){id=e.approvalId;}
+ try{await f.manager.fetch('one',url,{method:'POST'});}catch(e){id=e.approvalId;}
  await assert.rejects(f.manager.user.decide('two',id,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
  await f.manager.user.setScope('one',['http://127.0.0.1:34567']);
  await assert.rejects(f.manager.user.decide('one',id,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});assert.deepEqual(f.manager.user.getScope('one').origins,['http://127.0.0.1:34567']);
 });
 test('scope decision persistence failure cannot grant scope',async t=>{
  const f=await fixture(t);let id;
- try{await f.manager.fetch('persist-failure','http://127.0.0.1:23456/');}catch(e){id=e.approvalId;}
+ try{await f.manager.fetch('persist-failure','http://127.0.0.1:23456/',{method:'POST'});}catch(e){id=e.approvalId;}
  f.store.updateApprovalExecution=async()=>{throw new Error('synthetic storage failure');};
  await assert.rejects(f.manager.user.decide('persist-failure',id,'allow'),/storage failure/);
  assert.equal(f.manager.user.getScope('persist-failure'),undefined);assert.equal(f.sent.length,0);
 });
 test('scope final UI persistence failure reports the committed user decision honestly',async t=>{
  const f=await fixture(t);let id;
- try{await f.manager.fetch('ui-failure','http://127.0.0.1:23456/');}catch(e){id=e.approvalId;}
+ try{await f.manager.fetch('ui-failure','http://127.0.0.1:23456/',{method:'POST'});}catch(e){id=e.approvalId;}
  const update=f.store.updateApprovalExecution;let writes=0;
  f.store.updateApprovalExecution=async(...args)=>{if(++writes===2)throw new Error('synthetic UI write failure');return update(...args);};
  const decision=await f.manager.user.decide('ui-failure',id,'allow');
@@ -95,7 +100,7 @@ test('scope final UI persistence failure reports the committed user decision hon
 });
 test('cleared scope approval row cannot be confirmed by a cached stale binding',async t=>{
  const f=await fixture(t);let id;
- try{await f.manager.fetch('cleared-goal','http://127.0.0.1:23456/');}catch(e){id=e.approvalId;}
+ try{await f.manager.fetch('cleared-goal','http://127.0.0.1:23456/',{method:'POST'});}catch(e){id=e.approvalId;}
  f.rows.delete(id);
  await assert.rejects(f.manager.user.decide('cleared-goal',id,'allow'),{code:'SRC_GATE_STALE_APPROVAL'});
  assert.equal(f.manager.user.getScope('cleared-goal'),undefined);
@@ -211,7 +216,7 @@ test('closed scope service rejects outstanding proposal without authorizing',asy
 test('real manager ledger restart restores pending scope ID and preserves rejected scope',async t=>{
  const f=await fixture(t);let pendingId,rejectedId;
  for(const session of ['restart-pending','restart-rejected']){
-  try{await f.manager.fetch(session,'http://127.0.0.1:23456/');}catch(error){if(session==='restart-pending')pendingId=error.approvalId;else rejectedId=error.approvalId;}
+  try{await f.manager.fetch(session,'http://127.0.0.1:23456/',{method:'POST'});}catch(error){if(session==='restart-pending')pendingId=error.approvalId;else rejectedId=error.approvalId;}
  }
  await f.manager.user.decide('restart-rejected',rejectedId,'reject');await f.manager.close();
  let sent=0;
@@ -337,17 +342,22 @@ test('多域声明一次到位：域内子域发现自动放行不再挂范围�
  // 资产收集发现的子域（另一个 origin）直接发；不产生任何审批行。
  assert.equal((await f.manager.fetch(s,'https://api.fixture.test:8443/read')).status,200);
  assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);assert.deepEqual(lookups,['app.fixture.invalid','api.fixture.test']);
- // 域外目标:本地拒发且不挂卡（归属性确认单才是新主域的入口）。
- await assert.rejects(f.manager.fetch(s,'https://evil.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});
- assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
+ // [2026-10-13 用户指令] 读取/枚举/探测不受范围限制：域外只读直接发，只记只读通道；写类仍只看人类声明的范围。
+ assert.equal((await f.manager.fetch(s,'https://evil.test/read')).status,200);
+ assert.deepEqual(f.manager.user.getScope(s).readOrigins,['https://evil.test']);
+ assert.deepEqual(f.manager.user.getScope(s).origins,['https://api.fixture.test:8443','https://app.fixture.invalid']);
+ assert.equal(f.rows.size,0);assert.equal(f.sent.length,2);assert.deepEqual(lookups,['app.fixture.invalid','api.fixture.test','evil.test']);
+ // 只读通道不授权写：同一个 host 的写方法仍然本地拒发（扩域入口＝人类声明或归属确认单）。
+ await assert.rejects(f.manager.fetch(s,'https://evil.test/write',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ assert.equal(f.sent.length,2);
  // 只写了一个子域 URL，也等于声明该注册域：兄弟子域直接发。
  await f.manager.user.seedScope('inferred',userSession('inferred','目标资产：https://www.fixture.test/login。'));
  assert.deepEqual(f.manager.user.getScope('inferred').domains,['fixture.test']);
  assert.equal((await f.manager.fetch('inferred','https://api.fixture.test/read')).status,200);
- // 共享托管顶点不推父域：a.github.io 声明不授权 b.github.io（各属不同租户）。
+ // 共享托管顶点不推父域：a.github.io 声明不授权 b.github.io（各属不同租户）：写类拒发，只读不受限制。
  await f.manager.user.seedScope('shared',userSession('shared','目标资产：https://a.github.io/x。'));
  assert.deepEqual(f.manager.user.getScope('shared').domains,[]);
- await assert.rejects(f.manager.fetch('shared','https://b.github.io/x'),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ await assert.rejects(f.manager.fetch('shared','https://b.github.io/x',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
  assert.equal((await f.manager.fetch('shared','https://a.github.io/y')).status,200);
 });
 
@@ -372,7 +382,7 @@ test('模型、引用、合成回注、子会话不能伪造原始人类范围�
 });
 test('已有人工范围拒绝不能被原始目标消息重新自动授权',async t=>{
  const f=await fixture(t),s='rejected-user',origin='http://127.0.0.1:23456';let id;
- try{await f.manager.fetch(s,origin+'/read');}catch(e){id=e.approvalId;}
+ try{await f.manager.fetch(s,origin+'/read',{method:'POST'});}catch(e){id=e.approvalId;}
  assert.ok(id);
  await f.manager.user.decide(s,id,'reject');
  await f.manager.user.seedScope(s,userSession(s,`针对该资产测试 ${origin}`));
@@ -434,7 +444,7 @@ test('整域确认只为域内新origin执行DNS固定，不重新挂审或改�
  const f=await fixture(t),s='domain-expansion';await f.manager.user.confirmDomain(s,'fixture.test','allow');const revision=f.manager.user.getScope(s).revision;
  assert.equal((await f.manager.fetch(s,'https://api.fixture.test:8443/read')).status,200);
  assert.deepEqual(lookups,['api.fixture.test']);assert.deepEqual(f.manager.user.getScope(s).origins,['https://api.fixture.test:8443']);assert.equal(f.manager.user.getScope(s).revision,revision);assert.equal(f.rows.size,0);assert.equal(f.sent.length,1);
- await assert.rejects(f.manager.fetch(s,'https://evil-fixture.test/read'),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,1);assert.deepEqual(lookups,['api.fixture.test']);
+ await assert.rejects(f.manager.fetch(s,'https://evil-fixture.test/read',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});assert.equal(f.sent.length,1);assert.deepEqual(lookups,['api.fixture.test']);
 });
 
 test('先否决域名不阻塞其他明确人类资产初始化，也不能丢失原拒绝',async t=>{

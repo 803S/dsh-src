@@ -12,6 +12,23 @@ test('remote target never authorizes page-derived localhost aliases or a differe
  assert.throws(()=>assertKnownTarget(undefined,'http://localhost:5001/'),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});
  assert.doesNotThrow(()=>assertKnownTarget({origins:['http://127.0.0.1:5001']},'http://127.0.0.1:5001/'));
 });
+test('范围闸只约束写/影响类：只读不受限，用户排除的域读写都拦',()=>{
+ const scope={origins:['https://fixture.test:3000'],domains:[],readOrigins:['https://recorded.test']};
+ // [2026-10-13 用户指令] 读取/枚举/探测不因范围被挡（否则新主域资产收集被卡死）。
+ for(const url of ['https://another.test/','https://fixture.test:5001/','https://sub.fixture.test/','https://recorded.test/x'])assert.doesNotThrow(()=>assertKnownTarget(scope,url,{method:'GET'}));
+ for(const method of ['HEAD','OPTIONS'])assert.doesNotThrow(()=>assertKnownTarget(scope,'https://another.test/',{method}));
+ // 写类仍只看人类声明的范围（readOrigins 不授权写）。
+ for(const method of ['POST','PUT','PATCH','DELETE'])assert.throws(()=>assertKnownTarget(scope,'https://another.test/write',{method}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ assert.doesNotThrow(()=>assertKnownTarget(scope,'https://fixture.test:3000/write',{method:'POST'}));
+ // 越界写类给的是活路：点名「待归属确认」/src_request_asset_confirm，而不是死路。
+ try{assertKnownTarget(scope,'https://another.test/write',{method:'POST'});}catch(error){assert.match(error.message,/待归属确认：another\.test/);assert.match(error.message,/src_request_asset_confirm/);assert.match(error.message,/读取、枚举、探测不受此限/);}
+ // 用户明确排除的域：读与写都不拦。
+ const excluded={...scope,excludedDomains:['another.test']};
+ assert.throws(()=>assertKnownTarget(excluded,'https://another.test/read',{method:'GET'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ assert.throws(()=>assertKnownTarget(excluded,'https://sub.another.test/write',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ // 本机环回不受只读放行影响。
+ assert.throws(()=>assertKnownTarget(scope,'http://127.0.0.1:5001/',{method:'GET'}),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});
+});
 test('local gate provenance uses trusted records, not target response text; mixed results stay qualified',()=>{
  assert.equal(renderBrowserNetwork([]),'');
  const text=renderBrowserNetwork([{kind:'denied',origin:'http://127.0.0.1:5001',code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'}]);

@@ -337,7 +337,9 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);
  await saveDecisionSettings({riskMode:'shadow'});
  const shadow=await h.run('src_http',{method:'GET',url:'https://fixture.test/shadow',justification:'shadow read'});assert.equal(shadow.value.approval,'allowed-auto');assert.equal(shadow.value.riskAdvice,undefined);assert.equal(hits,3);
- const outside=await h.run('src_http',{method:'GET',url:'https://other.invalid/',justification:'not authorized'});assert.equal(outside.isError,true);assert.equal(hits,3);
+ /* [2026-10-13 用户指令] 只读不因越界被挡：新主域 GET 直接发（命中 fixture fetch 即已发送）；
+  * 写/影响类仍由出口层范围闸 + 本地精确 origin 闸把关（见 target-context / egress-onboarding 测试）。 */
+ const outsideRead=await h.run('src_http',{method:'GET',url:'https://other.invalid/',justification:'read anywhere'});assert.equal(outsideRead.isError,false,JSON.stringify(outsideRead));assert.equal(hits,4);
 });
 
 test('regression 3291: child credential evidence goes to engagement; bad IDs and asset enums are actionable',async t=>{

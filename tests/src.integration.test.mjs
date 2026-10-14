@@ -691,12 +691,24 @@ test("src_collect_dorks generates five-category queries and records facts", asyn
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("src_collect_dorks rejects out-of-scope domains", async () => {
+test("src_collect_dorks 只读：不再因域归属被拦（excluded 除外），越界只给归属提示", async () => {
   const h = harness();
   const parent = h.exec("p");
   await h.run("src_add_goal", { target: "https://example.test", objective: "dorks", authorization: "SRC" }, parent);
   await h.run("src_add_intent", { title: "dorks侦察", goalId: "goal-1" }, parent);
-  await assert.rejects(() => h.run("src_collect_dorks", { intentId: "intent-1", domain: "evil-elsewhere.com" }, parent), /outside the authorized goal host/);
+  const original = globalThis.fetch;
+  try {
+    let hits = 0;
+    globalThis.fetch = async () => { hits++; return new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } }); };
+    /* [2026-10-13 用户指令] dorks 是被动只读搜索：新主域不再被范围闸拦，改为附 attributionNote 交父会话做归属确认。 */
+    const out = await h.run("src_collect_dorks", { intentId: "intent-1", domain: "evil-elsewhere.com" }, parent);
+    assert.ok(out.queries > 0);
+    assert.match(out.attributionNote, /不在 goal 主域与资产清单内/);
+    assert.ok(hits > 0);
+    /* excluded 域：判不属于本目标，只读也不碰。 */
+    await h.run("src_add_asset", { type: "root-domain", value: "evil-elsewhere.com", source: "测试排除", status: "excluded" }, parent);
+    await assert.rejects(() => h.run("src_collect_dorks", { intentId: "intent-1", domain: "evil-elsewhere.com" }, parent), /已被资产清单标记 excluded/);
+  } finally { globalThis.fetch = original; }
 });
 
 test("src_import_traffic parses HAR, records full auth profiles and skips out-of-scope", async () => {
@@ -2502,32 +2514,38 @@ test("[local.54] src_http credentialRef：放行请求注入认证头 + 挂起�
     assert.equal(seen[2].authorization, "Bearer legacy-raw-token", "内联凭据重放恢复");
   } finally { server.close(); }
 });
-test("[local.26] src_http 目标越界（非授权 host）抛错", async () => {
+test("[local.26] src_http 只读不再因越界/未登记被挡；精确 origin 的写/端口仍拦", async () => {
   const h = harnessWithApproval({ policy: "allow" });
   const parent = h.exec("http5");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "mock 验证越界" }, parent);
-  await assert.rejects(() => h.run("src_http", { url: "http://example.test/evil", method: "GET", justification: "越界" }, parent), /outside the authorized goal host/);
+  /* [2026-10-13 用户指令] 读取/枚举/探测不因范围被挡：新主域只读直接发（这里拿到网络层错误，不是范围错误）。 */
+  await assert.rejects(() => h.run("src_http", { url: "http://example.test/evil", method: "GET", justification: "越界只读" }, parent), (e) => { assert.doesNotMatch(String(e?.message ?? e), /outside the authorized goal host|not in the asset inventory|SRC_GATE_OUT_OF_SCOPE/); return true; });
+  /* 写/影响类不得静默外发：无认证头的 POST 会被本地红线规则挂起（审批前 status=0，不发包），porte 越界同样走出口层范围闸。 */
+  const write = await h.run("src_http", { url: "http://127.0.0.1:5001/evil", method: "POST", body: "{}", justification: "越界写" }, parent);
+  assert.equal(write.approval, "pending");
+  assert.equal(write.status, 0);
 });
 
-test("[local.43] 资产清单即许可：src_add_asset 登记后探测放行（含子域/URL 形态值），excluded 不放行", async () => {
+test("[local.43] 只读不因未登记被挡；excluded 资产读与写都拦", async () => {
   const h = harnessWithApproval({ policy: "allow" });
   const parent = h.exec("http6");
   await h.run("src_add_goal", { target: "xiaomi.test", objective: "资产授权验证" }, parent);
-  /* 未登记：goal 主域外的 host 仍拒绝，报错带资产清单指引 */
-  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "未登记" }, parent), /outside the authorized goal host and not in the asset inventory/);
-  /* 登记资产（candidate 默认）→ 精确 host 过授权闸（后续报网络错误而非越界） */
+  /* 未登记 host 的只读：不再被拦（拿到网络层错误，而不是范围/清单错误）。 */
+  const notScopeGate = (e) => { assert.doesNotMatch(String(e?.message ?? e), /outside the authorized goal host|not in the asset inventory|SRC_GATE_OUT_OF_SCOPE|已被资产清单标记 excluded/); return true; };
+  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "未登记只读" }, parent), notScopeGate);
+  /* 登记资产（candidate 默认）→ 同样过闸（后续报网络错误而非越界） */
   const a1 = await h.run("src_add_asset", { type: "subdomain", value: "ai.mi.test", source: "CT 日志发现" }, parent);
   assert.match(a1.id, /^asset-\d+$/);
-  const notGate = (e) => { assert.ok(!/outside the authorized goal host/.test(e.message), `应过授权闸，实际: ${e.message}`); return true; };
-  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "已登记" }, parent), notGate);
+  await assert.rejects(() => h.run("src_http", { url: "http://ai.mi.test/x", method: "GET", justification: "已登记" }, parent), notScopeGate);
   /* 资产子域同样覆盖 */
-  await assert.rejects(() => h.run("src_http", { url: "http://preview.ai.mi.test/x", method: "GET", justification: "子域" }, parent), notGate);
+  await assert.rejects(() => h.run("src_http", { url: "http://preview.ai.mi.test/x", method: "GET", justification: "子域" }, parent), notScopeGate);
   /* URL 形态值 + 描述尾巴的派生 */
   await h.run("src_add_asset", { type: "endpoint", value: "https://open.api.test/ (HTTP/2 200, MIFE)", source: "JS 提取" }, parent);
-  await assert.rejects(() => h.run("src_http", { url: "http://open.api.test/x", method: "GET", justification: "URL 形态登记" }, parent), notGate);
-  /* excluded 资产不作为授权依据 */
+  await assert.rejects(() => h.run("src_http", { url: "http://open.api.test/x", method: "GET", justification: "URL 形态登记" }, parent), notScopeGate);
+  /* excluded 资产：判不属于本目标，读与写都一律拦（用户/agent 的明确排除不得被只读通道绕过） */
   await h.run("src_add_asset", { type: "subdomain", value: "parked.test", source: "通配符解析误报", status: "excluded" }, parent);
-  await assert.rejects(() => h.run("src_http", { url: "http://parked.test/x", method: "GET", justification: "已排除" }, parent), /outside the authorized goal host/);
+  await assert.rejects(() => h.run("src_http", { url: "http://parked.test/x", method: "GET", justification: "已排除" }, parent), /已被资产清单标记 excluded/);
+  await assert.rejects(() => h.run("src_http", { url: "http://parked.test/x", method: "POST", body: "{}", justification: "已排除" }, parent), /已被资产清单标记 excluded/);
 });
 
 test("[local.43] src_state 输出 assetScope（schema 同步）+ 资产大小写不敏感合并升状态 + dorks 双向覆盖 + lossless", async () => {
@@ -2644,7 +2662,7 @@ test("[local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed �
   const state2 = await h.run("src_state", {}, parent);
   const excludedAsset = (state2.assets ?? []).find((a) => a.value === "other.test");
   assert.equal(excludedAsset?.status, "excluded");
-  await assert.rejects(() => h.run("src_http", { url: "http://www.other.test/x", method: "GET", justification: "应仍拒绝" }, parent), /outside the authorized goal host/);
+  await assert.rejects(() => h.run("src_http", { url: "http://www.other.test/x", method: "GET", justification: "应仍拒绝" }, parent), /已被资产清单标记 excluded/);
 });
 
 test("[local.44] assetScope.byStatus 状态分布 + finalize 未决归属确认软警告", async () => {
@@ -4864,7 +4882,7 @@ test('local.125: error templates do not discover applications; missing length st
   assert.equal(scan.responses,3);assert.equal(scan.hints,0);assert.equal(scan.multiBackendNote,undefined);assert.equal(scan.results[0].length,null);assert.ok(scan.results[0].sampleBytes>0);
   await h.run('src_set_goal_target',{target:'fixture.test'},exec);
   let sends=0;globalThis.fetch=async()=>{sends++;return new Response('unexpected')};
-  await assert.rejects(h.run('src_http',{url:'https://fixture.test:5001/',method:'GET',justification:'must stay exact'},exec),{code:'SRC_GATE_OUT_OF_SCOPE'});
+  await assert.rejects(h.run('src_http',{url:'https://fixture.test:5001/',method:'POST',body:'{}',justification:'written scope must stay exact'},exec),{code:'SRC_GATE_OUT_OF_SCOPE'});
   assert.equal(sends,0);
  } finally {globalThis.fetch=original;}
 });
@@ -5353,7 +5371,7 @@ test("[local.73 Phase 4] contract test：finding/approval/finalize/scope 四类�
   const { resolve, dirname } = await import("node:path");
   const root = resolve(dirname(new URL(import.meta.url).pathname), "..");
   const catalog = readFileSync(resolve(root, "docs/rules-catalog.md"), "utf8");
-  for (const rule of ["finding 准入", "HTTP 授权闸", "finalize 硬拦", "资产清单即许可"]) {
+  for (const rule of ["finding 准入", "HTTP 授权闸", "finalize 硬拦", "范围闸只约束写/影响类"]) {
     assert.ok(catalog.includes(rule), `规则目录含「${rule}」`);
   }
   assert.ok(catalog.includes("enforcedBy") && catalog.includes("historicalSource"), "目录标注 enforcedBy/historicalSource");
@@ -5371,11 +5389,18 @@ test("[local.73 Phase 4] contract test：finding/approval/finalize/scope 四类�
       /victimImpact|concreteLossEvidence|attackPrerequisites/,
       "medium 缺三要素服务端 gate 拒绝"
     );
-    // ② scope：主域外未登记 host → 探测被服务端范围校验拒绝
+    // ② scope：只读探测不再被范围闸拦（改为归属提示）；excluded 的 host 读与写都服务端拒绝（行为与 prompt 无关）
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } });
+    try {
+      const dorks = await h.run("src_collect_dorks", { intentId: intent.id, domain: "contract-elsewhere.com" }, parent);
+      assert.match(String(dorks.attributionNote ?? ""), /不在 goal 主域与资产清单内/, "范围外只读只提示归属、不再拒绝");
+    } finally { globalThis.fetch = originalFetch; }
+    await h.run("src_add_asset", { type: "root-domain", value: "contract-elsewhere.com", source: "契约测试：明确排除", status: "excluded" }, parent);
     await assert.rejects(
-      () => h.run("src_collect_dorks", { intentId: intent.id, domain: "contract-elsewhere.com" }, parent),
-      /outside the authorized goal host/,
-      "范围外探测服务端拒绝"
+      () => h.run("src_http", { url: "https://contract-elsewhere.com/x", method: "GET", justification: "契约" }, parent),
+      /已被资产清单标记 excluded/,
+      "明确排除的 host 读与写都服务端拒绝"
     );
     // ③ finalize：pending 待办未处理 → 服务端硬拦 = ready:false + blockers（不是 reject；「收益递减」不能替代枚举）
     await h.run("src_user_todo", { title: "需要登录态", detail: "登录 contract.test 提供 cookie", kind: "auth-session", intentId: intent.id }, parent);
