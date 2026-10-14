@@ -127,3 +127,61 @@
 | `tests/egress-onboarding.test.mjs` | 新增「多域声明一次到位」端到端：`*.fixture.test` + URL 播种后域内子域发现直接发（0 审批行、1 次发包、DNS 固定）；域外 → `SRC_GATE_OUT_OF_SCOPE` 不挂卡。多目标/裸域+整域/混合形态/列表写法/邮箱不误判的 `explicitUserScope` 断言；排除子句、凭据 URL、无目标句闲聊、引用/示例/撤回仍不授权 |
 | `tests/egress-gate.test.mjs` | 编码歧义硬闸按方法矩阵断言（GET/HEAD/OPTIONS 放行、POST/PUT/PATCH/DELETE 拦、改写头对读方法仍拦）；原编码补材料用例改为 POST |
 | `tests/egress-public-lane.test.mjs` | 侦察源（crt.sh/certspotter/agniops/fofa/DoH/archive/grep.app）在 `src_read_public_source` 与 `web_fetch` 下均入通道；名单外 `web_fetch`、`bash` 不入通道 |
+
+## 2026-10-14 第二轮：本地硬规则先行（read-clear / hard-boundary / needs-judgement 三分）
+
+用户指令：「很多无实际危害的数据包被挂审批了……先是规则挂卡，然后命中的 jev 决策，jev 决策不了或者
+决策确实是影响业务或者其他用户数据的高危操作再挂审批，决策无危害的正常测试需求自动放行」。
+落地 commit `c6f72bd`（上一轮 `b05dc05`），`npm test` 623/623，web 已重启（PID 68204）。
+
+### 三类判定（`lib/src/security.js` `classifyHttpRequest` → `verdict`）
+
+| verdict | 触发 | 处置 | 是否调用判定服务 |
+|---|---|---|---|
+| `read-clear` | 读方法（GET/HEAD/OPTIONS）+ 路径/查询无任何可疑语义词、无方法改写头/主机名代理头、无残留百分号转义 | 直接放行、不建卡 | **否**（判定服务不可用也不影响） |
+| `hard-boundary` | 删除/破坏类路径词（`delete|drop|destroy|reset|wipe|purge|revoke|unbind…`）、`DELETE` 方法、方法改写头（`x-http-method-override` 等，或代理头值里塞主机名） | 本地终审挂人工，判定服务无权覆盖（仍会调用它，仅为说明与执行通道判定） | 是（只取分类） |
+| `needs-judgement` | 读方法命中可疑语义词、写方法、编码歧义/嵌套转义 | 交判定服务：低风险且范围已核对 → 自动放行；判不了/业务数据/归属不明 → 挂人工 | 是 |
+
+要点：词匹配按 token 相等（驼峰切词），不做子串语义近似；body 不作本地语义证据（只扫 path+query）；
+代理头只在值是纯 IP/端口列表时豁免。read-clear 的收窄只朝更保守方向（多送判定服务），不需要用户拍板。
+
+### 诊断字段（审计清单⑤）
+
+- 计划卡 `review`：`authority`（`hard-boundary|hard-rules|jev-low-risk|jev-unavailable|human-required|legacy-rules`）、
+  `errorType`、`mode`、`hardVeto`、`effect`、`risk`、`objectClass`，纯展示/审计，不被任何放行逻辑反读。
+- 工具车道证据/卡片 `layaAdvice.authority`、放行证据 `decisionAuthority` 同源。
+
+### 部署副本实测（两类车道，全在部署副本上跑，目标为本地 stub）
+
+`src_http` 车道（11 类请求；「判定服务=N」为实际调用 stub 的次数）：
+
+| 请求 | 去往 | 判定服务 | 到达目标 | authority |
+|---|---|---|---|---|
+| 明确只读 `GET /api/v1/users/list` | 放行 | 0 | 1 | hard-rules |
+| 明确只读 `GET /api/v1/preset/config` | 放行 | 0 | 1 | hard-rules |
+| 明确只读 `GET /api/v1/users/list`（**判定服务 500**） | 放行 | 0 | 1 | hard-rules |
+| 可疑读 `GET /api/v1/sms/sentVerificationCode?phoneNumber=1` | 放行 | 1 | 1 | jev-low-risk |
+| 编码歧义 `GET /api/v1/info?info=1%` | 放行 | 1 | 1 | jev-low-risk |
+| 疑似影响 `GET /api/v1/disable-preview`（判定服务判业务写入） | 挂起 | 1 | 0 | human-required |
+| 确定危害 `GET /api/v1/deleteUser`（判定服务仍判读取） | 挂起 | 1 | 0 | hard-boundary |
+| 确定危害 `DELETE /api/v1/items/3` | 挂起 | 1 | 0 | hard-boundary |
+| 方法改写头 `GET /catalog` + `x-http-method-override: DELETE` | 挂起 | 1 | 0 | hard-boundary |
+| 写方法 `POST /api/v1/orders`（判定服务判新建测试文件） | 放行 | 1 | 1 | jev-low-risk |
+| 写方法 `POST /api/v1/orders`（判定服务判业务数据） | 挂起 | 1 | 0 | human-required |
+
+出口网关车道（scope=`http://127.0.0.1:49123`）：域内明确只读放行（判定服务 0 次）／**域外只读放行**（未被范围挡）／
+域外写 → `SRC_GATE_OUT_OF_SCOPE`（不调判定服务）／本机未授权端口 → `SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED`
+（既有防页面诱导本机请求的护栏，与范围闸无关）／确定危害三类 → 挂起、零发送／判定服务不可用 → 挂起且
+`authority=jev-unavailable`、`fallback:true`。
+
+计划车道复跑被审会话的真实历史卡（approval-4 的条目
+`GET …/index.php?s=/Home/Archive/single&info=1%`，旧本地硬闸误挂人工）：现在 1 次判定服务调用 + 发包 + **零卡**；
+`GET …/config/connect.php` 明确只读，0 次判定服务调用 + 发包。
+
+### 存量卡与残余风险
+
+- `~/.dsh/storages/src-sessions.db` 里 70 张历史卡不会自动消失（不改历史数据）：其中 46 张仍 pending。
+  按新规则复算：读方法 1 张（`GET /account/reset_passwd` → 确定危害）、其余 67 张是写方法/TASK（交判定服务，
+  本就不是“无危害的读取被误挂”）。是否批量拒绝这 46 张需要用户明确授权。
+- 未做：审计清单⑤（隔离靶场实测注册正例，需用户提供靶场且人工审批通道可用）、真判定服务对新路由的
+  留出集评测（会消耗真实额度，需用户先批预算）、浏览器端到端。
