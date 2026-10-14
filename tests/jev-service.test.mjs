@@ -55,17 +55,26 @@ test('Jev direct Skill mapping, remote credential removal, warm cache, config/ke
  assert.equal(JSON.stringify(await decisionServiceStatus()).includes('replacement-key'),true);
 });
 
-test('Jev one-shot errors remain neutral; no automatic retry or Laya fallback',async t=>{
+test('Jev 失败保持中性：认证失败不重试并短路，瞬时故障重试恰一次，绝不回落其他 provider',async t=>{
  await fixture(t);await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone'});
  let calls=0;
- for(const status of [401,429,503]){
- globalThis.fetch=async()=>{calls++;return new Response('SECRET ECHO',{status});};
- const r=await jevDecide(args,exec);assert.equal(r.errorType,`http-${status}`);assert.equal(r.action,'skip');assert.equal(JSON.stringify(r).includes('SECRET'),false);
- }
+ // 401：不重试（重试不会把无效 token 变成有效），并开认证熔断（现场 28 次 http-401 逐请求撞墙的根治）。
+ globalThis.fetch=async()=>{calls++;return new Response('SECRET ECHO',{status:401});};
+ const auth=await jevDecide(args,exec);assert.equal(auth.errorType,'http-401');assert.equal(auth.action,'skip');assert.equal(auth.attempts,1);assert.equal(JSON.stringify(auth).includes('SECRET'),false);
+ assert.equal(calls,1,'认证失败不得重试');
+ // 熔断：短路不打网络，结论仍是中性（skip），不是放行。
+ const shorted=await jevDecide(args,exec);assert.equal(shorted.circuitOpen,true);assert.equal(shorted.action,'skip');assert.equal(shorted.source,'jev');assert.equal(calls,1);
+ // 凭据变更 → 熔断按配置隔离，立即恢复真实调用。503 属瞬时故障：重试恰好一次。
+ await saveDecisionSettings({apiKey:'replacement-key'});
+ globalThis.fetch=async()=>{calls++;return new Response('SECRET ECHO',{status:503});};
+ const flaky=await jevDecide(args,exec);assert.equal(flaky.errorType,'http-503');assert.equal(flaky.attempts,2);assert.equal(flaky.action,'skip');assert.equal(JSON.stringify(flaky).includes('SECRET'),false);
  assert.equal(calls,3);
+ // 429（限流）：不重试（重试只是加压），仍然中性。
+ globalThis.fetch=async()=>{calls++;return new Response('SECRET ECHO',{status:429});};
+ const limited=await jevDecide(args,exec);assert.equal(limited.errorType,'http-429');assert.equal(limited.attempts,1);assert.equal(calls,4);
  globalThis.fetch=async()=>new Response('{}');assert.equal((await jevDecide(args,exec)).errorType,'schema');
  globalThis.fetch=async(_u,init)=>new Response(JSON.stringify(answer('outside',Object.keys(JSON.parse(init.body).questions.decision.criteria))));assert.equal((await jevDecide(args,exec)).errorType,'schema');
- globalThis.fetch=async(_u,init)=>new Response(JSON.stringify(answer('skip',Object.keys(JSON.parse(init.body).questions.decision.criteria))));assert.equal((await jevDecide(args,exec)).fallback,false,'next call can succeed; no circuit breaker');
+ globalThis.fetch=async(_u,init)=>new Response(JSON.stringify(answer('skip',Object.keys(JSON.parse(init.body).questions.decision.criteria))));assert.equal((await jevDecide(args,exec)).fallback,false,'成功即复位：下一次调用可以成功，不留永久锁');
 });
 
 test('Jev timeout/cancellation returns neutral and explicit remote operation classification never grants execution',async t=>{

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonicalRequest, normalizePlan, requiresHuman, readClearRequest } from '../lib/src/egress/plan.js';
+import { classifyHttpRequest } from '../lib/src/security.js';
 import { createEgressBroker } from '../lib/src/egress/broker.js';
 import { createAssessmentQueue } from '../lib/src/egress/assessment-queue.js';
 import { constrainSpawnSpec } from '../lib/src/egress/executor.js';
@@ -27,6 +28,18 @@ function fixture(t, { assess, file = ':memory:', key = randomBytes(32) } = {}) {
 }
 const code = name => ({ code: `SRC_GATE_${name}` });
 
+test('现场静态资源读请求不再被名词当可疑词（share/upload/lock），但硬边界与真实疑义照旧',()=>{
+ /* [2026-10-14 现场] 32 张僵尸卡里的请求全是这类静态资源 GET：目录名里的 share/upload/文件名的 lock
+  * 被当成“可疑语义”，判定服务一抖就变成一堆无意义待办。目录名/文件名不参与语义判定（R5）。 */
+ for(const [pathname,query] of [['/Public/share/img/logo-png.png',''],['/Public/share/js/jquery-1.9.0.min.js',''],['/Upload/',''],['/Data/install.lock',''],['/fonts/fontawesome-webfont.woff',''],['/Public/share/img/logo.png','?v=3'],['/index.php','']]){
+  assert.equal(classifyHttpRequest({method:'GET',path:pathname,query,headers:{},body:''}).verdict,'read-clear',pathname);
+ }
+ // 静态后缀不能洗白真删改：`.php` 里的 delete 仍是硬边界，`?op=verify` 仍交判定服务。
+ assert.equal(classifyHttpRequest({method:'GET',path:'/delete.php',query:'',headers:{},body:''}).verdict,'hard-boundary');
+ assert.equal(classifyHttpRequest({method:'GET',path:'/Public/x.png',query:'?op=drop',headers:{},body:''}).verdict,'hard-boundary');
+ assert.equal(classifyHttpRequest({method:'GET',path:'/x',query:'?op=verify',headers:{},body:''}).verdict,'needs-judgement');
+ assert.equal(classifyHttpRequest({method:'GET',path:'/api/v1/sms/sentVerificationCode',query:'?phone=1',headers:{},body:''}).verdict,'needs-judgement');
+});
 test('低风险只读资源名不被upload、mail、pay关键词一票否决',async t=>{
  const f=fixture(t);
  for(const pathname of ['/uploads/logo.png','/mail/list','/api/payments/history']){
@@ -744,6 +757,20 @@ test('明确只读的读方法不调用判定服务、不建卡、直接放行',
  assert.ok(f.broker.dataPlane.claim('s1',task.id,request({url:'https://fixture.invalid/api/v1/users/query?userId=3'})).dispatchId);
 });
 
+test('本机 POC 托管 origin 穿过私网 pin 与范围闸，且不写进持久化 scope（现场⑤）',async t=>{
+ const {registerLocalServe,unregisterLocalServe}=await import('../lib/src/egress/local-serve.js');
+ registerLocalServe({origin:'http://192.0.2.7:55715',serveId:'serve-live',sessionId:'s',expiresAt:Date.now()+60000});
+ t.after(()=>unregisterLocalServe('serve-live'));
+ const f=await managerFixture(t);
+ // 未登记的私网 origin：照旧拒绝（私网 pin 不能被当成目标）。
+ await assert.rejects(f.manager.fetch('s','http://192.0.2.7:55716/x',{method:'GET'}),code('NON_PUBLIC_TARGET'));
+ assert.equal(f.sends(),0);
+ // 登记的托管 origin（src_serve_proof 刚起的监听器）：穿过 pin 与范围闸 → 真的发出去。
+ const response=await f.manager.fetch('s','http://192.0.2.7:55715/x',{method:'GET'});
+ assert.equal(response.status,200);assert.equal(f.sends(),1);
+ assert.doesNotMatch(JSON.stringify(f.manager.user.getScope('s')),/192\.0\.2\.7/,'托管 origin 永不写入持久化 scope（保 validateStoredScope 的不变量）');
+});
+
 test('明确只读的读方法在判定服务不可用时同样放行',async t=>{
  const f=fixture(t,{assess:()=>{throw new Error('synthetic decision service down');}});
  const task=await f.broker.propose('s1',input({entries:[{request:request({url:'https://fixture.invalid/catalog'}),maxRequests:1}],maxRequests:1}));
@@ -766,6 +793,16 @@ test('路径里的删改词终审，主机名不参与分类判定',async t=>{
  // 路径里的删改词：终审挂起，不看主机名。
  const dangerous=request({url:'https://fixture.invalid/api/v1/deleteUser'});
  assert.equal((await f.broker.propose('s1',input({entries:[{request:dangerous,maxRequests:1}],maxRequests:1}))).state,'pending');
+});
+
+test('判定服务故障不铸按请求审批卡：抛可重试闸错误，不落待审行、不发请求',async t=>{
+ const f=await managerFixture(t,{advice:{...low,action:'pending',effect:'unknown',risk:'unknown',confidence:0,fallback:true,errorType:'http-401'}});
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/operation',{method:'POST',body:'{"a":1}'}),code('DECISION_UNAVAILABLE'));
+ assert.equal(f.rows.size,0,'判定服务故障不是安全结论：不得为每笔被拦请求铸审批卡（现场 32 张僵尸卡成因）');
+ assert.equal(f.sends(),0);
+ /* 本地确定危害的卡例外：用户仍可能想放行这笔删除，不能被服务故障连累。 */
+ await assert.rejects(f.manager.fetch('s','http://127.0.0.1:49123/x?operation=drop',{method:'GET'}),code('PENDING_OR_REJECTED'));
+ assert.equal(f.rows.size,1);
 });
 
 test('补材料后发布中断可从旧编号恢复同一新单，正文和安全材料均不重建',async t=>{

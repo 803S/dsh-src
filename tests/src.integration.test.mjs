@@ -6550,6 +6550,25 @@ test("不写审批ID但指向待审队列的“请批准”待办同样拒绝，
   // 只提及待审、无批准动作意图的关联记录也不拦
   const related = await h.run("src_user_todo", { title: "整理注册接口的返回差异", detail: "背景：该方向有 1 个待审请求仍在队列，这里只记录观察" }, parent);
   assert.equal(related.status, "pending");
+  /* [2026-10-14 现场①] 第三种形态：既不写 ID 也不写“待审”，换个说法把同一件事再要一遍
+   * （现场实例）。同一主机有 pending 审批 → 仍属复制审批面。 */
+  await assert.rejects(
+    h.run("src_user_todo", { title: "请确认目标出口范围（当前 POST 被范围匹配拒绝），以放行后台认证面测试", detail: "确认后继续写入测试" }, parent),
+    /approval-3/,
+    "换说法复述同一件审批（不写 ID/待审字样）也必须拦"
+  );
+  // 审批之外的真实独立工作项仍可创建：账号协助（kind=auth-session）与其它主机的资产确认都不受影响。
+  const accountAsk = await h.run("src_user_todo", { title: "提供 example.test 的低权限测试账号", detail: "越权对照用，与审批无关", targetUrl: "https://example.test/login", kind: "auth-session" }, parent);
+  assert.equal(accountAsk.status, "pending");
+  const otherHost = await h.run("src_user_todo", { title: "请确认 other.test 的资产归属", detail: "另一条线索，与当前待审请求无关" }, parent);
+  assert.equal(otherHost.status, "pending");
+  /* 范围确认卡（method=SCOPE）是同一件事的唯一归属：有它在队列里，任何“请确认范围/授权”待办都拦。 */
+  await h.domain.table("pending_approvals").put(`${sid}:approval-4`, { sessionId: sid, id: "approval-4", status: "pending", method: "SCOPE", url: "src-egress://scope/example.test", path: "", headers: "", body: "", category: "egress/scope", reason: "范围授权待确认", justification: "", note: "", responseStatus: 0, createdAt: now, updatedAt: now });
+  await assert.rejects(
+    h.run("src_user_todo", { title: "请确认 zzz.test 是否属于授权范围", detail: "确认后即整域授权" }, parent),
+    /approval-4/,
+    "存在范围确认卡时，范围/授权确认类待办一律拦"
+  );
 });
 
 test("待审审批不是证伪证据：引用 pending ID 的 false-positive 被拒，改记 blocked 成功", async () => {

@@ -6,7 +6,7 @@ import path from 'node:path';
 import {SrcStore,srcDomainSpec,__resetSharedDomainOpensForTests,applySrcEvent,srcInitialState,srcProjectionSchema,viewSrcState} from '../lib/src.js';
 import {stateFromStore} from '../lib/src/store-projection.js';
 import {saveResponseSnapshot,readResponseSnapshot,validateWritePlan} from '../lib/src/write-safety.js';
-import {makeManifest,computeCoverage} from '../lib/src/endpoint-manifest.js';
+import {makeManifest,computeCoverage,endpointKey} from '../lib/src/endpoint-manifest.js';
 import {findingFingerprint,verificationOf} from '../lib/src/verification.js';
 import {publishReportArtifact,checkArtifactRecords,markReportArtifactsStale} from '../lib/src/artifact-manifest.js';
 import { executeWithWriteSafety } from '../lib/src/write-executor.js';
@@ -71,6 +71,13 @@ test('manifest canonical IDs, evidence binding and cross-method negatives',()=>{
  assert.throws(()=>computeCoverage(m,{[ep.endpointId]:'tested'},['missing'],[]),/不存在/);
  assert.throws(()=>computeCoverage(m,{[ep.endpointId]:'tested'},['obs'],[{id:'obs',method:'GET',path:ep.path,httpStatus:200}]),/相同方法/);
  const c=computeCoverage(m,{[ep.endpointId]:'tested'},['obs'],[{id:'obs',method:'POST',path:ep.path,httpStatus:200}]);assert.equal(c.endpointsTotal,2);assert.equal(c.endpointsTested,1);
+ /* [2026-10-14 现场修复] 端点身份 = 方法 + origin + pathname，不带 query：
+  * 现场报「tested endpoint 缺少相同方法和路径的真实 observation: ep-2a6a…」就是因为扫描器/agent
+  * 记录的观测 path 带查询串、端点 path 不带（或反之），被当成两个端点。 */
+ assert.equal(endpointKey('GET','https://fixture.invalid/a?x=1'),endpointKey('GET','https://fixture.invalid/a'));
+ assert.equal(endpointKey('GET','https://fixture.invalid/a#frag'),endpointKey('GET','https://fixture.invalid/a'));
+ const q=computeCoverage(m,{[ep.endpointId]:'tested'},['obs'],[{id:'obs',method:'POST',path:ep.path+'?returnUrl=%2Fadmin',httpStatus:200}]);assert.equal(q.endpointsTested,1);
+ assert.throws(()=>computeCoverage(m,{[ep.endpointId]:'tested'},['obs'],[{id:'obs',method:'POST',path:'https://fixture.invalid/other',httpStatus:200}]),/src_record_observation/,'错误必须给出可行动原因');
 });
 
 test('restricted original snapshots survive redaction and reject partial PUT/cross-session reuse',async t=>{

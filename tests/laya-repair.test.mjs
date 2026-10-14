@@ -338,8 +338,21 @@ test('Jev HTTP gate: parent/child low POST execute, unknown/high/failure wait, p
  risk='high';effect='destructive';
  // 读方法命中可疑语义词 → 本地不豁免、交判定服务：高危结论仍必须等人审。
  const high=await h.run('src_http',{method:'GET',url:'https://fixture.test/action?op=verify',justification:'possible harmful side effect'});assert.equal(high.value.approval,'pending');assert.equal(hits,2);
+ const cardsBeforeOutage=(await h.run('src_state',{})).value.pendingApprovals.length;
  fail=true;
- const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public?op=verify',justification:'read during outage'});assert.equal(outage.value.approval,'pending');assert.equal(hits,2);
+ /* [2026-10-14 现场修正] 判定服务故障（网络/超时/5xx/401）不是安全结论：
+  * 不发（hits 不变）、不自动放行、并且**不再铸按请求审批卡**（现场 32 张僵尸卡的成因）；
+  * 改为可重试的 SRC_GATE_DECISION_UNAVAILABLE + 会话级单条待办（按标题前缀去重）。 */
+ const outage=await h.run('src_http',{method:'GET',url:'https://fixture.test/public?op=verify',justification:'read during outage'});
+ assert.equal(outage.isError,true,JSON.stringify(outage));
+ assert.match(JSON.stringify(outage),/SRC_GATE_DECISION_UNAVAILABLE/);
+ assert.equal(hits,2,'故障时绝不得把请求发出去');
+ const outageTodos=(await h.run('src_state',{})).value.userTodos.filter(row=>row.title.startsWith('判定服务不可用'));
+ assert.equal(outageTodos.length,1,'故障应留下恰好一条待办');
+ const outageAgain=await h.run('src_http',{method:'GET',url:'https://fixture.test/public2?op=verify',justification:'read during outage again'});
+ assert.equal(outageAgain.isError,true);assert.equal(hits,2);
+ assert.equal((await h.run('src_state',{})).value.userTodos.filter(row=>row.title.startsWith('判定服务不可用')).length,1,'重复故障不得堆第二条待办');
+ assert.equal((await h.run('src_state',{})).value.pendingApprovals.length,cardsBeforeOutage,'故障期间不得新增任何按请求审批卡（旧的待审卡不受影响）');
  await saveDecisionSettings({riskMode:'shadow'});
  const shadow=await h.run('src_http',{method:'GET',url:'https://fixture.test/shadow',justification:'shadow read'});assert.equal(shadow.value.approval,'allowed-auto');assert.equal(shadow.value.riskAdvice,undefined);assert.equal(hits,3);
  /* [2026-10-13 用户指令] 只读不因越界被挡：新主域 GET 直接发（命中 fixture fetch 即已发送）；

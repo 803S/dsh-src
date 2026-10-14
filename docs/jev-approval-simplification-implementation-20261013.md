@@ -185,3 +185,40 @@
   本就不是“无危害的读取被误挂”）。是否批量拒绝这 46 张需要用户明确授权。
 - 未做：审计清单⑤（隔离靶场实测注册正例，需用户提供靶场且人工审批通道可用）、真判定服务对新路由的
   留出集评测（会消耗真实额度，需用户先批预算）、浏览器端到端。
+
+---
+
+## 附录 B：用户现场 6 条投诉的根因与修复（2026-10-14）
+
+被审会话 `session-1a45c794`（`src-domain-ready`）实测 + 只读复算得到的现场证据，以及逐条落地。全部改动
+**只在“故障/夹具/展示”层面**：没有放宽任何安全边界，没有改动 Jev rubric / objectClass，没有批量改历史数据。
+
+| # | 用户看到的现象 | 实证根因 | 修复（文件） |
+|---|---|---|---|
+| ① | 同一动作「弹窗审批完又挂个待办」 | 批准动作有两套面：宿主原生一次性批准（全会话只有 1 次 `approval/asked`：`src_serve_proof`）+ 面板审批卡；此外 agent 还会用**换种说法**的待办复述同一件事（现场 `userTodo-1`「请确认目标出口范围（当前 POST 被范围匹配拒绝），以放行后台认证面测试」），既不写审批 ID 也不写“待审”，旧去重规则漏过 | `src_user_todo` 去重补第三种形态：`approvalTodoDuplicatesSurface`（范围/批准意图 + 文本点名的主机 ↔ pending 卡主机；或存在 pending `method=SCOPE` 的范围确认卡时，“确认范围/授权”类待办一律拦；无主机时按文本点名的 HTTP 方法 ↔ 待审方法）。`kind=auth-session` 与其它工作项仍可建（`lib/src/tools/index.js`） |
+| ② | Burp 通道被闸拦（`SRC_GATE_HOST_MISMATCH`） | 我方 `burp-request.js` 要求 `Host` 里出现端口，而现场报文是 `Host: eci-…`（浏览器/工具本来就不写默认端口），`targetPort:80` | `hostHeaderMatches(value,{hostname,targetPort})`：主机名必须全等；端口**可省略**，给了就必须等于目标端口（`lib/src/egress/burp-request.js`）。宿主侧代理出口本身不在本仓库，见回复中的说明 |
+| ③ | 一次挂 20+ 审批，包含只读请求 | 判定服务 token 失效（见 ⑥）叠加 `SUSPICIOUS_WORDS` 把**静态路径里的名词**当可疑语义（`/Public/share/…`、`/Upload/`、`/Data/install.lock`），一抖就整屏挂卡 | `SUSPICIOUS_WORDS` 只留动作/外发/费用语义；新增静态资源快通道（read 方法 + 后缀命中 + query 干净 + 无编码歧义 → `read-clear`，不调判定服务）（`lib/src/security.js`） |
+| ④ | `tested endpoint 缺少相同方法和路径的真实 observation` | `computeCoverage` 用含 query 的原始 URL 当 key，而记录时已剥 query → 同一条真实观察匹配不上；报错也没说怎么办 | `endpointKey` 统一剥 query/fragment；报错文案给出三种可行动原因（被闸拦就记 `blocked`；走了 Burp 未落 observation 就补 `src_record_observation`；方法不同）（`lib/src/endpoint-manifest.js`） |
+| ⑤ | 宿主拦本机局域网 IP（`SRC_GATE_NON_PUBLIC_TARGET`） | `src_serve_proof` 的回连 URL 是本机 LAN IP + 随机端口，`pinOrigin` 因私网地址拒绝；同时现场还有 `请求 origin=https://…com` vs `授权 origins=https://…com:80` 的误拦 | ① 新增本机托管登记表 `lib/src/egress/local-serve.js`（精确 origin、TTL、**永不写入持久化 scope**），`src_serve_proof` 监听成功后登记、关闭即注销；② `originGranted` 承认同主机默认端口（`https://h:80 ≡ https://h`，非 80/443 一律不放）（`lib/src/egress/plan.js`、`target-context.js`、`manager.js`、`lib/src.js`） |
+| ⑥ | 「一点网络波动都不能有吗」——判定服务 401 一瞬 → 20+ 只读请求被挂 | `~/.dsh/settings/src-decision.json` 的 apiKey 已失效：34 条 `laya.decision` 全是 `fb=true`（28× `http-401`）。旧行为把**基础设施故障**当成**每笔请求的安全结论**，逐请求铸 `egress/task` 卡（32 张僵尸卡就是这么来的） | ① 新增 `lib/src/decision/service-outage.js`：401/403/5xx/网络/超时/未配置/取消/熔断 → **不铸任何按请求审批卡**，改抛可重试 `SRC_GATE_DECISION_UNAVAILABLE` + 每会话至多一条去重待办；本地确定危害（`hardVeto`）仍照常挂卡。② `jev-client` 有界重试：网络/超时/5xx/JSON 抖动重试一次（300ms）；401/403 不重试；认证失败即熔断 120s、瞬态连续 3 次 30s、成功即复位，熔断期间不打网络且一律返回同一中性结论（**不放行任何东西**）。③ 429 不重试（重试只是加压），但计入熔断 |
+
+**语义类失败不变**：`schema`/非法答案仍按原设计挂人工审批——那是「服务判不了这笔请求」，不是「服务坏了」。
+
+### 验证
+
+- `npm test`：**628/628 通过**（新增：静态资源快通道 1 项、判定服务故障不铸卡 1 项、本机托管 origin 1 项、
+  Host 校验 1 项、Jev 重试/熔断口径重写 1 项、待办重复审批第三形态并入既有测试）。
+- 部署副本实测 `/tmp/r10-live.mjs`（跑 `~/.dsh/profiles/web` 里的副本，本机 stub，**27 项全过**）：
+  静态资源 5 例放行（判定服务 0 次）、`/delete.php` 仍终审；401 → `SRC_GATE_DECISION_UNAVAILABLE`（可重试、
+  0 张卡、1 条去重待办、二次故障不新增）；503 抖动重试恰一次且结论与健康服务一致；Burp 无端口 Host 5 例；
+  `:80` 等价 4 例；托管 origin 回连 7 例（含「未登记私网端口仍拦」）；换说法复述审批被拒 + 账号类待办仍可建。
+- 部署：`node scripts/deploy.mjs`（EXIT=0，内含 628 测试硬门）+ `bash scripts/start-dsh-web.sh`（PID 89799，
+  `management.html -> 200`，日志 0 error），副本文件 md5 与仓库一致。
+
+### 本轮仍未做（需要用户拍板或环境）
+
+- `~/.dsh/settings/src-decision.json` 的 **apiKey 已失效**，必须用户更换（不是网络波动）；换 key 前所有
+  需要判定的请求都会走「判定服务不可用」通道。
+- 存量 32 张 `判定服务不可用` 僵尸卡 + 46 张历史 pending 卡：**不擅自清理**，待用户授权。
+- `src_serve_proof` 的宿主原生弹窗是否合并进面板审批（唯一不可事后回滚的动作）：待用户拍板。
+- 审计清单⑤（隔离靶场实测注册正例）、真判定服务留出集评测（需预算）、浏览器端到端。

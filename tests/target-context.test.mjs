@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {assertKnownTarget,localAddressNotice,renderBrowserNetwork} from '../lib/src/egress/target-context.js';
+import {originGranted} from '../lib/src/egress/plan.js';
 import {validateToolIdentity} from '../lib/src/egress/host-integration.js';
 import {surfaceClusters,scanHints} from '../lib/src/scan-analysis.js';
 import {renderHttp,renderScan} from '../lib/src/evidence-output.js';
@@ -28,6 +29,31 @@ test('范围闸只约束写/影响类：只读不受限，用户排除的域读�
  assert.throws(()=>assertKnownTarget(excluded,'https://sub.another.test/write',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
  // 本机环回不受只读放行影响。
  assert.throws(()=>assertKnownTarget(scope,'http://127.0.0.1:5001/',{method:'GET'}),{code:'SRC_GATE_LOCAL_TARGET_NOT_AUTHORIZED'});
+});
+test('同主机默认 web 端口视为同一授权；非默认端口不放；本机 POC 托管 origin 读放行',async ()=>{
+ /* [2026-10-14 现场] 同一主机的 80/443/无端口写法是同一个授权（范围闸语义是「主机归属」）：
+  * 现场 agent 被夹 `请求 origin=https://eci-…com`（无端口） vs `当前精确 origins=https://eci-…com:80` 的 OUT_OF_SCOPE
+  * 误拦，只能重打裸域名。 */
+ const scope={origins:['https://eci.example.test:80'],domains:[]};
+ assert.equal(originGranted(scope.origins,'https://eci.example.test'),true);
+ assert.equal(originGranted(scope.origins,'https://eci.example.test:443'),true);
+ assert.equal(originGranted(scope.origins,'https://eci.example.test:8080'),false);
+ assert.doesNotThrow(()=>assertKnownTarget(scope,'https://eci.example.test/write',{method:'POST'}));
+ assert.throws(()=>assertKnownTarget(scope,'https://eci.example.test:8443/write',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ // 本机 POC 托管 origin（src_serve_proof 回连）：读放行、写也放行，且不进持久化 scope。
+ const {registerLocalServe,localServePins,isLocalServeOrigin,unregisterLocalServe}=await import('../lib/src/egress/local-serve.js');
+ const serve=registerLocalServe({origin:'http://192.0.2.7:55715',serveId:'serve-1',sessionId:'s',expiresAt:Date.now()+60000});
+ assert.equal(isLocalServeOrigin('http://192.0.2.7:55715'),true);
+ assert.equal(isLocalServeOrigin('http://192.0.2.7:55716'),false);
+ assert.ok(localServePins('http://192.0.2.7:55715'));
+ assert.doesNotThrow(()=>assertKnownTarget(scope,'http://192.0.2.7:55715/x',{method:'POST'}));
+ assert.throws(()=>assertKnownTarget(scope,'http://192.0.2.7:55716/x',{method:'POST'}),{code:'SRC_GATE_OUT_OF_SCOPE'});
+ assert.equal(serve.origin,'http://192.0.2.7:55715');
+ // TTL 到点自动失效：过期的托管 origin 不再放行。
+ registerLocalServe({origin:'http://192.0.2.7:55717',serveId:'serve-2',sessionId:'s',expiresAt:Date.now()-1});
+ assert.equal(isLocalServeOrigin('http://192.0.2.7:55717'),false);
+ unregisterLocalServe(serve.serveId);
+ assert.equal(isLocalServeOrigin('http://192.0.2.7:55715'),false);
 });
 test('local gate provenance uses trusted records, not target response text; mixed results stay qualified',()=>{
  assert.equal(renderBrowserNetwork([]),'');

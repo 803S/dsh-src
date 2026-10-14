@@ -14,7 +14,7 @@ test('Burp passive tools use an exact catalog and bounded history parameters',()
  assert.deepEqual(passiveBurpArguments('mcp__burp__burp_status',{}),{});
 });
 
-import {inspectBurpRequest,createBurpSender,createBurpRestorer} from '../lib/src/egress/burp-request.js';
+import {inspectBurpRequest,createBurpSender,createBurpRestorer,hostHeaderMatches} from '../lib/src/egress/burp-request.js';
 import {createEgressManager} from '../lib/src/egress/manager.js';
 import {withEgressExecution} from '../lib/src/egress/runtime.js';
 import {browserLifecycle} from '../lib/src/egress/browser-lifecycle.js';
@@ -39,6 +39,20 @@ test('Burp HTTP1/HTTP2 inputs are inspected without rewriting the frozen native 
  assert.equal(value.request.url,origin+'/query?a=1&a=2');assert.ok(Object.isFrozen(value.args));assert.equal(value.digest.length,64);
  raw.content='DELETE /changed HTTP/1.1\r\n\r\n';assert.deepEqual(value.args,copy);
  const two=args2(),parsed=inspectBurpRequest(h2,two);assert.equal(parsed.request.url,origin+'/read?op=verify');assert.deepEqual(parsed.request.headers,[['accept','*/*']]);assert.deepEqual(parsed.args,two);
+});
+test('Burp Host 头校验只看主机名，允许省略默认端口（2026-10-14 现场误拦修复）',()=>{
+ const host='eci-2zeg4ed15sc2ot31il2i.cloudeci1.ichunqiu.com';
+ // 现场原报文：Host 不带端口 + targetPort=80 + usesHttps=true —— 旧写法要求字面 host:80，直接误拦。
+ const raw={targetHostname:host,targetPort:80,usesHttps:true,content:`GET /robots.txt HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: mcp\r\n\r\n`};
+ assert.equal(inspectBurpRequest(h1,raw).request.url,`https://${host}:80/robots.txt`);
+ // Host 走私到别的主机、或自报与 targetPort 不符的端口，仍然拦。
+ for(const bad of [`Host: evil.invalid`,`Host: ${host}:8080`,`Host: ${host}.evil.invalid`]){
+  assert.throws(()=>inspectBurpRequest(h1,{...raw,content:raw.content.replace(`Host: ${host}`,bad)}));
+ }
+ for(const [value,expected] of [[host,true],[`${host}:80`,true],[`${host}:8080`,false],['evil.invalid',false],['',false],['127.0.0.1',false]]){
+  assert.equal(hostHeaderMatches(value,{hostname:host,targetPort:80}),expected,value);
+ }
+ const two=args2();two.pseudoHeaders[':authority']='127.0.0.1';assert.equal(inspectBurpRequest(h2,two).request.url,origin+'/read?op=verify');
 });
 test('Burp cannot hide targets, request bodies, framing or extra invocations in raw arguments',()=>{
  const bad=[
