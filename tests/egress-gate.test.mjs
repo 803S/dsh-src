@@ -708,6 +708,21 @@ test('域名中的危险词不能把普通读取误判为高危动作',()=>{
  assert.equal(requiresHuman({entries:[{request:request({url:'https://mail.fixture.invalid/delete'})}]}),false,'路径交给语义审核，不单凭名字定性');
 });
 
+// [审批收缩 2026-10-14] 读方法的编码歧义不再升为本地硬闸（审计 approval-4：GET ...&info=1% 被本地误挂人工闸），
+// 但仍不得做成自动放行：最终由 Jev 判定；可写方法的编码歧义、二次编码与方法改写头保持硬闸。
+test('编码歧义硬闸只对可写方法保留，读方法交Jev判定',()=>{
+ for(const method of ['GET','HEAD','OPTIONS']){
+  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/article?info=1%'})}]}),false,method+' 裸%');
+  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/%2525252541'})}]}),false,method+' 二次编码');
+ }
+ for(const method of ['POST','PUT','PATCH','DELETE']){
+  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/article?info=1%'})}]}),true,method+' 裸%');
+  assert.equal(requiresHuman({entries:[{request:request({method,url:'https://fixture.invalid/%2525252541'})}]}),true,method+' 二次编码');
+ }
+ // 方法/路由改写头对读方法仍是硬闸。
+ for(const [name,value] of [['x-http-method-override','DELETE'],['x-original-url','/delete'],['x-rewrite-url','/delete']])assert.equal(requiresHuman({entries:[{request:request({method:'GET',headers:[[name,value]]})}]}),true,name);
+});
+
 test('补材料后发布中断可从旧编号恢复同一新单，正文和安全材料均不重建',async t=>{
  const f=await managerFixture(t,{advice:{...low,effect:'unknown',action:'pending'}}),url='http://127.0.0.1:49123/render';
  await assert.rejects(f.manager.fetch('s',url,{method:'POST',body:'{"template":"{{7*7}}"}'}));
@@ -739,7 +754,7 @@ test('范围变更后旧单不能批准，但用户仍能明确拒绝清理待�
  assert.equal((await f.manager.user.decide('s',row.id,'reject')).state,'denied');assert.equal(row.status,'rejected');assert.equal(f.sends(),0);
 });
 
-for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']]},{url:'https://fixture.invalid/%2525252541'}])test('旧单补材料不能绕过写入/改写/编码闸 '+JSON.stringify(patch),async t=>{
+for(const patch of [{method:'PUT'},{headers:[['x-http-method-override','DELETE']]},{method:'POST',url:'https://fixture.invalid/%2525252541'}])test('旧单补材料不能绕过写入/改写/编码闸 '+JSON.stringify(patch),async t=>{
  const f=fixture(t),req=request(patch);
  const task=await f.broker.propose('legacy-negative',input({entries:[{request:req,maxRequests:1}],maxRequests:1,hostExecution:{request:req,safety:null}}));
  assert.equal(task.state,'pending');

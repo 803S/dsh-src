@@ -97,3 +97,33 @@
 - 最小任务③的**写操作**（finding 定级/去重修改）：已出只读核对报告与建议（crosscheck 文档），未改域数据。
 - "新建测试对象/测试账号注册可自动放行" 属授权扩张（改 rubric 或 objectClass 分类），未擅动；`write+new-test-file+POST` 与 "只读分类 + 非 PUT/PATCH/DELETE 正文" 两条残余自动路径已在测试中显式记录。
 - 第 5 步真实 Jev 评测（14 主样本 + 对照）仍未执行。
+
+## 第三轮：用户三点诉求（范围/资产收集/闸门口径）2026-10-14
+
+用户原话要点：① 去掉开局的「测试范围审批」卡；② 范围限制阻碍资产收集（顺丰这类**多个主域**没法展开）；③ 审批闸只应用于「防 AI 删库 / 删其他用户数据 / 影响线上业务 / 影响其他用户」，读取、枚举、探测应放行。
+
+### 改动清单
+
+- `lib/src/egress/user-scope.js`（范围播种语义重写）：
+  - 新增 `declaredTargets(text)`：按**行**（首行是目标清单表头时后续行也算）解析，行再按 `，,、;；` 切成子句；只保留含目标句标志（针对/目标/资产/范围/攻击面/测试/扫描/审计/target/scope/test/scan/audit）的行；含排除语气（不要/无需/禁止/排除/不含/不再/撤回/停止/暂停/取消…）的**子句**整段丢弃。
+  - URL → 精确 origin（保留原「不猜注册域」语义）；`*.域` → 整域；**裸域 → 默认 http/https 两个 origin + 该域整域**（用户写下域名即声明域空间；此前只给两个 origin，是“资产收集被挡”的直接原因）。
+  - 多目标不再退回问人：一份人类任务里写出多个主域/通配域/URL，逐个授权（上限 256，超限视为不可用）。带凭据 URL 仍整份作废。
+  - 授权来源边界不变：只吃 `role==='user' && source.kind==='user' && source.rpcId` 的**人类原始消息**；模型文本/工具输出/合成回注/子会话一律不授予。撤回检查改为「该消息没有声明目标且含撤回语气 → 不回吃更早目标」；同一消息里既声明又排除时，以该消息声明的目标为准（排除子句已在解析时剔除）。
+- `lib/src/public-source.js`：`DEFAULT_HOSTS` 扩为公开只读侦察源（`crt.sh`、`api.certspotter.com`、`app.agniops.in`、`api.fofa.info`、`dns.google`、`cloudflare-dns.com`、`grep.app`、`searchcode.com`、`web.archive.org`、搜索引擎、`api.github.com`），去掉重复 `github.com`。
+- `lib/src/egress/public-lookup.js`：`web_fetch` 并入公开资料通道（`isPublicLookup` 接受 `src_read_public_source|web_fetch`）；仍是 HTTPS、无端口、白名单 host、GET、无 body，响应走 `boundedBody`（≥2MB 截断）。`bash`/`curl` 不进该通道。
+- `lib/src/egress/plan.js`：`requiresHuman` 的编码歧义硬闸（裸 `%`/二次编码）**只对非幂等方法（POST/PUT/PATCH/DELETE…）生效**，`GET/HEAD/OPTIONS` 豁免（审计 approval-4：`GET ...&info=1%` 被本地误挂人工闸）。方法/路由改写头（`x-http-method-override`/`x-original-url`/`x-rewrite-url` 等）仍是硬闸；`assertScanExecutable` 去掉已失效的二次 `requiresHuman` 检查。
+- `lib/src/egress/scope-requests.js`：范围卡降级为**兜底**（只在“完全没有任何已声明目标”时出现），文案改为给出两条出路（直接在对话里写目标域 / 确认本卡列出的精确 origins，且明确说明批卡不授予整域）。
+
+### 语义边界（本轮明确保留，未放宽）
+
+- 写操作闸不动：注册/登录/写入仍需 Jev 判定 + 人工批准；`allowsLowImpact` 未放宽；Jev rubric / objectClass 分类未改（“创建型对象可自动放行”仍待用户拍板）。
+- 不自动把 SCOPE 卡升级为整域授权（共享托管的第三方 SaaS 域会连带授权其他租户）。整域授权只走两条路：用户显式写域名/`*.域名`，或 `src_request_asset_confirm` 归属确认（用户点击 → `confirmDomain('allow')`）。
+- 不做“任意公网 GET 自动放行”：GET 同样可打 XSS/注入（审计 approval-5/6），只把**公开只读索引/元数据源**纳入公共资料通道。
+
+### 验收测试（`npm test` 617/617）
+
+| 文件 | 覆盖 |
+|---|---|
+| `tests/egress-onboarding.test.mjs` | 新增「多域声明一次到位」端到端：`*.fixture.test` + URL 播种后域内子域发现直接发（0 审批行、1 次发包、DNS 固定）；域外 → `SRC_GATE_OUT_OF_SCOPE` 不挂卡。多目标/裸域+整域/混合形态/列表写法/邮箱不误判的 `explicitUserScope` 断言；排除子句、凭据 URL、无目标句闲聊、引用/示例/撤回仍不授权 |
+| `tests/egress-gate.test.mjs` | 编码歧义硬闸按方法矩阵断言（GET/HEAD/OPTIONS 放行、POST/PUT/PATCH/DELETE 拦、改写头对读方法仍拦）；原编码补材料用例改为 POST |
+| `tests/egress-public-lane.test.mjs` | 侦察源（crt.sh/certspotter/agniops/fofa/DoH/archive/grep.app）在 `src_read_public_source` 与 `web_fetch` 下均入通道；名单外 `web_fetch`、`bash` 不入通道 |

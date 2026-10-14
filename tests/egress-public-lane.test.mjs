@@ -39,6 +39,18 @@ test("public lookup constraints fail closed before any ask/network", async () =>
   await assert.rejects(publicLookup({ name: "bash" }, "sess-1", "https://nvd.nist.gov/a", {}, async () => { throw new Error("must-not-send"); }), { code: "SRC_GATE_INVALID_PUBLIC_LOOKUP" });
 });
 
+test("asset-collection recon sources use the public lane, not target scope", () => {
+  // 资产收集只读源（证书透明度/被动索引/公共 DoH/搜索/代码搜索）默认就在名单里：
+  // 它们是索引不是 SRC 目标，不需要目标范围审批，也不能发 POST body。
+  for (const host of ["crt.sh", "api.certspotter.com", "app.agniops.in", "api.fofa.info", "dns.google", "cloudflare-dns.com", "web.archive.org", "grep.app"]) {
+    assert.equal(isPublicLookup({ name: "src_read_public_source" }, `https://${host}/q=x`), true, host);
+    assert.equal(isPublicLookup({ name: "web_fetch" }, `https://${host}/q=x`), true, host);
+  }
+  // 名单外仍是目标出口（web_fetch 不能拿它当通用 GET 例外）
+  assert.equal(isPublicLookup({ name: "web_fetch" }, "https://evil.example/a"), false);
+  assert.equal(isPublicLookup({ name: "bash" }, "https://crt.sh/?q=a"), false);
+});
+
 test("bounded receive: oversized public-source response body is capped at receive time; success path sends bounded GET via pin pipeline", async t => {
   const previous = process.env.DSH_SRC_PUBLIC_SOURCE_HOSTS;
   process.env.DSH_SRC_PUBLIC_SOURCE_HOSTS = FIXTURE_IP;
