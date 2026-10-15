@@ -1,12 +1,18 @@
 # The dsh-src bundle patch: the penetration-testing surface over
 # dsh-base + dsh-web-app. The bundle is one self-contained package — every
-# row resolves to a subpath of the bundle package itself, so the whole thing
-# installs from a single tarball via `dsh plugin add`.
+# row resolves inside the bundle package itself, so the whole thing installs
+# from a single tarball via `dsh plugin add`.
 #
 # The patch contributes three things:
 # 1. the sqlite backend row, as a subpath of this package;
-# 2. the Web surface row (the per-session 渗透 view tab), whose client face is
-#    the package's `./client` export;
+# 2. the Web surface row (the per-session 渗透 view tab), whose host half is
+#    the package's inert main entry and whose client face is the package's
+#    `./client` export. The row name is the BARE package name on purpose:
+#    dsh <= 0.1 identifies the client module by the row name, while dsh 0.2
+#    normalizes every client entry onto its package-root specifier and skips
+#    subpath rows entirely — a subpath row would silently never load the tab
+#    on 0.2. The bundle registers under the same bare id (see PLUGIN_ID in
+#    src/dsh-client-ui-src/tsdown.config.ts), so one row works on both.
 # 3. a storage-domain route selecting the sqlite backend for the `src`
 #    domain only — the override replaces the targeted row's whole config, so
 #    the host default backend is restated here.
@@ -36,7 +42,7 @@
 
 - insert:
     - id: ui-src
-      name: '@lihua_dis/dsh-src/ui-src'
+      name: '@lihua_dis/dsh-src'
 
     - id: storage-src-sqlite
       name: '@lihua_dis/dsh-src/storage-sqlite'

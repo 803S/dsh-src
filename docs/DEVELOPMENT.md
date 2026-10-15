@@ -178,6 +178,28 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 - 投影类型：`src/dsh-client-ui-src/types/projection.ts` 镜像 `lib/src.js` 的 zod schema——
   **投影加字段必须同步这里**（zod 静默 strip 不报错，local.33 教训）。
 
+### 构建产物与源码的已知不一致（local.128 实测，未修）
+
+当前检入的 `lib/ui-src.client.js` **不能由 `src/dsh-client-ui-src/` 的 HEAD 源码用现工具链复现**：
+在 HEAD 源码上重跑 `npm run ui-src:build`，产物与检入件有 662 行 diff，其中含**审批卡文案分支变化**
+（检入件走 `approval-explanation.ts:93` 的宿主 assessment 分支：
+`可能修改或删除目标数据……发送前中断可恢复`；重建产物回落到 `:143` 的 Jev 推导分支：
+`Jev：识别到删除或破坏性操作。请核对下方实际请求。`），`npm run ui-src:test` 会因此在重建产物上断言失败。
+因果方向不确定（子目录 `node_modules` 工具链漂移 / 上一轮直接改过产物二者之一），**未据此改断言、也未替换部署产物**。
+因此对 bundle 的**字面 id**类改动（见下）采取等价的最小文本替换而非重建。
+
+### 客户端模块 id 必须与 profile 行名一致（桌面兼容关键）
+
+`lib/ui-src.client.js` 第一行 `window.__ModuleLoader__.load({id: ...})` 的 id、
+`tsdown.config.ts` 的 `PLUGIN_ID`、`cordis.patch.yml` 里 `ui-src` 行的 `name` **三者必须相同**：
+
+- dsh ≤ 0.1：图中条目 id = profile 行名（原样使用，子路径也接受）；
+- dsh 0.2.0-rc.2：`dsh-client-modules` 用 `exactPackageSpecifier()` 把每个客户端条目**归一到包根 specifier**，
+  行名是子路径（`@lihua_dis/dsh-src/ui-src`）时整条**静默跳过**，渗透 tab 永远不出现（无报错）。
+
+故三处统一取**裸包名** `@lihua_dis/dsh-src`。改 id 时若只改 bundle 不改行名（或反之），
+表现是「图里有条目、bundle 也 200，但 `load({id})` 注册的 id 不匹配 → 模块永不 materialize」。
+
 ## 测试约束（硬性红线）
 
 本仓库的测试一律遵守以下红线——**不遵守 = 危害真实厂商资产/用户，等于线上事故**：

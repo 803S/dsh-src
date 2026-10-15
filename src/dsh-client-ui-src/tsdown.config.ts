@@ -30,8 +30,15 @@ const RAW_CSS_PREFIX = '\0dsh-raw-css:'
 /** Shared virtual-id suffix keeping ids off bundlers' css guards. */
 const VIRTUAL_SUFFIX = '.mjs'
 
-/** The loader id this bundle registers under (must match lib/ui-src.js wiring). */
-const PLUGIN_ID = '@lihua_dis/dsh-src/ui-src'
+/**
+ * The loader id this bundle registers under. It must equal the graph row id the
+ * host composes for this package: dsh <= 0.1 uses the profile row name verbatim
+ * and dsh 0.2 normalizes every client entry onto its package-root specifier, so
+ * the bare package name is the only value both runtimes agree on (see the
+ * `ui-src` row in cordis.patch.yml). The checked-in bundle carries the same
+ * literal — see the reproducibility note in docs/DEVELOPMENT.md.
+ */
+const PLUGIN_ID = '@lihua_dis/dsh-src'
 
 /** Stable short hash prefix for one css-modules file (8 chars, base62-ish). */
 function classPrefixFor(file: string): string {
