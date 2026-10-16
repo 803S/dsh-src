@@ -43,6 +43,26 @@ test('Jev settings are global, private, atomic, mask keys, and require key on pr
  for(const endpoint of ['http://remote.test','https://user:pass@a.test','https://a.test/?key=x'])await assert.rejects(()=>saveDecisionSettings({endpoint}));
 });
 
+test('读取失败时不得静默清空已保存的 API key（现场 401 的根因防回归）',async t=>{
+ await fixture(t);
+ await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',apiKey:'provider-secret'});
+ // 制造读取故障：文件内容非法（等价于读取抛错，而旧代码会当成“没有 key”写回默认值）
+ await fs.writeFile(decisionSettingsPath(),'{ 这不是合法 JSON');
+ await assert.rejects(()=>saveDecisionSettings({endpoint:'https://b.test/v1/systemone'}),/拒绝在读取失败时覆盖/);
+ assert.equal(await fs.readFile(decisionSettingsPath(),'utf8'),'{ 这不是合法 JSON','读取失败时不允许覆盖原文件');
+ // 显式给出新 key 才允许覆盖（修配置的合法路径）
+ const repaired=await saveDecisionSettings({endpoint:'https://b.test/v1/systemone',apiKey:'new-provider'});
+ assert.equal(repaired.hasKey,true);assert.equal(repaired.apiKey,'new-provider');
+ // 明确清除 key 仍可用，但必须留下可恢复备份（否则误清不可逆）
+ await saveDecisionSettings({clearKey:true});
+ assert.equal((await readDecisionSettings()).apiKey,'');
+ const dir=path.join(path.dirname(decisionSettingsPath()),'backups');
+ const backups=(await fs.readdir(dir)).filter(n=>n.endsWith('.json')).sort();
+ assert.ok(backups.length>=1,'清除/替换 key 前必须备份');
+ assert.match(await fs.readFile(path.join(dir,backups.at(-1)),'utf8'),/new-provider/);
+ assert.equal((await fs.stat(path.join(dir,backups.at(-1)))).mode&0o777,0o600);
+});
+
 test('Jev direct Skill mapping, remote credential removal, warm cache, config/key/model invalidation',async t=>{
  await fixture(t);await saveDecisionSettings({enabled:true,endpoint:'https://a.test/v1/systemone',apiKey:'provider-secret'});
  let calls=0;
