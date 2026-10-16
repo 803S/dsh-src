@@ -235,5 +235,119 @@ function findDuplicateKeys(source) {
 	if (dups.length > 20) console.error(`::error file=lib/src/tools/index.js::另有 ${dups.length - 20} 处重复键未列出`);
 	if (dups.length > 0) violations += dups.length;
 }
+/* [local.130] 运行时闸的意图↔实现一致性：行表里用 `!!js` 闸让 0.1/0.2 互斥启用行。闸的形态是
+ * 「能从进程入口解析 @deepseek-ai/dsh-agent-preset = 0.2」，于是“0.2 上禁用”的行必须
+ * resolve 成功时 `return true`（禁用），反之“0.1 上禁用”的行必须 resolve 成功时 `return false`。
+ * 极性写反了两个运行时上会阴差阳错地加载错形态的行（例如 0.1 载入只认 config.prefix 的 persona），
+ * 而两侧启动都不报错——所以这里强制：每个解析闸上方必须有意图注释，且极性与注释一致；
+ * 两侧同极性（等于没闸）也报错。 */
+{
+	const presetLines = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8").split("\n");
+	let rowId = null;
+	for (let i = 0; i < presetLines.length; i++) {
+		const row = /^\s*-\s*id:\s*(\S+)\s*$/.exec(presetLines[i]);
+		if (row) { rowId = row[1]; continue; }
+		const gate = /^\s*disabled:\s*!!js\s*(.+)$/.exec(presetLines[i]);
+		if (!gate || rowId === null) continue;
+		rowId = null;
+		const expr = gate[1];
+		if (!expr.includes("createRequire")) continue;
+		const onResolve = /;\s*return\s+(true|false)\s*\}\s*catch/.exec(expr)?.[1];
+		const onThrow = /catch\s*\([^)]*\)\s*\{\s*return\s+(true|false)/.exec(expr)?.[1];
+		const context = presetLines.slice(Math.max(0, i - 3), i).join("\n");
+		const off02 = /0\.2 上禁用/.test(context), off01 = /0\.1 上禁用/.test(context);
+		if (onResolve === undefined || onThrow === undefined) {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸解析不出极性（形式应为 ...resolve(...);return <A>}catch(...){return <B>}）`);
+			violations += 1;
+		} else if (onResolve === onThrow) {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸两侧同极性，等于未设闸`);
+			violations += 1;
+		} else if (!off02 && !off01) {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸上方必须有意图注释（「0.2 上禁用」或「0.1 上禁用」）`);
+			violations += 1;
+		} else if (off02 && onResolve !== "true") {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的闸写成“0.2 上禁用”但极性是 0.1 的（resolve 成功时应 return true）——两个运行时上会加载错形态的行`);
+			violations += 1;
+		} else if (off01 && onResolve !== "false") {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的闸写成“0.1 上禁用”但极性是 0.2 的（resolve 成功时应 return false）——两个运行时上会加载错形态的行`);
+			violations += 1;
+		}
+	}
+}
+
+/* [local.130] 0.2 preset 声明闸：0.1 走 `preset-root` 目录发现（resolvedRoots），0.2 的 preset 改由
+ * 一条 `@deepseek-ai/dsh-agent-preset` 声明行携带行表，用 `cordis:include` 指向同一份
+ * `preset/src-hunter/agent.cordis.yml`。这里校验：①声明行存在；②行级 `disabled` 闸自带
+ * try/catch（0.1 的 `disabledOf` 不吞异常，闸抛异常 = 0.1 致命）且判据是「能否解析
+ * @deepseek-ai/dsh-agent-preset」——少了它 0.1 会去 import 0.2 才有的包；③`config.name` /
+ * `description` / `order` 与 preset.yml 逐字一致（声明行是 preset.yml 的唯一手工副本）；
+ * ④include 的 `path` 是 profile 相对路径（include 的基址是 profile 目录，不是补丁文件目录），
+ * 且它指回的那份行表在包内真实存在。CI 直接 node 跑本脚本（static-check.yml 不装
+ * 依赖），所以继续用行扫描而不是 js-yaml。 */
+{
+	const patchLines = readFileSync(join(root, "cordis.patch.yml"), "utf8").split("\n");
+	const rowAt = patchLines.findIndex((line) => /^\s*-\s*id:\s*preset-src-hunter\s*$/.test(line));
+	if (rowAt < 0) {
+		console.error("::error file=cordis.patch.yml::缺少 0.2 的 preset 声明行 preset-src-hunter——0.2（桌面 App）上 src-hunter 预设会静默缺失，用户选不到「SRC 专业模式」");
+		violations += 1;
+	} else {
+		const rowIndent = (/^(\s*)/.exec(patchLines[rowAt])?.[1] ?? "").length;
+		const block = [];
+		for (let i = rowAt + 1; i < patchLines.length; i++) {
+			const line = patchLines[i];
+			if (line.trim() !== "" && ((/^(\s*)/.exec(line)?.[1] ?? "").length <= rowIndent)) break;
+			block.push(line);
+		}
+		const blockText = block.join("\n");
+		const rowName = /^\s*name:\s*(.+)$/m.exec(blockText)?.[1]?.trim() ?? "";
+		if (rowName !== "'@deepseek-ai/dsh-agent-preset'") {
+			console.error(`::error file=cordis.patch.yml::preset-src-hunter 的行级 name 应为 '@deepseek-ai/dsh-agent-preset'，实际 ${rowName || "(缺失)"}`);
+			violations += 1;
+		}
+		const gate = /^\s*disabled:\s*!!js\s*(.+)$/m.exec(blockText)?.[1]?.trim() ?? "";
+		if (gate === "") {
+			console.error("::error file=cordis.patch.yml::preset-src-hunter 缺少行级 disabled 闸——0.1（不装 @deepseek-ai/dsh-agent-preset）会去 import 该包，启动直接失败");
+			violations += 1;
+		} else if (!gate.includes("createRequire(process.argv[1])") || !gate.includes("'@deepseek-ai/dsh-agent-preset/package.json'") || !gate.includes("try{") || !gate.includes("catch(")) {
+			console.error("::error file=cordis.patch.yml::preset-src-hunter 的 disabled 闸形态不对——须自带 try/catch（0.1 的 disabledOf 不吞异常）且以「能否从进程入口解析 @deepseek-ai/dsh-agent-preset/package.json」为判据");
+			violations += 1;
+		}
+		const configAt = blockText.search(/^\s*config:\s*$/m);
+		const configText = configAt < 0 ? "" : blockText.slice(configAt);
+		const configIndent = configAt < 0 ? -1 : (/^(\s*)/.exec(blockText.slice(configAt).split("\n")[0])?.[1] ?? "").length;
+		const configField = (key) => {
+			if (configIndent < 0) return "";
+			const re = new RegExp(`^\\s{${configIndent + 2}}${key}:\\s*(.+)$`, "m");
+			return re.exec(configText)?.[1]?.trim() ?? "";
+		};
+		if (configField("id") !== "src-hunter") {
+			console.error(`::error file=cordis.patch.yml::preset-src-hunter 的 config.id 应为 src-hunter，实际 ${configField("id") || "(缺失)"}——客户端按 src-hunter 判定是否渲染 SRC 面板`);
+			violations += 1;
+		}
+		const metaText = readFileSync(join(root, "preset/src-hunter/preset.yml"), "utf8");
+		const metaField = (key) => (new RegExp(`^${key}:\\s*(.+)$`, "m").exec(metaText)?.[1]?.trim() ?? "");
+		for (const key of ["name", "description", "order"]) {
+			const expected = metaField(key), actual = configField(key);
+			if (expected !== actual) {
+				console.error(`::error file=cordis.patch.yml::preset-src-hunter 的 config.${key} 与 preset/src-hunter/preset.yml 不一致（声明行 ${actual || "(缺失)"} ≠ preset.yml ${expected}）——0.1/0.2 会显示不同的预设名`);
+				violations += 1;
+			}
+		}
+		const includePath = /^\s*path:\s*(.+)$/m.exec(configText)?.[1]?.trim().replace(/^'(.*)'$/, "$1") ?? "";
+		const expectedInclude = "./node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent.cordis.yml";
+		if (includePath !== expectedInclude) {
+			console.error(`::error file=cordis.patch.yml::preset-src-hunter 的 include path 应为 '${expectedInclude}'（include 相对 profile 目录解析，插件就装在 profile 的 node_modules 里），实际 ${includePath || "(缺失)"}`);
+			violations += 1;
+		} else {
+			try { readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8"); }
+			catch { console.error("::error file=cordis.patch.yml::preset-src-hunter 的 include path 指向的行表不存在——0.2 上预设声明会加载失败"); violations += 1; }
+		}
+		if (!/^\s*-\s*id:\s*src-preset-root\s*$/m.test(patchLines.join("\n"))) {
+			console.error("::error file=cordis.patch.yml::缺少 src-preset-root 行——0.1 上 src-hunter 预设不再被发现");
+			violations += 1;
+		}
+		if (violations === 0) console.log("check-preset-consistency: 0.2 preset 声明闸 OK（声明行 + 单一真源 include + 与 preset.yml 逐字一致）");
+	}
+}
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
 console.log(`check-preset-consistency: lessons 预算 OK（内置 ${Object.keys(LESSON_BUDGETS).length + extraLessons.length} 篇合计 ${lessonsTotal} ≤ 20000）`);

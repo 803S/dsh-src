@@ -107,3 +107,63 @@ test('评测报告写入独立临时目录，不污染源码或当前工作目�
   if(process.platform!=='win32')assert.equal(fs.statSync(reportPath).mode&0o777,0o600);
  }
 });
+
+/* [local.130] 0.2 的 preset 机制换代后，同一份行表要同时服务两个运行时：
+ * 0.1 走 `preset-root` 目录发现（resolvedRoots），0.2 走 cordis.patch.yml 里的
+ * `@deepseek-ai/dsh-agent-preset` 声明行 + `cordis:include` 指向同一份 agent.cordis.yml。
+ * 两侧靠行级 `disabled: !!js` 闸互斥（闸在叶子插件加载时才求值），所以这里把闸表达式抽出来，
+ * 用假的进程入口分别模拟两个运行时：入口能解析 @deepseek-ai/dsh-agent-preset = 0.2。 */
+test('preset 行表与 0.2 声明行的 !!js 闸在两个运行时上互斥启用',async()=>{
+ const {mkdtempSync,mkdirSync,writeFileSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os');
+ const {join}=await import('node:path');
+ const nodeModule=await import('node:module');
+ const marker=mkdtempSync(join(tmpdir(),'dsh-o2-marker-')), bare=mkdtempSync(join(tmpdir(),'dsh-o1-marker-'));
+ mkdirSync(join(marker,'node_modules/@deepseek-ai/dsh-agent-preset'),{recursive:true});
+ writeFileSync(join(marker,'node_modules/@deepseek-ai/dsh-agent-preset/package.json'),JSON.stringify({name:'@deepseek-ai/dsh-agent-preset',version:'0.0.0-test'}));
+ const evaluate=(expr,entry)=>new Function('process',`return (${expr});`)({argv:['node',entry],platform:process.platform,getBuiltinModule:(id)=>id==='node:module'?nodeModule:undefined});
+ const on01=(expr)=>evaluate(expr,join(bare,'entry.js'));
+ const on02=(expr)=>evaluate(expr,join(marker,'entry.js'));
+ const gates=new Map();
+ let current=null;
+ for(const line of readFileSync(new URL('../preset/src-hunter/agent.cordis.yml',import.meta.url),'utf8').split('\n')){
+  const row=/^(\s*)- id: (\S+)\s*$/.exec(line);
+  if(row){current=row[2];continue;}
+  const gate=/^\s*disabled: !!js (.+)$/.exec(line);
+  if(gate&&current&&!gates.has(current))gates.set(current,gate[1].trim());
+ }
+ const oneSideOnly=['persona','workflow-worker-thread'], otherSideOnly=['persona-02','workflow-ptc','present'];
+ for(const id of oneSideOnly){const gate=gates.get(id);assert.ok(gate,`${id} 缺少运行时闸`);assert.equal(on01(gate),false,`${id} 应在 0.1 启用（0.1 形态的行）`);assert.equal(on02(gate),true,`${id} 应在 0.2 禁用（0.2 用另一形态的同名插件）`);}
+ for(const id of otherSideOnly){const gate=gates.get(id);assert.ok(gate,`${id} 缺少运行时闸`);assert.equal(on01(gate),true,`${id} 应在 0.1 禁用（0.1 无此包）`);assert.equal(on02(gate),false,`${id} 应在 0.2 启用`);}
+ for(const [id,gate] of gates)if(gate.includes('createRequire'))assert.match(gate,/try\{[\s\S]*catch\(/,`${id} 的运行时闸必须自带 try/catch——0.1 的 disabledOf 不吞异常，抛异常等于 0.1 启动失败`);
+ const patchGate=/^\s*disabled: !!js (.+)$/m.exec(readFileSync(new URL('../cordis.patch.yml',import.meta.url),'utf8'))?.[1]?.trim();
+ assert.ok(patchGate,'cordis.patch.yml 缺少 preset 声明行的 disabled 闸');
+ assert.equal(on01(patchGate),true,'声明行必须在 0.1 上被禁用（0.1 不装 @deepseek-ai/dsh-agent-preset，loader 对禁用行从不 import）');
+ assert.equal(on02(patchGate),false,'声明行必须在 0.2 上启用（否则 0.2 上 src-hunter 预设静默缺失）');
+});
+
+/* [local.133] 交付给两个运行时的客户端 bundle 是检入件（不重建）。0.2 换掉的两处
+ * 会话读取必须同时成立，否则 0.2 上 SRC 视图页签静默不出现：
+ * ① 列表快照不再带 current（主视图改在行上标 retainedBy.mainView）
+ * ② 预设不再挂在会话行上（改进行的 projectionValues.agentPreset）
+ * 这里从 bundle 里取出这两个判定函数，用两个运行时的真实快照形状跑行为断言。 */
+test('交付的 SRC 客户端 bundle 在 0.1/0.2 两种会话形状下都判定出 SRC 页签',()=>{
+ const bundle=readFileSync(new URL('../lib/ui-src.client.js',import.meta.url),'utf8');
+ const start=bundle.indexOf('const SRC_PRESET = ');
+ const end=bundle.indexOf('/** Required services for the view registration');
+ assert.ok(start>=0&&end>start,'bundle 里找不到 SRC_PRESET 与判定函数');
+ const {currentSessionId,isSrcSession}=new Function(`${bundle.slice(start,end)}\nreturn { currentSessionId, isSrcSession };`)();
+ // 0.1 形状：current 在快照上、预设挂在会话行上（线上现状）
+ const s01={current:'s1',byId:{s1:{agentPreset:'src-hunter'}}};
+ assert.equal(currentSessionId(s01),'s1','0.1 必须仍从快照的 current 取当前会话');
+ assert.equal(isSrcSession(s01,'s1'),true,'0.1 必须仍从行上的 agentPreset 认出 SRC 会话');
+ // 0.2 形状：没有 current（主视图标在行上）、预设在进行投影值里
+ const s02={byId:{other:{retainedBy:{aside:1}},s2:{retainedBy:{mainView:1},projectionValues:{agentPreset:'src-hunter'}}}};
+ assert.equal(currentSessionId(s02),'s2','0.2 必须从 retainedBy.mainView 认出当前会话');
+ assert.equal(isSrcSession(s02,'s2'),true,'0.2 必须从 projectionValues.agentPreset 认出 SRC 会话');
+ assert.equal(isSrcSession(s02,'other'),false,'非 SRC 会话不得误判');
+ // 子会话继承祖先预设，父链字段仍是 parentId
+ const lineage={byId:{s2:{projectionValues:{agentPreset:'src-hunter'}},s3:{parentId:'s2',projectionValues:{agentPreset:null}}}};
+ assert.equal(isSrcSession(lineage,'s3'),true,'SRC 会话的子会话必须继承该页签');
+ assert.equal(currentSessionId({byId:{}}),undefined,'没有主视图会话时不得凭空造一个 id');
+});

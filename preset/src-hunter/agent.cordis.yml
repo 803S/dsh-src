@@ -12,6 +12,19 @@
 # model tools on the host `tools` registry, a `src:protocol` system-prompt
 # section, and a `src` session-projection unit), and it consumes the host
 # `storageDomain` facility — so the row sits loose, exactly like tool-bash.
+#
+# 双运行时共用这一份行表：0.1 从目录读它（`preset-root` 注册本包的只读根），
+# 0.2 由 `@deepseek-ai/dsh-agent-preset` 声明行读它（bundle patch 携带）。
+# 两侧 schema/包名不同的行用 `!!js` 闸各自限定，闸的判据是「0.2 才有的
+# `@deepseek-ai/dsh-agent-preset` 能否从进程入口解析到」——解析不到 = 0.1。
+# 被 `disabled` 的行 loader 根本不会 import（`refresh()` 直接返回），所以闸下
+# 那侧不存在的包名也永远不会报错。persona 文本用 YAML 锚点共享，只写一遍。
+#
+# 与 0.2 随发行版 standard 预设的差异（有意保留，别当 bug 修）：
+#   ① 没有 `tool-subagent`/`tool-subagent-fork`（通用 spawn/fork 工具）——
+#      SRC 的委派面是本包的 src_recon/src_audit/src_verify，不是通用子代理；
+#   ② `tool-ralph` 保持启用（0.2 standard 关掉了它），配置字段两侧都合法；
+#   ③ 0.2 standard 的 `present`/`command-goal` 按侧挂（present 0.2 才有）。
 
 # ── identity ────────────────────────────────────────────────────────────────
 
@@ -19,10 +32,16 @@
 # `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
 # The 提案→决策→执行 protocol itself arrives from the `src:protocol`
 # system-prompt section contributed by the dsh-src package.
+#
+# `dsh-persona` 换过 schema：0.1 只认 `text`（required），0.2 只认 `prefix`/`suffix`
+# （`text` 不再是字段）。所以这里写两行、各挂一侧闸，正文用锚点 `&src-persona`
+# 共享——改 persona 只改下面那个块标量一处。
 - id: persona
   name: '@deepseek-ai/dsh-persona'
+  # 0.1 行：0.2 上禁用（0.2 的 persona 只认 config.prefix，见下面的 persona-02 行）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return true}catch(e){return false}})()
   config:
-    text: >-
+    text: &src-persona >-
       You are the penetration-testing commander (decision agent), powered by the {{model}} model.
       Your working directory is {{cwd}}. You decide and create exploration intents; proposal generation
       and execution are delegated to subagents, which submit confirmed results directly to their assigned intent.
@@ -32,6 +51,15 @@
       passive recon, page/privacy-policy lead mining) before considering a user todo. Only hang a
       src_user_todo for what genuinely requires a human (login, decisions, credentials, manual steps),
       and always list what you already tried in the detail. Never pawn enumeration work onto the user.
+
+# 0.2 行：同一段 persona，按 0.2 的 `prefix`/`suffix` schema 挂（`suffix` 留空——
+# 正文里已经带「Your working directory is {{cwd}}.」，与 0.1 的渲染逐字一致）。
+- id: persona-02
+  name: '@deepseek-ai/dsh-persona'
+  # 0.2 行：0.1 上禁用（0.1 的 persona 只认 config.text，见上面的 persona 行）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
+  config:
+    prefix: *src-persona
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -100,6 +128,10 @@
 # resolves `goals` on the host and an entry-local realm here would hide it. The
 # registry is keyed by session anyway, so one host instance serves every
 # session. What a preset chooses is whether its agent can call the goal tool.
+# `/goal` 命令行：0.1/0.2 都随发行版提供 `dsh-command-goal`，无需闸。
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
@@ -248,8 +280,19 @@
         enableRunInBackground: false
         maxDepth: provider-managed
 
+    # 工作流引擎实现按运行时二选一（同一个 `workflowEngine` 服务，名字换过）：
+    # 0.1 = `dsh-workflow-worker-thread`（0.2 已移除），0.2 = `dsh-workflow-ptc`。
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
+      # 0.1 行：0.2 上禁用（0.2 用下面的 workflow-ptc 工作流）。
+      disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return true}catch(e){return false}})()
+      config:
+        provider: spawn
+
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
+      # 0.2 行：0.1 上禁用（0.1 无此包，用上面的 workflow-worker-thread）。
+      disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
       config:
         provider: spawn
 
@@ -279,6 +322,12 @@
   config:
     fetch: true
     searchTimeoutMs: 60000
+
+# 0.2 才有的展示工具（`dsh-tool-present`）；0.1 上没有这个包，故挂闸。
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+  # 0.2 行：0.1 上禁用（0.1 无此包）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
 
 # ── penetration mode ────────────────────────────────────────────────────────
 

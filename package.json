@@ -1,7 +1,7 @@
 {
   "name": "@lihua_dis/dsh-src",
   "description": "DSH SRC 漏洞挖掘模式：以探索链路记录目标、线索、资产与漏洞，并在 Web 中可视化展示。",
-  "version": "0.1.0-local.129",
+  "version": "0.1.0-local.133",
   "publishConfig": {
     "access": "public"
   },
@@ -58,8 +58,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6",
-    "@deepseek-ai/dsh-bash-sandbox": ">=0.1.0-rc.8 <0.3.0"
+    "@deepseek-ai/dsh-bash-sandbox": ">=0.1.0-rc.8 <0.3.0",
+    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.6"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {

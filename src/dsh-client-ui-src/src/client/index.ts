@@ -27,6 +27,23 @@ import { en, NS, zh } from './locales.ts'
 /** The current-session id carried by the sessions list snapshot. */
 type CurrentSessionId = SessionListState['current']
 
+/**
+ * The Session the main view currently shows.
+ *
+ * 0.1 carries it on the list snapshot itself (`current`); 0.2 dropped that
+ * field and instead marks the Session the main view retains on its list row
+ * (`retainedBy.mainView`), published through the same list store. Both shapes
+ * arrive on every list change, so the caller stays reactive either way.
+ */
+function currentSessionId(snapshot: SessionListState): CurrentSessionId {
+  if (snapshot.current !== undefined) return snapshot.current
+  const byId = (snapshot.byId ?? {}) as Readonly<Record<string, { retainedBy?: { mainView?: number } } | undefined>>
+  for (const id of Object.keys(byId)) {
+    if ((byId[id]?.retainedBy?.mainView ?? 0) > 0) return id
+  }
+  return undefined
+}
+
 /** The agent-preset id whose sessions carry the src capability. */
 const SRC_PRESET = 'src-hunter'
 
@@ -34,15 +51,20 @@ const SRC_PRESET = 'src-hunter'
  * Whether a session is composed from the src preset — the session itself
  * or any listed ancestor (subagents of a src session inherit its preset;
  * their own rows may or may not carry `agentPreset` on the wire).
+ *
+ * 0.1 records the preset directly on the row (`agentPreset`); 0.2 moved it
+ * into the row's projection values (`projectionValues.agentPreset`).
  */
 function isSrcSession(snapshot: SessionListState, id: string): boolean {
   let cursor: string | undefined = id
   const seen = new Set<string>()
-  const byId = snapshot.byId as Readonly<Record<string, { agentPreset?: string; parentId?: string } | undefined>>
+  type Row = { agentPreset?: unknown; projectionValues?: { agentPreset?: unknown }; parentId?: string }
+  const byId = snapshot.byId as Readonly<Record<string, Row | undefined>>
   while (cursor !== undefined && !seen.has(cursor)) {
     seen.add(cursor)
-    const row: { agentPreset?: string; parentId?: string } | undefined = byId[cursor]
-    if (row?.agentPreset === SRC_PRESET) return true
+    const row: Row | undefined = byId[cursor]
+    const preset = row?.projectionValues?.agentPreset ?? row?.agentPreset
+    if (typeof preset === 'string' && preset === SRC_PRESET) return true
     cursor = row?.parentId
   }
   return false
@@ -72,7 +94,7 @@ export function apply(ctx: ClientContext): void {
 
     const sync = (): void => {
       const snapshot = sessions.list.getSnapshot()
-      const current = snapshot.current
+      const current = currentSessionId(snapshot)
       const src = current === undefined ? undefined : isSrcSession(snapshot, current)
       if (current === sessionId && src === sessionSrc) return
       disposeEntry?.()

@@ -66,6 +66,37 @@
     - id: src-preset-root
       name: '@lihua_dis/dsh-src/preset-root'
 
+# dsh 0.2 的 preset 机制换代：0.2 没有 `agent-presets` 的 `resolvedRoots`（上面那条
+# `src-preset-root` 在 0.2 上是空转，只服务 0.1），preset 改由「一条
+# `@deepseek-ai/dsh-agent-preset` 声明行携带 `config.plugins` 行表」注册。这里用
+# `cordis:include` 指向 0.1 用的同一份 `preset/src-hunter/agent.cordis.yml`（include 的 `path` 相对
+# **profile 目录**解析，所以写成 `./node_modules/@lihua_dis/dsh-src/...`，指回同一份文件），于是
+# 行表仍然只有一份真源、不会漂移：行里的 `!!js` 闸由两侧
+# 各自求值——0.1 形态的行（persona 的 `text`）在 0.2 上被禁用，0.2 才有的行（command-goal /
+# present / workflow-ptc）在 0.1 上被禁用。声明行自己也带同一判据的闸：0.1 不装
+# `@deepseek-ai/dsh-agent-preset` ⇒ 闸判真 ⇒ 整行（连同子行表）在 0.1 上禁用；0.1 的 loader
+# 对禁用行从不 import（`refresh()` 里 `if (this.disabled) return`），所以 0.1 上这个包名既不会
+# 被解析也不会报错。`name`/`description`/`order` 必须与 preset/src-hunter/preset.yml 逐字一致，
+# 由 scripts/check-preset-consistency.mjs 校验（下面三行是文件中唯一的手工副本）。
+- insert:
+    - id: preset-src-hunter
+      name: '@deepseek-ai/dsh-agent-preset'
+      disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(error){return true}})()
+      config:
+        id: src-hunter
+        name: SRC 专业模式
+        description: 面向企业 SRC 的授权漏洞挖掘工作流：资产测绘、信息收集、漏洞验证、复核、报告与提交状态管理，并在 Web 中可视化展示。
+        order: 2
+        plugins:
+          - id: preset-src-hunter-rows
+            name: 'cordis:include'
+            config:
+              # include 的实现是 `new URL(path, ctx.baseUrl)`，而 baseUrl 是**profile 目录**
+              # （不是本补丁文件所在目录）——写成 './preset/...' 会去 profile 里找而报
+              # `config file not found`。插件就装在 profile 自己的 node_modules 里，所以这里
+              # 用 profile 相对路径指回同一份行表（不复制、不落盘到 DSH_HOME）。
+              path: './node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent.cordis.yml'
+
 # dsh-src local.100: keyless web search provider. It is deliberately inside the
 # SRC plugin context so web_search has a usable provider without DeepSeek search key.
 - id: web
