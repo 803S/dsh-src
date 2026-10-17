@@ -170,8 +170,49 @@ try {
  await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();assert.match(await card.innerText(),/template/);
  await card.getByText('查看冻结请求（脱敏，非抓包）',{exact:true}).click();
  await p.evaluate(()=>{src.pendingApprovals[0]={...src.pendingApprovals[0],status:'approved',executionState:'failed-before-send'};renderSrc();});await card.getByText('未发送',{exact:true}).waitFor();
+ // [local.106] Jev 面板：数据只来自权威快照（src.jev），只读视图（不发命令）、未知值渲染原文、缺 jev 走空态。
+ const commandsBeforeJev = await p.evaluate(()=>commands.length);
+ await p.evaluate(()=>{src.jev={stats:{total:9,byTask:{'risk-grade':6,'skill-activate':2,unsupported:1},byAction:{allow:5,pending:2,skip:2},byEffect:{read:5,unknown:2,write:2},bySource:{jev:8,local:1},byModel:{'jev-latest':8,'judge-x':1},byMode:{on:7,shadow:2},fallback:2,errors:{'http-503':1,'circuit-open':1},latency:{count:9,sum:2700,max:800,last:120},offered:2,adopted:1,offeredByTask:{'skill-activate':2},adoptedByTask:{'skill-activate':1},startedAt:1,updatedAt:2,lastAt:2,decisionSeq:9,last:null},recent:[
+  {seq:9,kind:'decision',at:1791280000000,taskType:'risk-grade',action:'allow',effect:'read',risk:'low',source:'jev',provider:'systemone',model:'jev-latest',fallback:false,mode:'on',subject:'GET demo.test/api/users'},
+  {seq:8,kind:'decision',at:1791279000000,taskType:'scan-plan',action:'pending',effect:'unknown',source:'jev',provider:'systemone',model:'judge-x',fallback:true,errorType:'http-503',mode:'on',subject:'3 个请求 · demo.test/api'},
+  {seq:7,kind:'offer',at:1791278000000,taskType:'skill-activate',action:'skip',effect:'unknown',source:'jev',provider:'systemone',model:'jev-latest',fallback:false,mode:'on',subject:'短信轰炸 / 无频率限制',skillId:'lesson:sms-bomb@fixture',recommendationId:'skillrec-3'},
+  {seq:6,kind:'tampered',at:0,taskType:'unknown-task',action:'',effect:'',source:'',provider:'',model:'',fallback:false,mode:'',subject:''}
+ ]};renderSrc();});
+ await p.setViewportSize({width:1365,height:1050});
+ await p.getByTestId('src-tab-jev').click();
+ const jev=p.getByTestId('src-jev');await jev.waitFor();
+ assert.equal(await p.getByTestId('src-jev-total').innerText(),'9');
+ assert.equal(await p.getByTestId('src-jev-fallback').innerText(),'2');
+ assert.equal(await p.getByTestId('src-jev-latency').innerText(),'300 ms');
+ assert.equal(await p.getByTestId('src-jev-adopt').innerText(),'1 / 2');
+ const zh=await p.evaluate(()=>dict);
+ assert.match(await p.getByTestId('src-jev-task-unsupported').innerText(),new RegExp(zh['jev.task.unsupported']));
+ assert.match(await p.getByTestId('src-jev-task-unsupported').innerText(),/1\b/);
+ assert.match(await p.getByTestId('src-jev-by-model').innerText(),/judge-x/,'未知模型键必须原样显示（不做词条查询）');
+ const rows=p.getByTestId('src-jev-row');assert.equal(await rows.count(),4);
+ assert.equal(await rows.nth(0).getAttribute('data-fallback'),'false');
+ assert.equal(await rows.nth(0).innerText().then(s=>s.includes('GET demo.test/api/users')),true);
+ assert.equal(await rows.nth(1).getAttribute('data-fallback'),'true');assert.match(await rows.nth(1).innerText(),/http-503/);
+ assert.equal(await rows.nth(3).getAttribute('data-kind'),'tampered');
+ assert.match(await rows.nth(3).innerText(),/unknown-task/,'未知职责必须原样显示');
+ assert.equal(/jev\.[a-z]/.test(await jev.innerText()),false,'未知值不得触发词条查询（会渲染成原始键名）');
+ assert.deepEqual(await p.evaluate(n=>commands.slice(n),commandsBeforeJev),[],'Jev 面板是只读视图，不得发任何命令');
+ for(const dark of [false,true]){
+  await p.evaluate(d=>document.body.toggleAttribute('data-ds-dark-theme',d),dark);
+  const c=await contrast(p.getByTestId('src-jev-metric-total'));assert.ok(c.ratio>=4.5,JSON.stringify(c));evidence.push({theme:dark?'dark':'light',jev:c});
+  await jev.screenshot({path:path.join(output,`jev-tab-${dark?'dark':'light'}.png`)});
+ }
+ await p.setViewportSize({width:390,height:844});assert.ok(await jev.evaluate(e=>e.scrollWidth<=e.clientWidth+1));await jev.screenshot({path:path.join(output,'jev-tab-mobile.png')});
+ await p.setViewportSize({width:1365,height:1050});
+ /* 旧状态（本改动之前建立的会话/checkpoint）没有 jev：必须走空态，不崩、不查词条。 */
+ await p.evaluate(()=>{delete src.jev;renderSrc();});
+ await p.getByTestId('src-jev-empty').waitFor();
+ assert.equal(await p.getByTestId('src-jev-total').count(),0);
+ assert.equal(await p.getByTestId('src-jev-row').count(),0);
+ assert.equal(/jev\.[a-z]/.test(await p.getByTestId('src-jev').innerText()),false);
+ assert.deepEqual(await p.evaluate(n=>commands.slice(n),commandsBeforeJev),[]);
  await p.getByTestId('src-view-report').click();await p.getByTestId('src-report').waitFor();
  assert.deepEqual(errors,[]);
- await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['compact-approval-real-reason/mobile/request-details/not-sent','infra-copy-readback-pre-goal','infra-save/reset/failures','infra-mobile/tab-remount','saved-key-reveal/hide/blur','save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','report-navigation']},null,2));
+ await writeFile(path.join(output,'results.json'),JSON.stringify({passed:true,evidence,errors,checks:['compact-approval-real-reason/mobile/request-details/not-sent','infra-copy-readback-pre-goal','infra-save/reset/failures','infra-mobile/tab-remount','saved-key-reveal/hide/blur','save/clear/retain-key','four-modes','test-preserves-draft','failure-feedback','mobile','dark/light-contrast','delete-cancel/esc/focus','delete-no-input','delete-error/retry/double-click','jev-tab-readonly/metrics/recent/unknown-values/empty-state/mobile/dark-light','report-navigation']},null,2));
  console.log(JSON.stringify({passed:true,output,evidence},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

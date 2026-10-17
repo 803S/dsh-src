@@ -3,5 +3,6 @@
 .root ul { margin: 0; padding: 0 0 0 17px; }
 .root li { padding-left: 2px; }
 .root details { margin-top: 2px; border-top: 1px solid color-mix(in oklab, var(--dsw-alias-border-l1) 70%, transparent); padding-top: 5px; }
+.technical { color: var(--dsw-alias-label-tertiary); }
 .root summary { color: var(--dsw-alias-label-tertiary); font-size: 10px; cursor: pointer; }
 .fullText { margin-top: 5px; color: var(--dsw-alias-label-tertiary); white-space: pre-wrap; overflow-wrap: anywhere; }

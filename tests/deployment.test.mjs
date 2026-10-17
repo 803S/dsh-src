@@ -149,7 +149,11 @@ test('preset 行表与 0.2 声明行的 !!js 闸在两个运行时上互斥启�
  * 这里从 bundle 里取出这两个判定函数，用两个运行时的真实快照形状跑行为断言。 */
 test('交付的 SRC 客户端 bundle 在 0.1/0.2 两种会话形状下都判定出 SRC 页签',()=>{
  const bundle=readFileSync(new URL('../lib/ui-src.client.js',import.meta.url),'utf8');
- const start=bundle.indexOf('const SRC_PRESET = ');
+ // 两个判定的声明顺序随构建器/源码顺序变化（SRC_PRESET 可能排在 currentSessionId 前或后），
+ // 从更靠前的那个起切，否则前面那个函数会落在切片外（bundle 是检入件，不能靠顺序碰运气）。
+ const markers=['function currentSessionId(','const SRC_PRESET = '];
+ const offsets=markers.map(m=>{const i=bundle.indexOf(m);assert.ok(i>=0,`bundle 里找不到 ${m}`);return i;});
+ const start=Math.min(...offsets);
  const end=bundle.indexOf('/** Required services for the view registration');
  assert.ok(start>=0&&end>start,'bundle 里找不到 SRC_PRESET 与判定函数');
  const {currentSessionId,isSrcSession}=new Function(`${bundle.slice(start,end)}\nreturn { currentSessionId, isSrcSession };`)();

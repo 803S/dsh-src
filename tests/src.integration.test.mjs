@@ -86,6 +86,10 @@ function harness(options = {}) {
   const sessions = new Map();
   const projections = new Map();
   const projectionRegistry = new FakeProjectionRegistry();
+  /* [local.106] 冷加载复核：0.2 在会话加载时调投影 `init`，而 `storageDomain.open` 还挂着。
+     用 deferOpen 把 open 卡在闸门前，就能在进程内重现「域未就绪的 init」这条真实路径。 */
+  let releaseOpen = () => {};
+  const openGate = options.deferOpen === true ? new Promise((resolve) => { releaseOpen = resolve; }) : void 0;
   /* [local.105] 0.2 的 `SessionProjectionCache` 独有 `cachedSnapshot`，插件用它区分「drive 要求严格前进」（0.2）
      与「checkpoint 行必须落在日志内」（0.1）两套 cursor 策略。测试默认 0.1 形态，需要时显式打开。 */
   if (options.cachedSnapshot === true) projectionRegistry.cachedSnapshot = () => void 0;
@@ -107,13 +111,16 @@ function harness(options = {}) {
     }
   };
   const ctx = {
-    storageDomain: { open: async () => domain },
+    storageDomain: { open: async () => { if (openGate !== void 0) await openGate; return domain; } },
     tools: { register(tool) { tools.set(tool.name, tool); } },
     sessions: { get(id) { return sessions.get(id); } },
     subagents: { followupCalls: [], async followup(parent, sessionId, content) { this.followupCalls.push({ parent: parent.id, childSessionId: String(sessionId), content }); return `msg-${this.followupCalls.length}`; } },
     effect() {},
     inject(names, callback) {
-      if (names.includes("sessionProjections")) callback({ sessionProjections: { register: (spec) => { projections.set(spec.key, spec); projectionRegistry.register(spec); }, drive: (session, event) => projectionRegistry.drive(session, event) } });
+      /* [local.105] 0.2 的 facade 上多一个 `cachedSnapshot`（插件靠 `typeof cachedSnapshot === 'function'`
+         区分 0.1/0.2 的 poke cursor）。不转发它的话 `harness({cachedSnapshot:true})` 是空转——
+         0.2 分支在集成层根本没被走到过。 */
+      if (names.includes("sessionProjections")) callback({ sessionProjections: { register: (spec) => { projections.set(spec.key, spec); projectionRegistry.register(spec); }, drive: (session, event) => projectionRegistry.drive(session, event), ...(options.cachedSnapshot === true ? { cachedSnapshot: () => void 0 } : {}) } });
       if (names.includes("systemPrompt")) callback({ systemPrompt: { section(spec) { prompts.push(spec); } } });
       if (names.includes("commands")) callback({ commands: { register(def) { commands.set(def.name, def); } } });
     }
@@ -142,6 +149,8 @@ function harness(options = {}) {
   };
   return {
     domain, ctx, tools, sessions, projections, prompts, commands, exec, run,
+    /* [local.106] 放开 deferOpen 的闸门（域句柄从现在开始可用）。 */
+    releaseDomainOpen: () => releaseOpen(),
     /* [local.105] 投影 cell / 已驱动事件（面板数据链路的新观察面）。 */
     projection: (sessionId) => projectionRegistry.cells.get(sessions.get(sessionId))?.get("src")?.state,
     /* 宿主自有投影（sessionStats 之类）的模拟 cell：poke 不应被它记账。 */
@@ -6780,4 +6789,431 @@ test("src_account_assist 更新不再用默认值覆盖标题/详情，也不再
   // 之后再只补备注：状态不得被重置回 pending（旧实现 status: args.status || "pending" 的回归）
   const later = await h.run("src_account_assist", { userTodoId: todo.id, note: "补充记录" }, parent);
   assert.equal(later.status, "done", "仅补备注不得把 done 重置回 pending");
+});
+
+/* ═════════════ [local.106] Jev 面板：判定计量来自 store 权威域（不是遥测 JSONL） ═════════════
+   数据链：判定出口 → 旁路 sink → store 权威域(decision_stats/decision_recent) → 权威 poke → 投影 cell
+   → 面板。下面四条契约各自独立回归：①出口即录且不改判定；②0.1/0.2 cursor 与冷读；③推荐/采纳按 identity
+   关联并按 recommendationId 去重；④计量是旁路（sink 抛错/存储故障/脏入参都不影响判定与投影）。 */
+
+/* 判定服务答案 fixture：probabilities 覆盖全部 criteria 键、和为 1、choice 概率最大。 */
+function jevPanelAnswer(choice, keys, model = "jev-panel-fixture") {
+  return { model, answers: { decision: { choice, confidence: 0.95, probabilities: Object.fromEntries(keys.map((key) => [key, key === choice ? 1 : 0])) } } };
+}
+/* 录制是 fire-and-forget（判定不等落库），断言前用有界轮询等待，不 sleep 猜时序。 */
+async function settle(read, label, tries = 200) {
+  for (let i = 0; i < tries; i++) {
+    const value = await read();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`等待录制落库超时：${label}`);
+}
+/* 直接扫权威域里的两表（不硬编码 recordKey 形状），断言的是存储真值而非返回值。 */
+const decisionStatsRows = (h, sessionId) => [...h.domain.table("decision_stats").entries()].map(([, row]) => row).filter((row) => row.sessionId === sessionId);
+const decisionRecentRows = (h, sessionId) => [...h.domain.table("decision_recent").entries()].map(([, row]) => row).filter((row) => row.sessionId === sessionId).sort((a, b) => Number(a.seq ?? 0) - Number(b.seq ?? 0));
+
+test("[local.106] Jev 面板：判定出口写权威域→投影（面板唯一数据源），不改判定结果、不碰会话日志", async () => {
+  const { __resetSharedDomainOpensForTests, SrcStore, srcProjectionSchema } = await import("../lib/src.js");
+  const { jevDecide } = await import("../lib/src/decision/jev-client.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const sid = "jev-panel-a";
+  const parent = h.exec(sid);
+  const session = h.sessions.get(sid);
+  const prevFetch = globalThis.fetch;
+  try {
+    await h.run("src_add_goal", { target: "https://example.test", objective: "判定计量", authorization: "SRC" }, parent);
+    /* 会话已有真实事件（tool/call + tool/result）→ session.seq > 0，0.1 的 cursor(session.seq-1) 才可判别，
+       也才能观察宿主投影只把真实工具调用记账。 */
+    parent.agent.session.append("tool/call", { name: "src_add_goal", callId: "call-goal" });
+    parent.agent.session.append("tool/result", { name: "src_add_goal", callId: "call-goal" });
+    const logLengthAfterAppend = session.events.length;
+    await saveDecisionSettings({ enabled: true, riskMode: "on", skillMode: "off", delegateMode: "off", endpoint: "https://jev-panel-a.test/v1/systemone" });
+    const asked = [];
+    globalThis.fetch = async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      asked.push(payload);
+      return new Response(JSON.stringify(jevPanelAnswer("read", Object.keys(payload.questions.decision.criteria))));
+    };
+    const pokesBefore = h.driven(sid).length;
+    const advice = await jevDecide({ taskType: "risk-grade", method: "GET", url: "https://fixture.invalid/api/users?token=SECRET-QUERY", scopeChecked: true }, parent);
+    /* 计量是纯旁路：返回值必须与「没有计量」时逐字相同。 */
+    assert.equal(advice.fallback, false, "计量不得改变判定结果");
+    assert.equal(advice.action, "allow");
+    assert.equal(advice.effect, "read");
+    assert.equal(advice.source, "jev");
+    assert.equal(asked.length, 1, "一次判定只打一次网络");
+
+    const stored = await settle(() => decisionStatsRows(h, sid)[0], "decision_stats 落库");
+    assert.equal(stored.total, 1);
+    assert.equal(stored.byTask["risk-grade"], 1);
+    assert.equal(stored.byTask.unsupported, void 0, "已知职责不得被归入 unsupported");
+    assert.equal(stored.byAction.allow, 1);
+    assert.equal(stored.byEffect.read, 1);
+    assert.equal(stored.bySource.jev, 1);
+    assert.equal(stored.byMode.on, 1);
+    assert.equal(stored.byModel["jev-panel-fixture"], 1);
+    assert.equal(stored.fallback, 0);
+    assert.equal(stored.latency.count, 1);
+    assert.equal(stored.decisionSeq, 1);
+    assert.equal(stored.last.subject, "GET fixture.invalid/api/users");
+    const recent = decisionRecentRows(h, sid);
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0].id, "dec-1");
+    assert.equal(recent[0].kind, "decision");
+    assert.equal(recent[0].seq, 1);
+    assert.equal(recent[0].subject, "GET fixture.invalid/api/users");
+    assert.ok(!recent[0].subject.includes("SECRET-QUERY"), "记录内容必须剥离 URL 查询串");
+    assert.equal(recent[0].model, "jev-panel-fixture");
+    assert.equal(recent[0].latency >= 0, true);
+
+    /* 投影：一次判定 = 一次权威 poke，载荷就是同一份权威快照。 */
+    assert.equal(h.driven(sid).length, pokesBefore + 1, "一次判定只应 poke 一次");
+    const poke = h.driven(sid).at(-1);
+    assert.equal(poke.type, "src_authoritative_state", "poke 必须是专用事件类型");
+    assert.equal(poke.seq, Math.max(session.seq - 1, 0), "0.1：cursor 必须落在日志末位之内");
+    assert.equal(poke.data.view.jev.stats.total, 1);
+    const cell = h.projection(sid);
+    assert.equal(cell.jev.stats.total, 1, "投影 cell 必须拿到判定计量");
+    assert.equal(cell.jev.recent.length, 1);
+    assert.equal(cell.jev.recent[0].subject, "GET fixture.invalid/api/users");
+    /* poke 不得被宿主自己的投影记成一次真实工具调用（否则面板出现等不到 result 的幽灵调用）：
+       宿主投影唯一被 drive 的事件就是这次 poke，而它按专用类型被忽略，所以工具调用账必须仍然为空。 */
+    assert.deepEqual(h.hostProjection(sid).toolCalls, [], "poke 不得被宿主投影记成工具调用");
+    /* poke 也不得往会话日志里写任何行（本地.105 的纯度闸：合成行会让 0.2 迁移器拒绝加载）。 */
+    assert.equal(session.events.length, logLengthAfterAppend, "poke 不得往会话日志里追加行");
+    assert.deepEqual(session.events.map((event) => event.type), ["tool/call", "tool/result"]);
+    assertCleanLog(session.events, "权威 poke");
+
+    /* 面板冷启动读路径：命令返回的权威状态必须过 wire schema 且带同一份计量。 */
+    const command = h.commands.get("src-authoritative-state");
+    assert.ok(command, "/src-authoritative-state 必须已注册");
+    const result = await command.handler({ agent: parent.agent });
+    assert.equal(result.kind, "success");
+    const state = JSON.parse(result.text);
+    assert.equal(srcProjectionSchema.safeParse(state).success, true, "权威状态必须过投影 wire schema");
+    assert.equal(state.jev.stats.total, 1);
+    assert.equal(state.jev.recent[0].subject, "GET fixture.invalid/api/users");
+    /* 新 store 重开域：计量在存储真值里（不是进程内缓存）。 */
+    const reopened = new SrcStore(h.ctx);
+    const view = await reopened.view(sid);
+    assert.equal(view.jev.stats.total, 1, "冷读必须从权威域读到同一份计量");
+    assert.equal(view.jev.recent.length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+});
+
+/* [local.106] 冷加载复核（真 0.2 桌面探针里实测到的缺陷）：会话重开时宿主以 header 调 `init`，
+   而那一刻域句柄还没解析。旧实现直接返回空态——投影只能靠日志 fold，而 Jev 计量/域笔记不在日志里，
+   面板冷启动后显示 0/空。新契约：init 不假装权威，登记待播种，域就绪后补发一次权威 poke。 */
+test("[local.106] 冷加载播种：域未就绪时 init 不猜数据，域就绪后补发一次权威 poke（面板冷读仍有数字）", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  const { jevDecide } = await import("../lib/src/decision/jev-client.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  const sid = "jev-cold-seed";
+  const prevFetch = globalThis.fetch;
+  /* ① 先用常规 harness 造出真实计量行（判定出口 → 旁路 sink → 权威域）。 */
+  __resetSharedDomainOpensForTests();
+  const source = harness();
+  const parent = source.exec(sid);
+  try {
+    await saveDecisionSettings({ enabled: true, riskMode: "on", skillMode: "off", delegateMode: "off", endpoint: "https://jev-cold-seed.test/v1/systemone" });
+    globalThis.fetch = async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      return new Response(JSON.stringify(jevPanelAnswer("read", Object.keys(payload.questions.decision.criteria))));
+    };
+    await jevDecide({ taskType: "risk-grade", method: "GET", url: "https://fixture.invalid/cold?token=SECRET-QUERY", scopeChecked: true }, parent);
+    const stored = await settle(() => decisionStatsRows(source, sid)[0], "decision_stats 落库");
+    assert.equal(stored.total, 1);
+    assert.equal(decisionRecentRows(source, sid).length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+
+  /* ② 冷启动：把 open 卡在闸门后，把权威域里的真实行原样搬到冷 harness 的域。 */
+  __resetSharedDomainOpensForTests();
+  const cold = harness({ deferOpen: true });
+  cold.exec(sid);
+  for (const table of ["decision_stats", "decision_recent"]) {
+    for (const [key, row] of source.domain.table(table).entries()) if (row.sessionId === sid) cold.domain.table(table).put(key, row);
+  }
+  const spec = cold.projections.get("src");
+  assert.ok(spec?.init, "src 投影必须注册 init");
+  const seeded = spec.init({ id: sid });
+  assert.equal(seeded.jev.stats, null, "域未就绪时 init 必须保持空态，不得用空值冒充权威");
+  assert.deepEqual(seeded.jev.recent, []);
+  assert.equal(cold.driven(sid).length, 0, "域未就绪时不得发 poke");
+
+  /* ③ 域就绪 → 只补发一次权威 poke，且事件形态与实时 poke 完全一致。 */
+  cold.releaseDomainOpen();
+  const poke = await settle(() => cold.driven(sid).find((event) => event.data?.view?.jev?.stats?.total === 1), "域就绪后的补发 poke");
+  assert.equal(poke.type, "src_authoritative_state", "补发必须是同一套权威 poke 事件类型");
+  assert.equal(cold.driven(sid).length, 1, "冷加载只补发一次");
+  assert.equal(poke.data.view.jev.recent[0].subject, "GET fixture.invalid/cold", "补发内容与判定出口记录一致且剥离查询串");
+  assert.equal(cold.projection(sid).jev.stats.total, 1, "冷读面板在域就绪后必须拿到判定计量");
+  assert.equal(cold.projection(sid).jev.recent[0].subject, "GET fixture.invalid/cold");
+  assert.deepEqual(cold.hostProjection(sid)?.toolCalls ?? [], [], "补发 poke 不得被宿主投影记成工具调用");
+  assert.deepEqual(cold.sessions.get(sid).events.map((event) => event.type), [], "补发 poke 不得往会话日志里追加行");
+
+  /* ④ 幂等：再登记一次不重复补发；域已就绪后 init 直接播种真值。 */
+  spec.init({ id: sid });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(cold.driven(sid).length, 1, "重复 init 不得重复补发");
+  const warm = spec.init({ id: sid });
+  assert.equal(warm.jev.stats.total, 1, "域就绪后 init 必须直接播种 store 真值");
+  assert.equal(warm.jev.recent.length, 1);
+  __resetSharedDomainOpensForTests();
+});
+
+test("[local.106] Jev 面板：fallback/错误/延迟聚合、明细上限 20、0.2 cursor", async () => {
+  const { __resetSharedDomainOpensForTests, SrcStore, srcProjectionSchema } = await import("../lib/src.js");
+  const { jevDecide } = await import("../lib/src/decision/jev-client.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  const { stateFromStore } = await import("../lib/src/store-projection.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness({ cachedSnapshot: true });
+  const sid = "jev-panel-b";
+  const parent = h.exec(sid);
+  const session = h.sessions.get(sid);
+  const prevFetch = globalThis.fetch;
+  try {
+    await h.run("src_add_goal", { target: "https://example.test", objective: "判定失败聚合", authorization: "SRC" }, parent);
+    parent.agent.session.append("tool/call", { name: "src_add_goal", callId: "call-goal" });
+    await saveDecisionSettings({ enabled: true, riskMode: "on", skillMode: "off", delegateMode: "off", endpoint: "https://jev-panel-b.test/v1/systemone" });
+    globalThis.fetch = async () => new Response("SECRET ECHO", { status: 401 });
+    const failed = await jevDecide({ taskType: "risk-grade", method: "POST", url: "https://fixture.invalid/api/orders?key=SECRET-QUERY", scopeChecked: true }, parent);
+    assert.equal(failed.fallback, true);
+    assert.equal(failed.errorType, "http-401");
+    assert.equal(failed.action, "pending");
+    /* 第二次：401 已开熔断（同 endpoint），不再打网络但仍是一次真实失败，必须照计。 */
+    const tripped = await jevDecide({ taskType: "risk-grade", method: "POST", url: "https://fixture.invalid/api/orders", scopeChecked: true }, parent);
+    assert.equal(tripped.fallback, true);
+    assert.equal(tripped.errorType, "http-401");
+    assert.equal(tripped.circuitOpen, true);
+    assert.equal(tripped.attempts, 0, "熔断期间不应再打网络");
+
+    const stored = await settle(() => { const row = decisionStatsRows(h, sid)[0]; return row?.total === 2 ? row : void 0; }, "两次失败判定落库");
+    assert.equal(stored.byTask["risk-grade"], 2);
+    assert.equal(stored.fallback, 2, "服务故障/熔断都算真实工作量");
+    assert.equal(stored.errors["http-401"], 2);
+    assert.equal(stored.byAction.pending, 2);
+    assert.equal(stored.byEffect.unknown, 2);
+    assert.equal(stored.bySource.jev, 2);
+    assert.equal(stored.latency.count, 2);
+    assert.equal(stored.decisionSeq, 2);
+    const failedRows = decisionRecentRows(h, sid);
+    assert.equal(failedRows[0].subject, "POST fixture.invalid/api/orders", "回退行同样只留 host/path");
+    assert.equal(failedRows[0].fallback, true);
+    assert.equal(failedRows[0].errorType, "http-401");
+    /* 0.2：drive 要求严格前进，cursor 必须是**下一个日志位置**（用 session.seq-1 会被去重丢弃）。 */
+    const pokes = h.driven(sid).filter((event) => event.type === "src_authoritative_state");
+    assert.equal(pokes.at(-1).seq, session.seq, "0.2：cursor 必须是下一个日志位置");
+
+    /* 明细上限与延迟四元组：经 store 写入内核再写 25 条（与判定出口同一条路径）。 */
+    const store = new SrcStore(h.ctx);
+    for (let i = 1; i <= 25; i++) await store.recordDecision(sid, { kind: "decision", taskType: "scan-plan", action: "allow", effect: "read", risk: "low", objectClass: "not-applicable", source: "jev", provider: "systemone", model: "jev-panel-fixture", fallback: false, mode: "on", subject: `plan-${i}`, latency: i * 10 });
+    const capped = (await store.view(sid)).jev.stats;
+    assert.equal(capped.total, 27);
+    assert.equal(capped.byTask["scan-plan"], 25);
+    assert.equal(capped.decisionSeq, 27);
+    assert.equal(capped.latency.count, 27);
+    assert.equal(capped.latency.last, 250);
+    assert.equal(capped.latency.max >= 250, true);
+    const top = decisionRecentRows(h, sid);
+    assert.equal(top.length, 20, "明细只保留最近 20 条");
+    assert.equal(top[0].seq, 8, "裁剪的是最旧的 7 条");
+    assert.equal(top[0].id, "dec-8");
+    assert.equal(top.at(-1).seq, 27);
+    assert.deepEqual(top.map((row) => row.seq), [...top.map((row) => row.seq)].sort((a, b) => a - b), "明细必须按 seq 升序");
+
+    /* 冷读：权威快照 → 投影 state → wire 一致（重启后面板看到的还是这份数）。 */
+    const view = await store.view(sid);
+    assert.equal(view.jev.stats.total, 27);
+    assert.equal(view.jev.recent.length, 20);
+    const cold = stateFromStore(view, srcInitialState, 0);
+    assert.equal(cold.jev.stats.total, 27);
+    const wire = viewSrcState(cold);
+    assert.equal(srcProjectionSchema.safeParse(wire).success, true);
+    assert.equal(wire.jev.stats.decisionSeq, 27);
+    assert.equal(wire.jev.recent[0].seq, 27, "面板明细最新在前");
+    assert.deepEqual(wire.jev.recent.map((row) => row.seq), wire.jev.recent.map((row) => row.seq).toSorted((a, b) => b - a), "面板明细必须严格最新在前（旧行在表尾）");
+    assert.equal(wire.jev.recent.at(-1).seq, 8, "裁剪后最旧的一条（dec-8）落在表尾");
+    assert.equal(wire.jev.stats.latency.last, 250);
+    assert.equal(h.projection(sid).jev.stats.decisionSeq, 27, "poke 后投影 cell 与权威域同刻");
+  } finally {
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+});
+
+test("[local.106] Jev 面板：推荐按文档 identity 关联、采纳按 recommendationId 去重", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  const { readLessonFile } = await import("../lib/src/lessons.js");
+  const { documentIdentity } = await import("../lib/src/decision/knowledge-recall.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const sid = "jev-panel-c";
+  const parent = h.exec(sid);
+  const prevFetch = globalThis.fetch;
+  try {
+    await h.run("src_add_goal", { target: "https://example.test", objective: "推荐采纳计量", authorization: "SRC" }, parent);
+    await saveDecisionSettings({ enabled: true, riskMode: "off", skillMode: "on", delegateMode: "off", endpoint: "https://jev-panel-c.test/v1/systemone" });
+    const lessonText = (await readLessonFile("sms-bomb")).text;
+    const lessonTitle = /^#\s+(.+)$/m.exec(lessonText)[1].trim();
+    const lessonIdentity = documentIdentity("lesson", "sms-bomb", lessonText);
+    const asked = [];
+    globalThis.fetch = async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      asked.push(payload);
+      const keys = Object.keys(payload.questions.decision.criteria);
+      const hit = (payload.state.candidates ?? []).findIndex((row) => row.title === lessonTitle);
+      return new Response(JSON.stringify(jevPanelAnswer(hit >= 0 ? `doc-${hit + 1}` : "skip", keys)));
+    };
+    const intent = await h.run("src_add_intent", { title: "短信轰炸拦截测试", detail: "复用 sms-bomb 套路逐条验证" }, parent);
+    assert.equal(asked.length, 1, "skill 模式只应产生一次 skill-activate 判定");
+    assert.equal(asked[0].state.candidates.some((row) => row.title === lessonTitle), true, "召回必须给出目标方法候选");
+    assert.match(intent.skillHint ?? "", /【行动前方法推荐 skillrec-/, "推荐提示必须带 recommendationId");
+
+    const offered = await settle(() => decisionStatsRows(h, sid).find((row) => row.offered === 1), "offer 落库");
+    assert.equal(offered.offeredByTask["skill-activate"], 1);
+    assert.equal(offered.adopted, 0);
+    assert.equal(offered.byTask["skill-activate"], 1, "skill 判定本身也要计量");
+    assert.equal(offered.byAction[lessonIdentity], 1, "判定动作是候选 id（内容无关的 identity）");
+    const offer = decisionRecentRows(h, sid).find((row) => row.kind === "offer");
+    assert.equal(offer.skillId, lessonIdentity, "推荐必须按文档 identity 关联（与读取侧同键）");
+    assert.match(offer.recommendationId, /^skillrec-/);
+    assert.equal(offer.subject, lessonTitle, "推荐只记方法标题（短标签）");
+
+    /* 读同一篇方法 → 采纳；再读一次 → 同一 recommendationId 只计一次。 */
+    await h.run("src_read_lesson", { id: "sms-bomb" }, parent);
+    const adopted = await settle(() => decisionStatsRows(h, sid).find((row) => row.adopted === 1), "adopt 落库");
+    assert.equal(adopted.adoptedByTask["skill-activate"], 1);
+    const adopt = decisionRecentRows(h, sid).find((row) => row.kind === "adopt");
+    assert.equal(adopt.skillId, lessonIdentity);
+    assert.equal(adopt.recommendationId, offer.recommendationId, "采纳必须关联到具体推荐");
+    assert.equal(adopt.subject, "sms-bomb");
+    const pokesAfterAdopt = h.driven(sid).length;
+    await h.run("src_read_lesson", { id: "sms-bomb" }, parent);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(decisionStatsRows(h, sid)[0].adopted, 1, "同一 recommendationId 不得重复计采纳");
+    assert.equal(decisionStatsRows(h, sid)[0].adoptedIds.length, 1);
+    assert.equal(decisionRecentRows(h, sid).filter((row) => row.kind === "adopt").length, 1);
+    assert.equal(h.driven(sid).length, pokesAfterAdopt, "主动放弃的重复采纳不应 poke");
+  } finally {
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+});
+
+test("[local.106] Jev 面板：计量是旁路——sink 抛错/存储故障/脏入参都不改判定，也不写坏行", async () => {
+  const { __resetSharedDomainOpensForTests, SrcStore, srcProjectionSchema } = await import("../lib/src.js");
+  const { jevDecide, probeDecisionService } = await import("../lib/src/decision/jev-client.js");
+  const { setDecisionSink } = await import("../lib/src/decision/record-sink.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const sid = "jev-panel-d";
+  const parent = h.exec(sid);
+  const prevFetch = globalThis.fetch;
+  try {
+    /* ① 本地短路与「连接测试」都不是工作量：服务根本没被问过（或只是探活），不入计量。 */
+    const disabled = await jevDecide({ taskType: "risk-grade", method: "GET", url: "https://fixture.invalid/x", scopeChecked: true }, parent);
+    assert.equal(disabled.errorType, "disabled");
+    await saveDecisionSettings({ enabled: true, riskMode: "on", skillMode: "off", delegateMode: "off", endpoint: "https://jev-panel-d.test/v1/systemone" });
+    let fetched = 0;
+    globalThis.fetch = async (_url, init) => {
+      fetched++;
+      const payload = JSON.parse(init.body);
+      return new Response(JSON.stringify(jevPanelAnswer("read", Object.keys(payload.questions.decision.criteria))));
+    };
+    const unsupported = await jevDecide({ taskType: "ask-anything" }, parent);
+    assert.equal(unsupported.errorType, "unsupported-task");
+    const noCandidates = await jevDecide({ taskType: "skill-activate", candidates: [] }, parent);
+    assert.equal(noCandidates.errorType, "no-candidates");
+    const probed = await probeDecisionService();
+    assert.equal(probed.fallback, false, "连接测试真的打了网络");
+    assert.equal(fetched, 1);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(decisionStatsRows(h, sid).length, 0, "短路/连接测试不得写任何计量行");
+
+    /* ② sink 抛错：判定返回值与调用方完全不受影响（录制是 fire-and-forget 旁路）。 */
+    setDecisionSink(() => { throw new Error("fixture sink failure"); });
+    const survived = await jevDecide({ taskType: "risk-grade", method: "GET", url: "https://fixture.invalid/keep", scopeChecked: true }, parent);
+    assert.equal(survived.fallback, false);
+    assert.equal(survived.action, "allow");
+    assert.equal(survived.source, "jev");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(decisionStatsRows(h, sid).length, 0, "sink 抛错既不改判定也不写坏行");
+    setDecisionSink(void 0);
+
+    /* ③ 脏入参 / 存储故障：计量内核只告警，不抛错、不写坏行、不污染聚合。 */
+    const store = new SrcStore(h.ctx);
+    await store.recordDecision(sid, { kind: "decision", taskType: 42, action: null, subject: void 0, latency: Number.NaN, fallback: "yes", errorType: { deep: true } });
+    await store.recordDecision("", { kind: "decision", taskType: "risk-grade" });
+    await store.recordRecommendation(sid, {});
+    await store.adoptRecommendation(sid, { recommendationId: "" });
+    const dirty = decisionStatsRows(h, sid)[0];
+    assert.equal(dirty.total, 1);
+    assert.equal(dirty.byTask.unsupported, 1, "脏 taskType 归入 unsupported，不得误算进真实职责");
+    assert.equal(dirty.byTask["risk-grade"], void 0);
+    assert.equal(dirty.byAction.unreported, 1);
+    assert.equal(dirty.fallback, 0, "非布尔 fallback 不得被当成回退");
+    assert.equal(dirty.latency.count, 0, "NaN 延迟不得进统计");
+    assert.equal(dirty.offered, 1);
+    assert.equal(dirty.adopted, 0, "空 recommendationId 无法关联，不得计采纳");
+    const dirtyPanel = (await store.view(sid)).jev;
+    assert.equal(srcProjectionSchema.safeParse({ ...viewSrcState(srcInitialState), jev: dirtyPanel }).success, true, "脏明细行的 wire 形状仍必须合法");
+    assert.equal(dirtyPanel.recent[0].fallback, false);
+    assert.equal(dirtyPanel.recent[0].latency, void 0);
+    assert.equal(dirtyPanel.recent[0].action, "");
+
+    const rowsBeforeFailure = decisionRecentRows(h, sid).length;
+    const realTable = h.domain.table;
+    h.domain.table = (name) => { if (name === "decision_stats" || name === "decision_recent") throw new Error("fixture table failure"); return realTable.call(h.domain, name); };
+    await store.recordDecision(sid, { kind: "decision", taskType: "risk-grade", action: "allow", subject: "after-failure" });
+    await store.adoptRecommendation(sid, { recommendationId: "rec-failure", label: "SMS 轰炸" });
+    h.domain.table = realTable;
+    assert.equal(decisionRecentRows(h, sid).length, rowsBeforeFailure, "存储故障不得留下半行");
+    assert.equal(decisionStatsRows(h, sid)[0].total, 1);
+  } finally {
+    setDecisionSink(void 0);
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+});
+
+test("[local.106] Jev 面板空态与词条闸：旧状态缺 jev 不炸，JevView 词条中英双侧齐全", async () => {
+  const { srcProjectionSchema } = await import("../lib/src.js");
+  const { stateFromStore } = await import("../lib/src/store-projection.js");
+  /* 旧 checkpoint / 旧会话的 state 没有 jev：wire 上必须补零值空态（UI 不必区分新旧与 0.1/0.2）。 */
+  const legacy = { ...srcInitialState };
+  delete legacy.jev;
+  assert.deepEqual(viewSrcState(legacy).jev, { stats: null, recent: [] });
+  assert.equal(srcProjectionSchema.safeParse(viewSrcState(legacy)).success, true);
+  /* stateFromStore 的两条分支（有 goal / 无 goal 早退）都必须带上 jev。 */
+  assert.deepEqual(viewSrcState(stateFromStore({ goal: null }, srcInitialState, 0)).jev, { stats: null, recent: [] });
+  const withJev = stateFromStore({ goal: null, jev: { stats: { total: 3 }, recent: [{ seq: 1, kind: "decision" }] } }, srcInitialState, 0);
+  assert.equal(withJev.jev.stats.total, 3);
+  assert.equal(withJev.jev.recent.length, 1, "权威视图带 jev 时必须原样落入投影 state（不得被丢）");
+  /* 词条闸：JevView 用到的每个 jev.* 键必须在 locales.ts 的 zh/en 两侧都存在（缺失即界面出键名）。 */
+  const root = nodePath.resolve(nodePath.dirname(new URL(import.meta.url).pathname), "..");
+  const tsx = await fsPromises.readFile(nodePath.join(root, "src/dsh-client-ui-src/src/client/JevView.tsx"), "utf8");
+  const usedKeys = [...new Set([...tsx.matchAll(/\bt\('(jev\.[A-Za-z0-9.]+)'\)/g)].map((m) => m[1]))];
+  assert.ok(usedKeys.length >= 20, `JevView.tsx 应使用大量 jev.* 词条（实际 ${usedKeys.length}）`);
+  const locales = await fsPromises.readFile(nodePath.join(root, "src/dsh-client-ui-src/src/client/locales.ts"), "utf8");
+  const zhKeys = new Set([...locales.matchAll(/'((?:jev|view\.tab\.jev)[A-Za-z0-9.*]*)':/g)].map((m) => m[1]));
+  const missing = usedKeys.filter((key) => !zhKeys.has(key));
+  assert.deepEqual(missing, [], `JevView 词条缺失：${missing.join(", ")}`);
+  /* 两侧齐全：zh 字典段与 en 字典段都出现同一个键（locales.ts 里 zh 在前、en 在后，各出现一次）。 */
+  for (const key of usedKeys) {
+    const hits = [...locales.matchAll(new RegExp(`'${key.replace(/\./g, "\\.")}':`, "g"))].length;
+    assert.equal(hits, 2, `词条 ${key} 必须在 zh/en 两侧各定义一次（实际 ${hits}）`);
+  }
+  assert.equal(locales.includes("'view.tab.jev'"), true, "Jev 页签标题词条必须在场");
 });

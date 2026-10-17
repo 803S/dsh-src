@@ -276,3 +276,81 @@
   payload:{args:{agentId,line,images}}}`）能返回 `ok:true`，但用于验证的会话是 `standard` 预设、不在 SRC 域内，
   故未产生 SRC 写入（不构成反例，仅说明该路径未覆盖）。
 - 探针数据只写在 `/tmp/probe13`、`/tmp/probe16`，未触碰真实 `~/.dsh`；用户正在运行的真实 App 全程未被重启或干扰。
+
+## 附录 D：Jev 工作面板落地 + 0.2 冷读缺陷修复（2026-10-17 第二轮）
+
+**目标**：把 Jev 的工作情况显示在 SRC 面板——决策次数、职责（task）分类、推荐/采纳、fallback、错误类型、
+延迟、最近决策明细——且**数据只来自 store 权威态**，既不依赖 `DSH_SRC_TELEMETRY` / `srcLayaDecisionFlag()`，
+也不写会话日志。
+
+### 数据链（唯一数据源）
+
+```
+判定出口 jevDecide()（唯一计量点：probe 与本地短路不计）
+  → 旁路 sink（fire-and-forget，try/catch，绝不阻塞/抛错/改判定）
+  → store 权威域 decision_stats / decision_recent（domain spec version 16 → 17）
+  → 权威 poke（src_authoritative_state，完整快照）
+  → 投影 wire src.jev → JevView.tsx（只读，不放设置）
+```
+
+- 新增 `lib/src/decision/stats.js`（纯函数：`decisionTaskOf`/`foldDecisionStats`/`publicDecisionStats`/
+  `decisionSubjectOf`，`DECISION_RECENT_LIMIT = 20`，`MODEL_KEYS = 12`，`ERROR_KEYS = 16`，`TEXT_LIMIT = 120`）
+  与 `lib/src/decision/record-sink.js`（`setDecisionSink`/`emitDecisionRecord`）。
+- `lib/src/store.js` 新增 `decisionStatsFrom` / `decisionPanelFrom` / `recordDecision` / `recordRecommendation` /
+  `adoptRecommendation`；`viewFrom()` 两个分支都带 `jev`，`clearSession()` 追加清理两表。
+- **录制内容无关**：只保留 host/tool 短标签（`subject` ≤ 120，已剥离 URL 查询串）与判定元数据；
+  `browser-index` 分支只记候选数量，不写页面 observation/goal 等自由文本；`browserFingerprint` 不写入。
+- **决定不写日志**：计量表不进 `projectionTables`（与 `infra` 同理），写入方法显式 `publishAuthoritative()`。
+
+### 本轮修掉的关键缺陷（都有实证）
+
+| 缺陷 | 实证 | 修复 |
+|---|---|---|
+| **0.2 冷读面板空白** | 真桌面探针 `[dbg]` 插桩：`init id=session-220b2cdb… domainOpen= false snap= undefined` —— 0.2 会话加载时唯一的带 session id 钩子 `init(header)` 恰好在域句柄解析**之前**；旧实现直接返回空态 ⇒ 投影只能靠会话日志 fold，而 Jev 计量/带正文域笔记**不在日志里** ⇒ 重启后 Jev tab 显示「暂无记录」 | `init` 不假装权威：登记 `deferAuthoritativeSeed(sid)`，域就绪后由 store **补发一次**权威 poke（有界重试等 live 会话；只发一次、失败只告警）。`lib/src.js` + `lib/src/store.js` |
+| 面板明细阅读顺序反了 | 面板标题即 `Newest 1/20`，浏览器回归 fixture 也按最新在前编排 | 内部 `decisionStatsFrom` 保持升序（裁剪靠 `slice(-20)`），wire 出口 `decisionPanelFrom().reverse()`：**面板明细最新在前** |
+| legacy 视图漏 `jev` | 旧会话 `{...view}` 分支会把 `jev` 丢掉 | 保留 `{...view}` 原样带出；UI 对缺 `src.jev` 的旧状态做零值/空态容错（`stateVersion` 仍 17，不触发存量重算） |
+| bundle 与源码分叉 | HEAD bundle 里 `ApprovalExplanationCard` 有 `approvalHumanSummary` + `<details>查看技术判定</details>`，源码删掉了（**会删掉人工审批的安全披露文案**） | Option B：源码修回已交付行为（含 `.module.css` 的 `.technical`），重建 bundle 并逐字核对；未删任何安全披露 |
+| 基线测试按 bundle 声明顺序切片 | 重建 bundle 后 `tests/deployment.test.mjs:150` 位置漂移 | 改成顺序无关提取（两个 marker 取 `Math.min`），断言强度不变 |
+| `page.evaluate` 里引用 Node 变量 | Jev tab 回归用例在页面上下文里 `ReferenceError` | 参数化传入（`p.evaluate((n) => commands.slice(n), n)`） |
+
+### 验证
+
+- `npm test`：**643/643 通过、0 失败**。新增 `[local.106] 冷加载播种：域未就绪时 init 不猜数据，域就绪后补发一次
+  权威 poke（面板冷读仍有数字）`——harness 新增 `deferOpen` 闸门，在进程内重现「域未就绪的 init」这条真实路径，
+  断言：空态不冒充权威 → 域就绪只补发一次 poke（形态与实时 poke 一致）→ cell 拿到计量 → 幂等 → 域就绪后 `init` 直接播种真值。
+- `npm run ui-src:typecheck` 退出 0；`npm run ui-src:test` 16 checks 全绿（`jev-tab-readonly/metrics/recent/
+  unknown-values/empty-state/mobile/dark-light`），无 pageerror。
+- **0.1 组件级**（真 0.1 `dsh-session-projection` registry + 部署副本，`/tmp/v135-01-jev.mjs`）：**ALL PASS 33 项**——
+  含 `read-clear` 不调判定、`?action=verify` 调 1 次、wire `projectionVersion=17`、`byTask.risk-grade=1`、
+  `latency {count:1,sum:3,max:3,last:3}`、表不进 `projectionTables`、无遥测 JSONL、无伪造日志、
+  checkpoint→restore 冷读后 `jev` 不变、fallback/`http-401` 现场契约（不发请求/不生成审批卡/留待办）、
+  面板明细严格最新在前 `[2,1]`。
+- **0.2 真桌面 GUI**（探针 `/tmp/probe13`，端口 3218，部署副本）：真实判定 1 次（mock `/__stats` `jevCalls=1`，
+  `lastShape` 的 criteria 键齐全）后，Jev tab 显示 `allow 1 100% / read 1 100% / jev 1 100% / probe-stub-jev 1 100% /
+  mode=on 1 100% / No errors / Newest 1/20`，明细行 `10/17, 16:34 | Risk grading | allow · read low | ok | 6 ms |
+  probe-stub-jev · mode=on | GET <靶场私网地址>/jev-probe.html`（**查询串已剥离**），`疑似未翻译键: []`。
+- **0.2 冷重启复核**（本轮修复的直接证据）：修复前 checkpoint 行无 `jev`、面板 0；修复后同一会话的
+  `session_projcache/sessions/session-220b2cdb….json` 里 `src.val.jev.stats.total = 1`
+  （`byTask.risk-grade / byAction.allow / byEffect.read / bySource.jev / byModel.probe-stub-jev / byMode.on` 全为 1、
+  `latency.count = 1`、`recent[0].subject = "GET <靶场私网地址>/jev-probe.html"`）；再重启探针 host
+  （全新进程、**telemetry 目录整个移走**）后**首帧**面板即 `Newest 1/20` + 同一条明细 ⇒ 数据来自 store 权威态，
+  与遥测开关无关。
+- **存储落地**：探针 SQLite `src-sessions.db` 直接可见 `u_src_decision_stats` / `u_src_decision_recent` 两表
+  （domain version 迁移在既有库上生效），两表内**检索不到** `action=verify` 等查询串/正文（内容无关性）。
+- 部署与打包：`node scripts/deploy.mjs /tmp/probe13/profiles/srcdesk/… /tmp/probe16/profiles/*/…` **EXIT 0**
+  （内含 643 测试硬门，preflight `pass 643 / fail 0`），同步 `~/.dsh/profiles/{web,headless}`；
+  `lib/src.js` md5 `3c046e3935898e26893ea8c8e4c048f6`、`lib/ui-src.client.js` md5 `0907d30a98f7d6425265c70f488303ad`
+  （仓库 / 两个真实 profile / 两个探针 profile 五处一致）。
+- 历史会话**未改写**、未批量处置 pending 卡；探针数据只写 `/tmp/probe13`、`/tmp/probe16`；
+  用户正在运行的真实 App 全程未重启、未干扰。
+
+### 已知限制（诚实记录，不夸大）
+
+- 0.2 冷读存在**首帧竞态**：若客户端恰好在补发 poke 的同一瞬间加载该会话，它的首帧可能仍是旧快照
+  （再读一次即为真值；同 seq 的重复 poke 会被 0.2 `cell.observedSeq >= event.seq` 丢弃，因此不重发）。
+  实测：修复后「重启 → 打开会话」首帧即为真值（checkpoint 已含 `jev`）；仅在上一次「poke 尚未落盘」的那一
+  瞬间读到过 0。
+- 0.1 侧没有等价的带 session id 的加载钩子（`init()` 无参），冷读沿用宿主持久化的 checkpoint 行
+  （与 `infra`、`domainNotes` 同一条路径），已由 `/tmp/v135-01-jev.mjs` 的 checkpoint→restore 用例覆盖。
+- 真判定服务 token 仍失效（`http-401`），真留出集评测未做；写类无 Jev 兜底策略、`src_serve_proof` 是否并入
+  审批面板仍待用户拍板。

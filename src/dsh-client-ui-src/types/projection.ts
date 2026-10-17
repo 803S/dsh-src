@@ -215,6 +215,61 @@ export interface SrcProjectionDomainNote {
   readonly updatedAt: number
 }
 
+/** [local.106] One Jev decision row (wire shape, mirrors `publicDecisionEntry`).
+ *  内容无关：只有 host/tool/标题类短标签与判定元数据，不含 URL 查询串/请求体/justification。 */
+export interface SrcProjectionJevEntry {
+  readonly seq: number
+  readonly kind: 'decision' | 'offer' | 'adopt'
+  readonly at: number
+  readonly taskType: string
+  readonly action: string
+  readonly effect: string
+  readonly risk: string
+  readonly objectClass: string
+  readonly confidence?: number
+  readonly source: string
+  readonly provider: string
+  readonly model: string
+  readonly requestedModel?: string
+  readonly fallback: boolean
+  readonly errorType?: string
+  readonly latency?: number
+  readonly mode: string
+  readonly subject: string
+  readonly recommendationId?: string
+  readonly skillId?: string
+}
+
+/** [local.106] Jev decision counters for the current goal (wire shape, mirrors `publicDecisionStats`). */
+export interface SrcProjectionJevStats {
+  readonly total: number
+  readonly byTask: Readonly<Record<string, number>>
+  readonly byAction: Readonly<Record<string, number>>
+  readonly byEffect: Readonly<Record<string, number>>
+  readonly bySource: Readonly<Record<string, number>>
+  readonly byModel: Readonly<Record<string, number>>
+  readonly byMode: Readonly<Record<string, number>>
+  readonly fallback: number
+  readonly errors: Readonly<Record<string, number>>
+  readonly latency: { readonly count: number; readonly sum: number; readonly max: number; readonly last: number }
+  readonly offered: number
+  readonly adopted: number
+  readonly offeredByTask: Readonly<Record<string, number>>
+  readonly adoptedByTask: Readonly<Record<string, number>>
+  readonly startedAt: number
+  readonly updatedAt: number
+  readonly lastAt: number
+  readonly decisionSeq: number
+  readonly last: SrcProjectionJevEntry | null
+}
+
+/** [local.106] The Jev work panel payload: current-goal counters + the newest decision rows.
+ *  `stats: null` 表示当前目标还没有任何判定记录；旧会话/旧 checkpoint 没有该字段时按空态渲染。 */
+export interface SrcProjectionJev {
+  readonly stats: SrcProjectionJevStats | null
+  readonly recent: readonly SrcProjectionJevEntry[]
+}
+
 /** The standing src state shown by the Web view tab. */
 export interface SrcProjection {
   readonly goal: SrcProjectionGoal | null
@@ -231,6 +286,8 @@ export interface SrcProjection {
   /** [local.33] 目标域笔记快照（跨会话；src_add_goal / src_record_domain_note 时整表推送），explore 侧栏只读列表。 */
   readonly domainNotes?: readonly SrcProjectionDomainNote[]
   readonly infra: Readonly<Record<string, string>>
+  /** [local.106] Jev 判定计量（当前目标累计）。可选：0.1 zod 剥除未知键与旧 checkpoint 都没有该字段。 */
+  readonly jev?: SrcProjectionJev
   readonly edges: readonly SrcProjectionEdge[]
   readonly apiDiscovery: {
     readonly total: number

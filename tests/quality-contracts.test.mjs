@@ -144,3 +144,103 @@ test('unrelated search snippets are not accepted as successful CVE retrieval',()
  const sources=[{title:'Optical 88',url:'https://fixture.invalid/optical',snippet:'glasses'},{title:'CVE-2025-12345 advisory',url:'https://fixture.invalid/advisory',snippet:'security'}];
  assert.deepEqual(relevantSearchResults(sources,'GeoServer CVE-2025-12345'),[sources[1]]);
 });
+
+test('[local.106] 判定计量纯逻辑：折叠有界、延迟四元组、采纳去重、标签内容无关',async()=>{
+ const {emptyDecisionStats,normalizeDecisionStats,publicDecisionStats,publicDecisionEntry,foldDecisionStats,decisionEntryFromAdvice,decisionOfferEntry,decisionAdoptEntry,isDuplicateAdoption,decisionSubjectOf,decisionTaskOf}=await import('../lib/src/decision/stats.js');
+ /* 旧行/缺字段的行归一化后必须是完整形状（fold 永远拿到全套键，不留 undefined） */
+ assert.deepEqual(normalizeDecisionStats(undefined,'s',0),emptyDecisionStats('s',0));
+ assert.equal(Object.values(emptyDecisionStats('s',0)).includes(undefined),false);
+ const row=(over={})=>({seq:1,kind:'decision',at:1e3,taskType:'risk-grade',action:'allow',effect:'read',source:'jev',provider:'systemone',model:'m',fallback:false,mode:'on',subject:'GET x.test/y',latency:10,...over});
+ let stats=foldDecisionStats(emptyDecisionStats('s',0),row());
+ assert.equal(stats.total,1);assert.deepEqual(stats.byTask,{'risk-grade':1});assert.deepEqual(stats.latency,{count:1,sum:10,max:10,last:10});
+ assert.equal(stats.last.subject,'GET x.test/y');assert.equal(stats.decisionSeq,1);
+ /* 纯函数：折叠不改入参 */
+ assert.equal(emptyDecisionStats('s',0).total,0);
+ /* 回退/错误行照计（服务故障是真实工作量），但绝不猜 fallback */
+ const failed=foldDecisionStats(stats,row({seq:2,fallback:true,errorType:'http-503',action:'pending',effect:'unknown',latency:20}));
+ assert.equal(failed.fallback,1);assert.deepEqual(failed.errors,{'http-503':1});assert.equal(failed.total,2);assert.equal(failed.latency.last,20);
+ assert.equal(foldDecisionStats(stats,row({seq:2,fallback:'yes',errorType:''})).fallback,0,'非布尔 fallback 不得计回退');
+ /* 没有 latency 的行不进延迟统计（冷读/短路行不得把平均值拉低） */
+ assert.equal(foldDecisionStats(failed,row({seq:3,latency:void 0})).latency.count,2);
+ assert.equal(foldDecisionStats(failed,row({seq:3,latency:Number.NaN})).latency.count,2,'NaN 延迟不得进统计');
+ /* offer/adopt 不计入 total，也不覆盖 last（last 只跟「一次判定」走） */
+ const offered=foldDecisionStats(failed,decisionOfferEntry({taskType:'skill-activate',skillId:'lesson:a@b',label:'T',recommendationId:'skillrec-1',seq:3,at:1e3}));
+ assert.equal(offered.total,2);assert.equal(offered.offered,1);assert.deepEqual(offered.offeredByTask,{'skill-activate':1});assert.equal(offered.last.subject,failed.last.subject);
+ const adopted=foldDecisionStats(offered,decisionAdoptEntry({taskType:'skill-activate',skillId:'lesson:a@b',label:'a',recommendationId:'skillrec-1',seq:4,at:1e3}));
+ assert.equal(adopted.adopted,1);assert.deepEqual(adopted.adoptedIds,['skillrec-1']);
+ assert.equal(isDuplicateAdoption(adopted,'skillrec-1'),true);
+ assert.equal(isDuplicateAdoption(adopted,''),true,'空 recommendationId 无法关联，不得计采纳');
+ assert.equal(isDuplicateAdoption(adopted,'skillrec-2'),false);
+ /* 键有界：25 个不同模型 → 12 个具名 + other，聚合行不随流量无界增长 */
+ let wide=emptyDecisionStats('s',0);
+ for(let i=0;i<25;i++) wide=foldDecisionStats(wide,row({seq:i+1,model:`m-${i}`}));
+ assert.equal(Object.keys(wide.byModel).length,13,'12 个具名键 + other 兜底');assert.equal(Object.values(wide.byModel).reduce((a,b)=>a+b,0),25);
+ /* 不可信输入不得撑爆行：subject 截断、控制字符归一 */
+ assert.equal(decisionEntryFromAdvice({action:'allow'},{taskType:'risk-grade',subject:'a'.repeat(500)}).subject.length,120);
+ assert.equal(decisionEntryFromAdvice({action:'allow'},{taskType:'risk-grade',subject:'x\u0000y\nz'}).subject,'x y z');
+ assert.equal(decisionTaskOf('bogus'),'unsupported','未知职责不得被误算进真实职责');
+ assert.equal(decisionTaskOf(42),'unsupported');
+ /* wire 形状不泄露存储侧字段，脏明细行读出来必须合法 */
+ assert.equal(publicDecisionStats(null),null);
+ assert.equal(publicDecisionStats(adopted).adoptedIds,undefined);
+ const dirty=publicDecisionEntry({seq:1,kind:'decision',taskType:7,action:null,latency:Number.NaN,fallback:'yes',errorType:{deep:true},subject:'s'});
+ assert.equal(dirty.taskType,'unsupported');assert.equal(dirty.action,'');assert.equal(dirty.fallback,false);assert.equal(dirty.latency,void 0);assert.equal(dirty.errorType,void 0);
+ /* subject 内容无关：URL 查询串/请求体/页面文本都不落盘，只留 host/path、标题、候选数量 */
+ assert.equal(decisionSubjectOf({method:'get',url:'https://a.test/p/q?token=SECRET#frag'},'risk-grade'),'GET a.test/p/q');
+ assert.equal(decisionSubjectOf({method:'POST'},'scan-plan'),'','没有计划条目的 scan-plan 不编造主题');
+ assert.equal(decisionSubjectOf({taskType:'browser-index',candidates:[1,2,3],goal:'页面里有 SECRET',observation:'<html>SECRET</html>'},'browser-index'),'3 个候选');
+ assert.equal(decisionSubjectOf({title:'短信轰炸',taskType:'delegate'},'delegate'),'短信轰炸');
+ assert.equal(decisionSubjectOf({},'unknown-task'),'GET');
+ const scanPlan=decisionSubjectOf({plan:{entries:[{request:{url:'https://a.test/x?k=v'}}]}},'scan-plan');
+ assert.equal(scanPlan,'1 个请求 · a.test/x');assert.equal(scanPlan.includes('k=v'),false);
+});
+
+test('[local.106] 判定计量落入权威域：脏行不污染 wire、随目标归零、不进会话日志',async t=>{
+ await sandbox(t);const h=harness(),sid='quality-jev';
+ await h.store.initGoal(sid,{target:'fixture.invalid',objective:'test',authorization:'fixture'});
+ /* 域版本 17 且两张计量表已声明（迁移依赖 defineDomain 的新增表语义） */
+ assert.equal(srcDomainSpec.version,17);
+ assert.equal(Object.keys(srcDomainSpec.tables).includes('decision_stats'),true);
+ assert.equal(Object.keys(srcDomainSpec.tables).includes('decision_recent'),true);
+ assert.deepEqual((await h.store.view(sid)).jev,{stats:null,recent:[]},'新目标必须是零值空态');
+ /* 脏入参：全部只告警、不抛错、不写坏行 */
+ await h.store.recordDecision(sid,{kind:'decision',taskType:'nope',action:null,subject:'x'.repeat(500),latency:Number.NaN,fallback:'yes',errorType:{},seq:1});
+ await h.store.recordDecision('',{kind:'decision',taskType:'risk-grade'});
+ await h.store.recordRecommendation(sid,{taskType:'skill-activate',skillId:'lesson:a@b',label:'T',recommendationId:'skillrec-1'});
+ await h.store.adoptRecommendation(sid,{taskType:'skill-activate',skillId:'lesson:a@b',label:'a',recommendationId:'skillrec-1'});
+ await h.store.adoptRecommendation(sid,{taskType:'skill-activate',skillId:'lesson:a@b',label:'a',recommendationId:'skillrec-1'});
+ const panel=(await h.store.view(sid)).jev;
+ assert.equal(panel.stats.total,1);assert.equal(panel.stats.byTask.unsupported,1);assert.equal(panel.stats.byTask['risk-grade'],undefined);
+ assert.equal(panel.stats.byAction.unreported,1);assert.equal(panel.stats.latency.count,0);assert.equal(panel.stats.fallback,0);
+ assert.equal(panel.stats.offered,1);assert.equal(panel.stats.adopted,1);assert.equal(panel.stats.decisionSeq,3);
+ assert.equal(panel.recent.length,3);assert.equal(panel.recent[0].seq,3,'面板明细最新在前（最新一条在首行）');
+ assert.deepEqual(panel.recent.map(r=>r.seq),[3,2,1],'面板明细严格最新在前');
+ const dirtyRow=panel.recent.find(r=>r.kind==='decision');assert.equal(dirtyRow.subject.length,120);assert.equal(dirtyRow.action,'');assert.equal(dirtyRow.fallback,false);
+ assert.equal(panel.recent.filter(r=>r.kind==='adopt').length,1,'重复采纳只留一行');
+ /* 面板 wire 必须过投影 schema（脏明细行不得把面板打成非法 payload） */
+ const state=stateFromStore(await h.store.view(sid),srcInitialState,0);
+ assert.equal(srcProjectionSchema.safeParse(viewSrcState(state)).success,true);
+ assert.equal(viewSrcState(state).jev.stats.adopted,1);
+ /* 权威域写入不碰会话日志：面板数据源不是日志（历史合成行曾导致 0.2 加载失败） */
+ assert.equal(h.events.length,0);
+ /* 计量归当前目标所有：新目标从零开始（否则历史工作量会被当成本轮成果） */
+ await h.store.initGoal(sid,{target:'fixture.invalid',objective:'second',authorization:'fixture'});
+ assert.deepEqual((await h.store.view(sid)).jev,{stats:null,recent:[]});
+ assert.equal([...h.domain.table('decision_recent').entries()].length,0);
+});
+
+test('[local.106] 投影 wire 必带 jev：空态零值、权威视图不丢（漂移闸）',()=>{
+ const empty=viewSrcState(srcInitialState);
+ assert.deepEqual(empty.jev,{stats:null,recent:[]});
+ assert.equal(srcProjectionSchema.safeParse(empty).success,true);
+ assert.deepEqual(srcProjectionSchema.parse(empty).jev,{stats:null,recent:[]},'wire 不得剥掉 jev（剥掉就是面板永远空的静默缺陷）');
+ const legacy={...srcInitialState};delete legacy.jev;
+ assert.deepEqual(viewSrcState(legacy).jev,{stats:null,recent:[]},'旧 checkpoint 缺 jev 必须容错');
+ assert.equal(stateFromStore({goal:null},srcInitialState,0).jev.stats,null,'旧视图没有 jev 时补零值空态');
+ const stats={total:1,byTask:{'risk-grade':1},byAction:{allow:1},byEffect:{read:1},bySource:{jev:1},byModel:{m:1},byMode:{on:1},fallback:0,errors:{},latency:{count:1,sum:3,max:3,last:3},offered:0,adopted:0,offeredByTask:{},adoptedByTask:{},startedAt:1,updatedAt:2,lastAt:2,decisionSeq:1,last:null};
+ const withJev=stateFromStore({goal:null,jev:{stats,recent:[]}},srcInitialState,0);
+ assert.deepEqual(withJev.jev,{stats,recent:[]},'权威视图带 jev 时必须落进投影 state');
+ const wire=viewSrcState(withJev);
+ assert.equal(srcProjectionSchema.safeParse(wire).success,true);
+ assert.equal(srcProjectionSchema.parse(wire).jev.stats.total,1);
+});

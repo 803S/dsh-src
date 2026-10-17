@@ -6,6 +6,7 @@ import { ExploreView } from './ExploreView.tsx'
 import { FindingsView } from './FindingsView.tsx'
 import { AssetsView } from './AssetsView.tsx'
 import { InfrastructureView } from './InfrastructureView.tsx'
+import { JevView } from './JevView.tsx'
 import { DecisionSettings } from './DecisionSettings.tsx'
 import { DomainDataView } from './DomainDataView.tsx'
 import ui from './Controls.module.css'
@@ -296,7 +297,7 @@ type TodoRow = {
  * compatibility reference while the new shell owns navigation and layout.
  */
 const MODERN_PRIMARY_TABS = ['overview', 'findings', 'todos', 'explore', 'assets', 'timeline', 'report'] as const
-const MODERN_UTILITY_TABS = ['infra', 'domains'] as const
+const MODERN_UTILITY_TABS = ['jev', 'infra', 'domains'] as const
 type ModernTab = typeof MODERN_PRIMARY_TABS[number] | typeof MODERN_UTILITY_TABS[number]
 
 const MODERN_TAB_LABELS: Record<ModernTab, string> = {
@@ -308,6 +309,7 @@ const MODERN_TAB_LABELS: Record<ModernTab, string> = {
   timeline: 'view.tab.timeline',
   report: 'view.tab.report',
   infra: 'view.tab.infra',
+  jev: 'view.tab.jev',
   domains: 'view.tab.domains',
 }
 
@@ -376,6 +378,7 @@ export function SrcView({ useProjection, t, runCommand }: {
       case 'assets': return <AssetsView src={src} t={t} />
       case 'timeline': return <TimelineView src={src} t={t} />
       case 'infra': return <InfrastructureView src={src} runCommand={runCommand} />
+      case 'jev': return <JevView src={src} t={t} />
       case 'domains': return <DomainDataView runCommand={runCommand} />
       case 'report': return <ReportView src={src} t={t} />
     }
