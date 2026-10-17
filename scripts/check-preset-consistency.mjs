@@ -349,5 +349,27 @@ function findDuplicateKeys(source) {
 		if (violations === 0) console.log("check-preset-consistency: 0.2 preset 声明闸 OK（声明行 + 单一真源 include + 与 preset.yml 逐字一致）");
 	}
 }
+/* [local.107] 提示词变量白名单（0.2 事故回归闸）：行表/协议正文里的 `{{name}}` 会被 harness 在每次
+ * 组装 system prompt 时插值，而它只认「已注册」的变量——当前 loop 只注册 provider/model
+ * （`@deepseek-ai/dsh-agent-loop`），harness README 也明说自定义 persona 模板不得依赖内建 cwd 变量。
+ * 引用未注册变量不会降级，而是让该 section 组装直接抛 unknown prompt variable；预设是一整块，
+ * 抛错即整块不生效（人格 + 全部工具行一起丢）——2026-10-17 桌面 App 会话只剩 2~11 个兜底工具
+ * 就是这个原因（`deployment:persona-prefix` + 一句 `Your working directory is …`）。
+ * 这里去掉注释行后静态扫描交付物正文，白名单外的 `{{name}}` 一律 fail（注释里做反面记录不受影响）。 */
+const PROMPT_VARIABLES = new Set(["provider", "model"]);
+const promptTextSources = [["preset/src-hunter/agent.cordis.yml", readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8")], ["lib/src.js", srcJs]];
+try { promptTextSources.push(["cordis.patch.yml", readFileSync(join(root, "cordis.patch.yml"), "utf8")]); } catch { /* 仓库无 patch 时跳过 */ }
+let promptVariableViolations = 0;
+for (const [file, source] of promptTextSources) {
+	const body = source.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+	for (const m of body.matchAll(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g)) {
+		if (PROMPT_VARIABLES.has(m[1])) continue;
+		console.error(`::error file=${file}::提示词变量 {{${m[1]}}} 未被 harness 注册（只认 ${[...PROMPT_VARIABLES].join("/")}）——组装期会抛 unknown prompt variable，预设整块不生效（人格与工具行全丢，会话只剩兜底工具）`);
+		promptVariableViolations += 1;
+		violations += 1;
+	}
+}
+if (promptVariableViolations === 0) console.log(`check-preset-consistency: 提示词变量白名单 OK（正文只出现 ${[...PROMPT_VARIABLES].join("/")}）`);
+
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
 console.log(`check-preset-consistency: lessons 预算 OK（内置 ${Object.keys(LESSON_BUDGETS).length + extraLessons.length} 篇合计 ${lessonsTotal} ≤ 20000）`);

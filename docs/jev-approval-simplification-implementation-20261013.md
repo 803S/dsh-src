@@ -354,3 +354,40 @@
   （与 `infra`、`domainNotes` 同一条路径），已由 `/tmp/v135-01-jev.mjs` 的 checkpoint→restore 用例覆盖。
 - 真判定服务 token 仍失效（`http-401`），真留出集评测未做；写类无 Jev 兜底策略、`src_serve_proof` 是否并入
   审批面板仍待用户拍板。
+
+### 附录 E：0.2 提示词变量收窄事故（local.107；用户报告「模型无法调用工具 / 拒绝执行」）
+
+**现象**：桌面 App 装好 `.135` 后 UI 里能看到 `SRC 专业模式` 预设名，但新会话里模型「没有工具、只会口头拒绝」。
+
+**证据链**
+
+- 会话日志（`request/header` 的工具名清单）：10-13/10-14 的健康会话 110~144 个工具（含 20~55 个 `src_*`）；
+  10-17 的 18:02/18:07/18:08 新会话只剩 **11 → 11 → 2** 个工具、`src_*` 为 0。
+- 复现：desktop profile 逐字复制到 `/tmp/probe17`（`DSH_HOME` 隔离 + `--profile deskcheck --port 3219`）后新开一轮 → UI 直接报
+  `This turn failed: unknown prompt variable "{{cwd}}" in section "deployment:persona-prefix"; registered variables: provider, model`。
+- 代码：`app.asar` 内全 harness 只有一处注册提示词变量（`@deepseek-ai/dsh-agent-loop/lib/index.js` 注册 `model`/`provider`）；
+  `@deepseek-ai/dsh-system-prompt` 的 `PERSONA_PREFIX_SECTION` 正是 `deployment:persona-prefix`，未注册变量直接抛错；
+  harness README 亦明说自定义 persona 模板不得依赖内建 `cwd` 变量。
+
+**根因**：`preset/src-hunter/agent.cordis.yml` 的 persona 正文（`&src-persona`，0.1 的 `text` 行与 0.2 的 `prefix` 行共用）
+含 `Your working directory is {{cwd}}.`；0.2 的 loop 不再注册 `cwd` ⇒ **该 section 组装抛错 ⇒ 整份预设不生效**
+（人格 + 基础编码工具 + `src_*` 一起丢）⇒ 会话塌缩到兜底工具面，模型既无人格也无 SRC 授权语境，只能空口拒绝。
+**这不是插件门控拒绝，也未放宽/收紧任何授权或审批语义。**
+
+**修复**：删掉该子句（工作目录由 working-directory 服务的运行时上下文给出，模型也可随时用 `working_directory`
+工具读），保留 `{{model}}`，两侧共用同一份正文不变。并在 `scripts/check-preset-consistency.mjs` 加静态白名单闸：
+去掉注释行后扫描 `preset/**`、`cordis.patch.yml`、`lib/src.js` 的正文，出现 `{provider, model}` 之外的 `{{var}}` 即 fail
+（反向自检：临时插回 `{{cwd}}` → 立即报错并 exit 1；恢复后 exit 0）。
+
+**验收**：`npm test` 仍是 **643/643 pass**（该闸已在 `tests/deployment.test.mjs` 的执行清单里）；
+`/tmp/probe17` 复现环境重启后新会话 `request/header` 恢复为 **80 个工具 / 55 个 `src_*`**（`bash`/`edit`/`glob`/`grep`…），
+日志里出现 SRC 人格文案、不再有 `unknown prompt variable`（该隔离 home 没有 `NEWAPI_API_KEY`，请求在凭据阶段被正确拦下，
+与本次修复无关）；`deploy.mjs` 同步 web/headless/探针 13/16/17 并跑 643 硬门（EXIT 0）；
+`package.json` → `0.1.0-local.136`，重打 `lihua_dis-dsh-src-0.1.0-local.136.tgz`（218 文件、2,235,364 B，
+包内 `package.json` / `lib/src.js` / `lib/ui-src.client.js` / `preset/src-hunter/agent.cordis.yml` 的 md5 与仓库逐项一致、无 `{{cwd}}`）。
+
+**顺带核对的同类兼容点（均无运行时风险）**：`@deepseek-ai/dsh-workflow-worker-thread` 在 0.2 已移除 → 对应行早已用
+`!!js` 闸限定为 0.1 专用；`@deepseek-ai/dsh-persona` 的 `text` 字段在 0.2 不再存在 → 两行 persona 分别挂 `text`/`prefix`
+并互斥闸；`enableRunInBackground` 是 0.1 的 `dsh-tool-subagent` 字段 → 只出现在两行 `disabled: true` 的模板行（不激活），
+已就地加注说明；仓库、`~/.dsh`（排除 sessions/logs/node_modules）与会话工作区的指令文件（`AGENTS.md`）里再无其他
+`{{var}}` 引用。

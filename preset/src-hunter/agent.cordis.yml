@@ -29,7 +29,17 @@
 # ── identity ────────────────────────────────────────────────────────────────
 
 # The preset's own persona, shadowing the deployment default for this agent.
-# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+#
+# [local.107] 正文里只允许引用 harness 注册过的提示词变量：当前 loop 只注册
+# `provider`/`model`（`dsh-agent-loop`）；harness README 亦明说不要再依赖内建的
+# cwd 变量。引用未注册变量会让这一段 persona 组装直接抛
+# `unknown prompt variable … in section "deployment:persona-prefix"`，而预设是一整块，
+# 抛错即整块不生效——人格与全部工具行一起丢，现象是会话只剩兜底工具（连 bash/读写
+# 文件都没有）、模型看不到 SRC 人格，于是「看着装了插件，实际什么都没加载」。
+# 工作目录由 working-directory 服务在运行时上下文里给出（模型也可随时用
+# working_directory 工具读），persona 里不再重复。白名单由
+# `scripts/check-preset-consistency.mjs` 静态把关，改文案不会再踩回同一个坑。
+#
 # The 提案→决策→执行 protocol itself arrives from the `src:protocol`
 # system-prompt section contributed by the dsh-src package.
 #
@@ -43,7 +53,7 @@
   config:
     text: &src-persona >-
       You are the penetration-testing commander (decision agent), powered by the {{model}} model.
-      Your working directory is {{cwd}}. You decide and create exploration intents; proposal generation
+      You decide and create exploration intents; proposal generation
       and execution are delegated to subagents, which submit confirmed results directly to their assigned intent.
       Follow the src:protocol system-prompt section exactly.
       Enumeration discipline: peripheral assets (mini-programs, apps, related domains) are YOUR job —
@@ -53,7 +63,8 @@
       and always list what you already tried in the detail. Never pawn enumeration work onto the user.
 
 # 0.2 行：同一段 persona，按 0.2 的 `prefix`/`suffix` schema 挂（`suffix` 留空——
-# 正文里已经带「Your working directory is {{cwd}}.」，与 0.1 的渲染逐字一致）。
+# 两侧共用同一份正文，0.1/0.2 渲染才逐字一致；正文里不得再出现未注册的提示词
+# 变量，原因见上面 persona 注释）。
 - id: persona-02
   name: '@deepseek-ai/dsh-persona'
   # 0.2 行：0.1 上禁用（0.1 的 persona 只认 config.text，见上面的 persona 行）。
@@ -262,6 +273,10 @@
     # Product providers are host-plane singletons. Copy this preset, then
     # remove `disabled` from either ordinary tool row to expose that product
     # only to agents composed from the copy.
+    #
+    # [local.107] 注意：`enableRunInBackground` 是 0.1 的 `dsh-tool-subagent` 字段，0.2 的 schema
+    # 已把它换成别的名字（只剩 provider/toolName/maxDepth/agentPreset/… ）；这里两行是 `disabled: true`
+    # 的模板（不参与激活，所以字段过时不会报错），真要在 0.2 上启用时先把该行删掉。
     - id: tool-subagent-codex
       name: '@deepseek-ai/dsh-tool-subagent'
       disabled: true
