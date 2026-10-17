@@ -222,3 +222,57 @@
 - 存量 32 张 `判定服务不可用` 僵尸卡 + 46 张历史 pending 卡：**不擅自清理**，待用户授权。
 - `src_serve_proof` 的宿主原生弹窗是否合并进面板审批（唯一不可事后回滚的动作）：待用户拍板。
 - 审计清单⑤（隔离靶场实测注册正例）、真判定服务留出集评测（需预算）、浏览器端到端。
+
+---
+
+## 附录 C：实时面板数据源改走 store 权威态（2026-10-17）
+
+**触发**：面板「实时数据」原先由插件往会话日志里**伪造 `tool/call` 行**、再由本插件自己的投影 fold 出来。这条路
+既污染会话日志（历史会话里出现宿主从没发起过的工具调用），又依赖宿主日志写入时机，0.1/0.2 行为还不一致。
+
+**本轮改造**：live 数据只走 `ctx.sessionProjections.drive(...)`，内容取自 store 的**权威全量快照**；日志一个字节都不写。
+
+| 问题 | 实证根因 | 修复（文件） |
+|---|---|---|
+| live 数据靠伪造日志行 | 插件 `appendSessionToolEvent` 自己 `session.append` 一条 `tool/call` | 只保留白名单校验 + 驱动投影，**永不 append**；面板数据改由 driver 送 `drive`（`lib/src.js`） |
+| 0.1 冷读整段重放被拒 | poke 用 `seq = session.seq` 时，checkpoint 行落在日志水位**之外**，0.1 `restore` 判定 `row.seq` 超出 `endSeq` → 抛 `cannot restore from seq 2` | 0.1 用 `Math.max(cursor - 1, 0)`、0.2 用 `cursor`；判别器 `typeof projectionRegistry?.cachedSnapshot === "function"`（0.2 有 `SessionProjectionCache`）（`lib/src.js`） |
+| 0.2 丢增量/跨 seq 抛错 | 0.2 `drive` 对 `cell.observedSeq >= event.seq` 直接 `continue`，`advanceCell` 遇缺口抛 `cannot advance across missing seq`，且 `observedSeq` 初始化 `-1` | poke 必须是**完整快照**（不是增量），且 seq 严格递增、不跨缺口（`lib/src.js`） |
+| 改基础设施配置后面板停在旧值 | `infra` 不在 `committed-state.js` 的 `projectionTables` 里，提交包装看不到它 | 抽出 `publishAuthoritative(sessionId)`；`setInfra` 写入/清空各调一次；提交包装统一走它（`lib/src/store.js`） |
+| **宿主出现幽灵「工具执行中」** | poke 借用 `tool/call` 时，宿主自有投影 `sessionStats` 把它当**真实工具调用**登记：`pendingCalls["src-live-…"] = 时间戳`，而永远不会有对应 result；0.2 hydrate 冷启动还会把它恢复出来 | poke 改用**插件专用事件类型** `src_authoritative_state`（`data` = 快照）。自定义类型不在宿主事件词典内，宿主投影一律忽略；`applySrcEvent` 顶部新增该分支，旧日志里的历史 `tool/call` 合成行保留 fold 分支以兼容（`lib/src.js`） |
+| 投影在 `apply` 里读不到权威态 | `apply`/`view` 是同步的，而 `store.domain()` 是异步的 | store 记录已解析句柄 `openedDomain` + 每会话 `commitDepths`，抽出同步内核 `sessionDataFrom` / `domainNotesFrom`；domain 未开时**保持现状、不猜测**（`lib/src/store.js`） |
+| 真实 registry 找不到 cell | 真 registry 的 cell 是 `WeakMap`，按**会话对象身份**索引，不只是 session id | driver 用 canonical session：`store.ctx?.sessions?.get?.(sessionId) ?? session`（`lib/src.js`） |
+
+### 验证
+
+- `npm test`：**634/634 通过**，0 失败（`tests/src.integration.test.mjs` 单文件 237/237）。
+  - 测试护栏新增第二份**宿主替身投影** `hostStats`（只在 `event.type === "tool/call"` 时记账），直接守
+    「poke 不得被宿主当成真实工具调用」这一不变量；并新增 `[local.105] poke 不进日志、也不被宿主投影当成一次真实工具调用`。
+  - poke 断言由「必须带真实 callId」改为新形态：`type === "src_authoritative_state"`、`data.callId === void 0`、
+    `typeof data.view === "object"`、审批决策 `allow`/`reject`。
+- **0.1 运行时**（真实 `dsh-session-projection` 0.1 registry + 宿主替身投影，`/tmp/v135-01-proj.mjs` 全绿）：
+  日志自造行 **0**；checkpoint 行 `{"src":{"ver":17,"seq":1,…testPhone:"13800138000"}}`；`restore` 冷读恢复权威数据
+  （即附录所述抛错路径）；增量后面板 infra 拿到新值；**宿主自有投影只看到 1 条真实 `tool/call`（`src_http`），
+  poke 三次 drive 一条都没被记账**。
+- **0.2 运行时**（真实桌面 App 副本，`/tmp/probe13`，端口 3218）：
+  - 写入路径：UI 发 `/src-infra testPhone …` → store WAL 有值；`session_projcache` 快照 `src.ver=17`、`seq=30`、
+    `infra.testPhone=13900003333`、`sessionStats.pendingCalls = {}`（**无幽灵**）、所有宿主行 seq 一致；会话日志
+    `session.v4.jsonl.zstd` 只有 header 行、**0 条伪造行**。
+  - 端到端（`/tmp/v135-02-e2e.mjs`）：新会话 + SRC 专业模式 + 正常对话（「收到。」）+ `/src-infra` 回执
+    「已保存 testPhone=…」+ 面板出现 对话/轨迹/**SRC** 页签。
+  - 冷读：重启 App 副本 → 打开会话 → 点 `[data-testid="src-tab-infra"]` → 输入框值即 store 真值
+    （`13900003333`）；无 pageerror / console.error。
+- 部署：`node scripts/deploy.mjs` EXIT=0（内含 634 测试硬门），同步到 `~/.dsh/profiles/{web,headless}` 的副本
+  130 个核心文件 + 12 条内置经验；重新 `npm pack` → `lihua_dis-dsh-src-0.1.0-local.135.tgz`，解包校验
+  `lib/src.js`、`lib/src/store.js`、`package.json` 与仓库 hash 一致。
+- `stateVersion` 保持 **17**（用户已允许旧数据丢失，不触发存量重算）；历史会话**未改写**。
+
+### 本轮未做 / 已知限制
+
+- **0.1 浏览器端 UI 端到端未取到**：0.1 的 0.1.0 `dsh web` 客户端在全新浏览器 profile 下，输入区的
+  「选择工作区」一直是 `readonly` + `data-phase="inert"` 状态（下拉菜单能开、能选中工作区，输入区仍不激活），
+  因此无法从 UI 发消息/命令；这是该客户端**既有的**工作区绑定问题，与本轮改动无关。作为补偿，0.1 侧的接受
+  证据用的是真实 0.1 投影库 + 真实插件代码的组件级探针（含 `restore` 冷读这条原先会抛错的路径）。
+  另：0.1 的 `POST /api/commands/execute`（RPC 信封 `{type:"client-request",rpcId,method:"commands/execute",
+  payload:{args:{agentId,line,images}}}`）能返回 `ok:true`，但用于验证的会话是 `standard` 预设、不在 SRC 域内，
+  故未产生 SRC 写入（不构成反例，仅说明该路径未覆盖）。
+- 探针数据只写在 `/tmp/probe13`、`/tmp/probe16`，未触碰真实 `~/.dsh`；用户正在运行的真实 App 全程未被重启或干扰。

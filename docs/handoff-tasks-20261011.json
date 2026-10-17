@@ -1,0 +1,34 @@
+{
+  "phase1": {
+    "title": "第一批：打通研究与证据读取",
+    "status": "done",
+    "items": [
+      "A. src_read_public_source: 公开漏洞资料只读通道",
+      "B. src_get_evidence: 审批结果直接读取，支持 approval-N",
+      "C. research-benchmark.js: 版本范围正例/负例离线判断"
+    ]
+  },
+  "phase2": {
+    "title": "第二批：统一 Jev 操作评估，减少人工打扰",
+    "status": "in_progress",
+    "items": [
+      "2.1 bash 候选信号已经接入 jev-client（已完成）",
+      "2.2 browser-adapter 执行前调用统一 Jev risk-grade",
+      "2.3 file-tools 执行前调用统一 Jev risk-grade",
+      "2.4 Burp / MCP 入口调用统一 Jev risk-grade",
+      "2.5 同一 operationId 贯穿代理/原生 MCP/结果回注",
+      "2.6 增加 unknown/service-error 状态，不伪装高危",
+      "2.7 隔离测试验证不同入口结论一致"
+    ]
+  },
+  "phase3": {
+    "title": "第三批：用户协助真正续接，不再复制审批",
+    "status": "pending",
+    "items": [
+      "3.1 新增 src_account_assist 工具",
+      "3.2 记录已核实 URL、步骤、完成/放弃状态",
+      "3.3 与 engagement state 持久化关联",
+      "3.4 取消状态时不再复制用户待办"
+    ]
+  }
+}

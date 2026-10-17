@@ -6,7 +6,8 @@ import * as nodePath from "node:path";
 import http from "node:http";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent } from "../lib/src.js";
+import { apply, parseTodoFeedback, srcInitialState, applySrcEvent, viewSrcState, classifyHttpRequest, SYNTHETIC_PROJECTION_EVENTS, appendSessionToolEvent, setSessionProjectionDriver } from "../lib/src.js";
+import { randomUUID } from "node:crypto";
 import { issueApprovalGrant } from "../lib/src/approval-grants.js";
 import { flushDefaultTelemetry } from "../lib/src/telemetry/events.js";
 import { commitSyntheticMutation, syntheticEvent } from "../lib/src/mutations.js";
@@ -25,6 +26,11 @@ process.on("exit", () => { try { rmSync(__dshHomeTmp, { recursive: true, force: 
    原 sharedDomainOpens 共享写法已废除——local.24 教训），因此 id 复用不会跨测试污染。
    仍要求：①同一测试内不同会话用不同 id；②新增 id 一律描述性命名（≥3 字符，禁止 p/x 单字符——
    排查日志/投影事件时需要可读性）。历史遗留的 "p"/"parent" 白名单豁免，文件尾元测试闸拦截新增违规。 */
+
+/* [local.105] 会话日志纯度闸：合成投影行曾经写进日志（0.2 迁移器无法接受 ⇒ 历史加载失败），
+   现在只允许走 `drive`。下列形态都是回归信号：合成名本体、src-submit-* / src-live-* callId。 */
+const syntheticLogRows = (events) => (events ?? []).filter((e) => e.type === "tool/call" && (e.data?.name === "src_authoritative_state" || String(e.data?.callId ?? "").startsWith("src-submit-") || String(e.data?.callId ?? "").startsWith("src-live-")));
+const assertCleanLog = (events, note) => assert.equal(syntheticLogRows(events).length, 0, `会话日志不得含自造投影行${note ? `（${note}）` : ""}`);
 
 class MemoryTable {
   rows = new Map();
@@ -49,11 +55,43 @@ async function readCredentialForTest(ref) {
 	return readCredential({ dshHome: process.env.DSH_HOME, ref });
 }
 
-function harness() {
+/* [local.105] 宿主投影服务的最小模拟：`register` + `drive`。
+   local.105 起合成投影不再写会话日志，只经 `drive` 喂运行中的投影单元（0.1/0.2 都是运行时公开方法），
+   所以测试要观察面板数据只能读这个 cell，不能再翻日志。`init(header)` 带 id 时按 store 权威态播种
+   （0.2 的 session/created 路径），带 id 的 drive 建立 cell——没 drive 过就没有 cell（“必须驱动”是可断言的不变量）。 */
+class FakeProjectionRegistry {
+  specs = new Map();
+  cells = new Map();
+  driven = new Map();
+  register(spec) { this.specs.set(spec.key, spec); }
+  /* [local.105] 宿主 registry 用 WeakMap 按**会话对象身份**建索引（不是 sessionId）；测试必须同样按对象存，
+     否则插件把 poke 送到 `ctx.sessions.get(id)` 归一后的对象上时会被记成另一个 cell，掩盖真实缺陷。 */
+  drive(session, event) {
+    const bucket = this.driven.get(session) ?? [];
+    bucket.push(event);
+    this.driven.set(session, bucket);
+    for (const spec of this.specs.values()) {
+      const byKey = this.cells.get(session) ?? new Map();
+      const cell = byKey.get(spec.key) ?? { state: spec.init(session?.header) };
+      cell.state = spec.apply(cell.state, event);
+      byKey.set(spec.key, cell);
+      this.cells.set(session, byKey);
+    }
+  }
+}
+
+function harness(options = {}) {
   const domain = new MemoryDomain();
   const tools = new Map();
   const sessions = new Map();
   const projections = new Map();
+  const projectionRegistry = new FakeProjectionRegistry();
+  /* [local.105] 0.2 的 `SessionProjectionCache` 独有 `cachedSnapshot`，插件用它区分「drive 要求严格前进」（0.2）
+     与「checkpoint 行必须落在日志内」（0.1）两套 cursor 策略。测试默认 0.1 形态，需要时显式打开。 */
+  if (options.cachedSnapshot === true) projectionRegistry.cachedSnapshot = () => void 0;
+  /* [local.105] 模拟宿主自己的投影（sessionStats 会消费真实 tool/call 并登记 pendingCalls）：
+     我方 poke 必须对它完全不可见，否则面板会出现等不到 result 的幽灵“工具执行中”。 */
+  projectionRegistry.register({ key: "hostStats", stateVersion: 1, init: () => ({ toolCalls: [] }), apply: (state, event) => event?.type === "tool/call" ? { toolCalls: [...state.toolCalls, String(event.data?.name ?? "")] } : state });
   const prompts = [];
   const commands = new Map();
   /* [local.34] 工具输出 schema 一致性闸：dsh 核心运行时按 additionalProperties:false 校验工具输出，
@@ -75,7 +113,7 @@ function harness() {
     subagents: { followupCalls: [], async followup(parent, sessionId, content) { this.followupCalls.push({ parent: parent.id, childSessionId: String(sessionId), content }); return `msg-${this.followupCalls.length}`; } },
     effect() {},
     inject(names, callback) {
-      if (names.includes("sessionProjections")) callback({ sessionProjections: { register(spec) { projections.set(spec.key, spec); } } });
+      if (names.includes("sessionProjections")) callback({ sessionProjections: { register: (spec) => { projections.set(spec.key, spec); projectionRegistry.register(spec); }, drive: (session, event) => projectionRegistry.drive(session, event) } });
       if (names.includes("systemPrompt")) callback({ systemPrompt: { section(spec) { prompts.push(spec); } } });
       if (names.includes("commands")) callback({ commands: { register(def) { commands.set(def.name, def); } } });
     }
@@ -85,10 +123,10 @@ function harness() {
     let s = sessions.get(sessionId);
     if (s === void 0) {
       const events = [];
-      s = { events, append(type, data) { events.push({ type, data }); } };
+      s = { id: sessionId, header: { id: sessionId }, events, get seq() { return events.length; }, append(type, data) { events.push({ type, data }); } };
       sessions.set(sessionId, s);
     }
-    return { agent: { session: { id: sessionId, header: parentSession ? { parentSession } : {}, append: s.append } } };
+    return { agent: { session: { id: sessionId, header: { id: sessionId, ...(parentSession ? { parentSession } : {}) }, append: s.append } } };
   };
   const run = (name, args, execution) => {
     // This fixture emulates the human command plane, not a production approval bypass.
@@ -102,7 +140,15 @@ function harness() {
     conformToolOutput(name, tool, out);
     return out;
   };
-  return { domain, ctx, tools, sessions, projections, prompts, commands, exec, run };
+  return {
+    domain, ctx, tools, sessions, projections, prompts, commands, exec, run,
+    /* [local.105] 投影 cell / 已驱动事件（面板数据链路的新观察面）。 */
+    projection: (sessionId) => projectionRegistry.cells.get(sessions.get(sessionId))?.get("src")?.state,
+    /* 宿主自有投影（sessionStats 之类）的模拟 cell：poke 不应被它记账。 */
+    hostProjection: (sessionId) => projectionRegistry.cells.get(sessions.get(sessionId))?.get("hostStats")?.state,
+    driven: (sessionId) => projectionRegistry.driven.get(sessions.get(sessionId)) ?? [],
+    drivenCount: (sessionId) => (projectionRegistry.driven.get(sessions.get(sessionId)) ?? []).length
+  };
 }
 /* [local.26] 带 mock 审批服务的 harness：policy="allow"→返回 allowed-once，"reject"→返回 rejected。 */
 function harnessWithApproval({ policy } = {}) {
@@ -724,11 +770,17 @@ test("src_import_traffic parses HAR, records full auth profiles and skips out-of
   ] } };
   const result = await h.run("src_import_traffic", { intentId: "intent-1", mode: "har", data: JSON.stringify(har), authProfileNote: "学生账号 student001 已授权" }, parent);
   assert.equal(result.observations, 1);
-  assert.equal(parentEvents.some((e) => e.type === "tool/call" && e.data.name === "src_record_observation"), true);
+  /* [local.105] 观测不再合成日志行（0.2 迁移器拒绝），改由 store 权威快照驱动投影：
+     日志必须干净，面板数据要看投影 cell。 */
+  assertCleanLog(parentEvents, "src_import_traffic");
+  assert.equal(h.drivenCount("p") >= 1, true, "跨会话/面板写入必须驱动一次投影");
   assert.equal(result.outOfScope, 1);
   assert.equal(result.authFacts, 1);
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.observations.some((o) => o.path === "/resume?page=2" && o.httpStatus === 200), true);
+  /* 投影 cell（面板数据源）同样要能看到这条观测。 */
+  const projection = h.projection("p");
+  assert.equal(projection.observations.some((o) => o.path === "/resume?page=2" && o.httpStatus === 200), true, "投影必须带权威观测");
   assert.equal(state.assets.some((a) => a.type === "endpoint" && a.value === "app.example.test/resume"), true);
   const authFact = state.facts.find((f) => f.kind === "auth-profile" && /cookie/i.test(f.detail));
   assert.ok(authFact, "auth fact recorded");
@@ -1103,7 +1155,7 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   const h = harness();
   for (const name of ["src-todo", "src-reject", "src-infra", "src-proxy-test", "src-burp-test"]) assert.equal(h.commands.has(name), true, `${name} registered`);
 
-  // --- /src-infra: direct write, no followup, synthetic tool/call appended ---
+  // --- /src-infra: direct write, no followup, log stays clean, projection driven ---
   const parent = h.exec("pcmd");
   let followed = null;
   parent.agent.followup = (message) => { followed = message; };
@@ -1111,28 +1163,29 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   assert.equal(saved.kind, "success");
   assert.equal(followed, null, "/src-infra must NOT wake the agent");
   const sessionLog = h.sessions.get("pcmd").events;
-  const callEvents = sessionLog.filter((event) => event.type === "tool/call");
-  assert.equal(callEvents.length, 1, "synthetic tool/call appended exactly once");
-  /* [local.46] 合成事件统一带 turn/step/callId（客户端会话解析按 callId 配对，缺 callId 会在第二条时抛 more-than-one-start） */
-  assert.equal(callEvents[0].data.name, "src_set_infra");
-  assert.equal(callEvents[0].data.arguments, JSON.stringify({ key: "testPhone", value: "13800138000,13900139000" }));
-  assert.ok(typeof callEvents[0].data.callId === "string" && callEvents[0].data.callId !== "", "合成事件带唯一 callId");
+  /* [local.105] 合成投影行停写日志（0.2 迁移器无法接受自造 tool/call），改走 drive。 */
+  assertCleanLog(sessionLog, "src-infra direct write");
+  assert.equal(sessionLog.filter((event) => event.type === "tool/call").length, 0, "直写不再往会话日志写行");
+  assert.equal(h.drivenCount("pcmd") >= 1, true, "直写必须驱动投影（面板数据源）");
+  assert.equal(h.projection("pcmd").infra.testPhone, "13800138000,13900139000", "投影 cell 带权威 infra");
   const infraAfter = await h.run("src_get_infra", {}, parent);
   assert.equal(infraAfter.infra.testPhone, "13800138000,13900139000", "direct write landed in storage");
 
-  // projection fold sees the synthetic event too (goal first: viewSrcState needs a goal)
+  // projection cell carries the authoritative poke (goal first: viewSrcState needs a goal)
   let state = JSON.parse(JSON.stringify(srcInitialState));
   state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "example.test", objective: "cmd" }) } });
-  state = applySrcEvent(state, { type: "tool/call", data: callEvents[0].data });
-  assert.equal(viewSrcState(state).infra.testPhone, "13800138000,13900139000");
+  assert.equal(h.projection("pcmd").infra.testPhone, "13800138000,13900139000");
+  assert.equal(state.infra?.testPhone ?? "", "", "日志里不得再有合成 infra 行（fold 日志只剩真实事件）");
 
-  // clearing via "-" restores default and still appends the event
+  // clearing via "-" restores default and still drives the projection
   followed = null;
   sessionLog.length = 0;
   const cleared = await h.commands.get("src-infra").handler({ rawInput: "testPhone -", agent: parent.agent });
   assert.equal(cleared.kind, "success");
   assert.equal(followed, null);
   assert.equal((await h.run("src_get_infra", {}, parent)).infra.testPhone, "");
+  assertCleanLog(sessionLog, "src-infra clear");
+  assert.equal(h.projection("pcmd").infra.testPhone, "", "清空也要反映到投影");
 
   // unknown key -> error text
   const bad = await h.commands.get("src-infra").handler({ rawInput: "nope x", agent: parent.agent });
@@ -1167,6 +1220,42 @@ test("[local.11] panel commands: /src-infra direct-writes storage + synthetic ev
   // and the old buggy shapes must actually fail (guards the guard)
   assert.equal(isJsonValue({ stopped: void 0 }), false);
   assert.equal(isJsonValue([{ status: void 0, error: "x" }]), false);
+});
+
+test("[local.105] 工具面 infra 写入同样驱动投影（提交包装覆盖 store.setInfra）", async () => {
+  const h = harness();
+  const parent = h.exec("p105infra");
+  await h.run("src_set_infra", { key: "testPhone", value: "13800138000" }, parent);
+  assertCleanLog(h.sessions.get("p105infra").events, "工具面 infra 写入");
+  assert.equal(h.drivenCount("p105infra") >= 1, true, "setInfra 必须驱动投影，否则模型改 infra 后面板停旧值");
+  assert.equal(h.projection("p105infra").infra.testPhone, "13800138000", "投影 cell 带权威 infra");
+  await h.run("src_set_infra", { key: "testPhone", value: "" }, parent);
+  assert.equal(h.projection("p105infra").infra.testPhone, "", "清空同样走权威态");
+});
+
+test("[local.105] poke 不进日志、也不被宿主投影当成一次真实工具调用", async () => {
+  const h = harness();
+  const parent = h.exec("p105poke");
+  await h.run("src_add_goal", { target: "example.test", objective: "poke" }, parent);
+  assertCleanLog(h.sessions.get("p105poke").events, "poke");
+  const driven = h.driven("p105poke");
+  assert.equal(driven.length >= 1, true, "写入必须驱动投影");
+  assert.equal(driven.every((event) => event.type === "src_authoritative_state"), true, "poke 必须是专用事件类型");
+  assert.equal(h.hostProjection("p105poke").toolCalls.length, 0, "宿主投影不得把 poke 记成工具调用");
+});
+
+test("[local.105] poke cursor：0.1 落在日志末位内，0.2 用下一个日志位置", async () => {
+  /* 0.2 的 drive 在 cell.observedSeq >= event.seq 时 continue（必须严格前进）；
+     0.1 则会把 seq 写进 checkpoint 行，冷读 restore 只接受 row.seq <= 日志末位。 */
+  const modern = harness({ cachedSnapshot: true });
+  const modernExec = modern.exec("p105cursor2");
+  await modern.run("src_add_goal", { target: "example.test", objective: "cursor" }, modernExec);
+  assert.equal(modern.driven("p105cursor2").at(-1).seq, modern.sessions.get("p105cursor2").seq, "0.2：cursor 必须是下一个日志位置");
+
+  const legacy = harness();
+  const legacyExec = legacy.exec("p105cursor1");
+  await legacy.run("src_add_goal", { target: "example.test", objective: "cursor" }, legacyExec);
+  assert.equal(legacy.driven("p105cursor1").at(-1).seq, Math.max(legacy.sessions.get("p105cursor1").seq - 1, 0), "0.1：cursor 必须落在日志末位内");
 });
 
 test("[local.13] burp SSE handshake probe: closed port fails fast; live SSE endpoint passes without AI", async () => {
@@ -1284,7 +1373,7 @@ test("[local.14] /src-infra-copy copies latest other session's infra overrides; 
   await h.commands.get("src-infra").handler({ rawInput: "testPhone 13800138000", agent: source.agent });
   await h.commands.get("src-infra").handler({ rawInput: "testPhone -", agent: source.agent });
 
-  // 目标会话一键沿用：直写 + 合成投影事件 + 不打扰 agent
+  // 目标会话一键沿用：直写 + 驱动投影 + 不打扰 agent
   let followed = null;
   target.agent.followup = (message) => { followed = message; };
   const copied = await h.commands.get("src-infra-copy").handler({ rawInput: "", agent: target.agent });
@@ -1297,25 +1386,26 @@ test("[local.14] /src-infra-copy copies latest other session's infra overrides; 
   assert.equal(infra.infra.proxyUrl, "http://192.0.2.88:7893", "override landed in storage");
   assert.equal(infra.infra.testPhone, "", "untouched key stays default");
 
-  // 合成 tool/call 与直写一致（投影 fold 可见）
+  // 直写与投影一致（日志零自造行，投影 cell 可见）
   const callEvents = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
-  assert.equal(callEvents.length, 1);
-  /* [local.46] 合成事件带唯一 callId；name/arguments 不变 */
-  assert.equal(callEvents[0].data.name, "src_set_infra");
-  assert.equal(callEvents[0].data.arguments, JSON.stringify({ key: "proxyUrl", value: "http://192.0.2.88:7893" }));
-  assert.ok(typeof callEvents[0].data.callId === "string" && callEvents[0].data.callId !== "");
+  /* [local.105] /src-infra-copy 不再往会话日志写合成行（0.2 迁移器拒绝），改 drive 投影。 */
+  assertCleanLog(h.sessions.get("sess-new").events, "src-infra-copy");
+  assert.equal(callEvents.length, 0, "copy 不再往会话日志写行");
+  const projection = h.projection("sess-new");
+  assert.equal(projection.infra.proxyUrl, "http://192.0.2.88:7893", "投影 cell 带沿用来的 proxyUrl");
 
   // 投影视图端到端：目标会话视图里能看到沿用来的值
   let state = JSON.parse(JSON.stringify(srcInitialState));
-  state = applySrcEvent(state, { type: "tool/call", data: callEvents[0].data });
-  assert.equal(viewSrcState(state).infra.proxyUrl, "http://192.0.2.88:7893");
+  state = applySrcEvent(state, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "example.test", objective: "copy" }) } });
+  assert.equal(viewSrcState(state).infra.proxyUrl, "", "日志里不得有合成 infra 行（只有真实事件）");
 
   // 再沿用一次：仍以 sess-old 为源（自己不算来源），幂等无害
   const again = await h.commands.get("src-infra-copy").handler({ rawInput: "", agent: target.agent });
   assert.equal(again.kind, "success");
   assert.match(again.text, /proxyUrl=http:\/\/192\.0\.2\.88:7893/, "re-copy stays sourced from the other session");
   const eventsAfter = h.sessions.get("sess-new").events.filter((event) => event.type === "tool/call");
-  assert.ok(eventsAfter.length >= 2, "each copy appends its synthetic events");
+  assert.equal(eventsAfter.length, 0, "每次 copy 都不写日志（只驱动投影）");
+  assertCleanLog(h.sessions.get("sess-new").events, "src-infra-copy repeat");
 });
 
 test('local.116: pre-goal infra survives authoritative read, copy, save, reset and goal creation', async () => {
@@ -1449,10 +1539,10 @@ test("[local.64] legacy TLS 重协商降级：报错后自动用 SSL_OP_LEGACY_S
   }
 });
 
-test("[local.64] 投影待办 id 与 store 同源：合成事件带真实 id；无 id 新建回退 userTodo- 前缀；更新按 id 命中不再静默丢失", async () => {
+test("[local.64] 投影待办 id 与 store 同源：权威事件带真实 id；无 id 新建回退 userTodo- 前缀；更新按 id 命中不再静默丢失", async () => {
   const { applySrcEvent, srcInitialState } = await import("../lib/src.js");
   const fold = (state, name, args) => applySrcEvent(state, { type: "tool/call", data: { name, arguments: JSON.stringify(args) } });
-  // ① 合成事件携带真实 store id（覆盖面待办/数据编排路径）→ 投影行 id 与 store 一致
+  // ① 权威事件携带真实 store id（覆盖面待办/数据编排路径）→ 投影行 id 与 store 一致
   const withId = fold(srcInitialState, "src_user_todo", { id: "userTodo-1", title: "请在微信搜索 l63ui-e2e.test 主体相关的小程序", detail: "d", kind: "asset-provide" });
   assert.equal(withId.userTodos[0].id, "userTodo-1");
   // ② 无 id 新建（agent 直接 src_user_todo 的常规事件）→ 回退 userTodo-<行数+1>，不再自造 todo- 前缀
@@ -2627,7 +2717,7 @@ test("[local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed �
   const p1 = await h.run("src_request_asset_confirm", { domain: "partner.test", evidence: "业务关联" }, parent);
   /* agent 自批被拒：工具层闸 */
   await assert.rejects(() => h.run("src_resolve_approval", { id: p1.pendingApprovalId, action: "allow" }, parent), /只能由用户/);
-  /* 用户在面板/命令行确认：/src-approve <id> allow —— 直接落库 confirmed 资产 + followup + 合成事件 */
+  /* 用户在面板/命令行确认：/src-approve <id> allow —— 直接落库 confirmed 资产 + followup */
   const cmd = h.commands.get("src-approve");
   assert.ok(cmd !== void 0, "src-approve 命令已注册");
   const followups = [];
@@ -2643,12 +2733,15 @@ test("[local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed �
   assert.equal(asset.status, "confirmed");
   assert.equal(asset.method, "user-confirmed");
   assert.match(asset.source, new RegExp(p1.pendingApprovalId));
-  /* 待审行置 approved；合成事件已追加 */
+  /* 待审行置 approved */
   const resolved = (state.pendingApprovals ?? []).find((r) => r.id === p1.pendingApprovalId);
   assert.equal(resolved.status, "approved");
-  /* 合成事件已追加（fold 与时间线可见） */
+  /* [local.105] 面板数据改由 store 权威快照驱动（不写日志）：日志保持干净，投影 cell 必须带上决定。 */
   const sessEvents = h.sessions.get("g44c").events;
-  assert.ok(sessEvents.some((e) => e.type === "tool/call" && e.data.name === "src_resolve_approval" && String(e.data.arguments ?? "").includes(p1.pendingApprovalId)), "src_resolve_approval 合成事件已落");
+  assertCleanLog(sessEvents, "src-approve allow");
+  const projection = h.projection("g44c");
+  assert.equal(projection.pendingApprovals.find((r) => r.id === p1.pendingApprovalId)?.status, "approved", "投影 cell 反映审批结束后的权威态");
+  assert.equal(projection.assets.some((a) => a.value === "partner.test" && a.status === "confirmed"), true, "投影 cell 带新登记的整域资产");
   /* 闸放行：整域子域过授权闸（后续报网络错误而非越界） */
   const notGate = (e) => { assert.ok(!/outside the authorized goal host/.test(e.message), `应过授权闸，实际: ${e.message}`); return true; };
   await assert.rejects(() => h.run("src_http", { url: "http://api.partner.test/x", method: "GET", justification: "用户确认归属" }, parent), notGate);
@@ -2662,8 +2755,9 @@ test("[local.44] ASSET 待审：/src-approve 直写落库（allow→confirmed �
   const reply2 = await cmd.handler({ rawInput: `${p2.pendingApprovalId} reject 不是我们的`, agent: { session: parent.agent.session, followup: async (m) => { followups2.push(m); } } });
   assert.equal(reply2.kind, "success");
   assert.match(JSON.stringify(followups2[0]), /否决 other.test/);
-  const synth2 = h.sessions.get("g44c").events.some((e) => e.type === "tool/call" && String(e.data.arguments ?? "").includes(p2.pendingApprovalId));
-  assert.ok(synth2, "reject 合成事件已落");
+  /* [local.105] reject 也要反映到投影（不写日志）。 */
+  assertCleanLog(h.sessions.get("g44c").events, "src-approve reject");
+  assert.equal(h.projection("g44c").pendingApprovals.find((r) => r.id === p2.pendingApprovalId)?.status, "rejected", "reject 也要落到投影 cell");
   const state2 = await h.run("src_state", {}, parent);
   const excludedAsset = (state2.assets ?? []).find((a) => a.value === "other.test");
   assert.equal(excludedAsset?.status, "excluded");
@@ -2735,9 +2829,10 @@ test("[local.45] legacy 资产 method 归一化：domain open 能加载旧版自
   assert.equal(sparse.success ? sparse.data.method : "", "passive");
 });
 
-/* [local.46] /src-approve 直写同步投影：合成 src_add_asset 事件（修面板 0 资产双账本漂移）；
-   resolve 事件走 helper 带唯一 callId（修第二条起会话解析抛 more-than-one-start → 历史加载失败横幅）。 */
-test("[local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事件 callId 唯一", async () => {
+/* [local.105] /src-approve 直写同步投影：不再往会话日志合成 src_add_asset/src_resolve_approval 行
+   （0.2 迁移器拒绝自造 tool/call ⇒ 历史加载失败），改由 store 权威快照 drive 投影。
+   仍要求：每次归属决定都要推动投影、每次驱动都是独立事件（不得复用 callId 身份）。 */
+test("[local.105] /src-approve：归属决定实时驱动投影（不写日志、驱动事件身份唯一）", async () => {
   const h = harness();
   const parent = h.exec("l46");
   await h.run("src_add_goal", { target: "example.com", objective: "l46 验证" }, parent);
@@ -2748,42 +2843,49 @@ test("[local.46] /src-approve：合成 src_add_asset 投影事件 + resolve 事�
   const idPartner = rows.find((r) => r.url === "partner-brand.test").id;
   const idOther = rows.find((r) => r.url === "other-brand.test").id;
   const cmd = h.commands.get("src-approve");
+  const drivenBefore = h.drivenCount("l46");
   await cmd.handler({ rawInput: `${idPartner} allow 确认`, agent: { session: parent.agent.session, followup: async () => {} } });
+  const drivenAfterAllow = h.drivenCount("l46");
+  assert.equal(drivenAfterAllow > drivenBefore, true, "allow 决定必须驱动一次投影");
   await cmd.handler({ rawInput: `${idOther} reject 否`, agent: { session: parent.agent.session, followup: async () => {} } });
-  const events = h.sessions.get("l46").events;
-  /* resolve 事件：唯一真实 callId（undefined 会让客户端解析器把所有无 callId 事件归到同一 key） */
-  const resolves = events.filter((e) => e.type === "tool/call" && e.data?.name === "src_resolve_approval");
-  assert.equal(resolves.length, 2);
-  const callIds = resolves.map((e) => e.data.callId);
-  for (const c of callIds) assert.ok(typeof c === "string" && c !== "" && c !== "undefined", "resolve 事件必须带真实 callId");
-  assert.notEqual(callIds[0], callIds[1], "两次审批的 callId 互不相同");
-  /* 资产事件：直写落库同步合成 src_add_asset，投影与 store 双账本一致 */
-  const addAssets = events.filter((e) => e.type === "tool/call" && e.data?.name === "src_add_asset");
-  assert.equal(addAssets.length, 2, "两次归属决定各合成一条 src_add_asset");
-  const a1 = JSON.parse(addAssets[0].data.arguments);
-  assert.equal(a1.value, "partner-brand.test");
-  assert.equal(a1.type, "root-domain");
-  assert.equal(a1.status, "confirmed");
-  assert.equal(a1.method, "user-confirmed");
-  assert.equal(a1.confidence, 1);
-  assert.ok(typeof a1.source === "string" && a1.source.includes("用户归属确认"), "source 标注用户决定");
-  const a2 = JSON.parse(addAssets[1].data.arguments);
-  assert.equal(a2.value, "other-brand.test");
-  assert.equal(a2.status, "excluded");
-  /* 合成事件能被投影 fold 正常消费（UI 资产 tab/计数的最终消费者） */
-  const { applySrcEvent, srcInitialState } = await import("../lib/src.js");
-  let st = srcInitialState;
-  for (const ev of addAssets) st = applySrcEvent(st, ev);
-  assert.ok(st.assets.some((a) => a.value === "partner-brand.test" && a.status === "confirmed"), "投影资产含确认域");
-  assert.ok(st.assets.some((a) => a.value === "other-brand.test" && a.status === "excluded"), "投影资产含否决域");
+  assert.equal(h.drivenCount("l46") > drivenAfterAllow, true, "reject 决定必须驱动一次投影");
+  /* 日志零自造行（0.2 迁移器无法接受的形态） */
+  assertCleanLog(h.sessions.get("l46").events, "src-approve");
+  /* [local.105] poke 是「专用事件类型 + 完整权威载荷」，不再借用 tool/call 身份：
+     不得带 callId（那会被宿主投影记成幽灵 pendingCall），载荷必须是当时的 store 权威视图。 */
+  const pokes = h.driven("l46");
+  for (const e of pokes) {
+    assert.equal(e.type, "src_authoritative_state", "驱动事件必须是专用类型");
+    assert.equal(e.data?.callId, void 0, "驱动事件不得冒充工具调用身份");
+    assert.equal(typeof e.data?.view, "object", "驱动事件必须自带 store 权威视图载荷");
+  }
+  assert.equal(new Set(pokes).size, pokes.length, "每次驱动都是独立事件对象");
+  const lastPoke = pokes.at(-1);
+  const decided = (lastPoke.data.view.pendingApprovals ?? []).find((r) => r.url === "other-brand.test");
+  assert.equal(decided?.userDecision, "reject", "驱动载荷必须是决定之后的权威态");
+  assert.equal((lastPoke.data.view.pendingApprovals ?? []).find((r) => r.url === "partner-brand.test")?.userDecision, "allow");
+  /* 资产：直写落库后投影 cell 与 store 双账本一致（含 method/confidence/source 等用户决定证据） */
+  const projection = h.projection("l46");
+  const a1 = (projection.assets ?? []).find((a) => a.value === "partner-brand.test");
+  const a2 = (projection.assets ?? []).find((a) => a.value === "other-brand.test");
+  assert.equal(a1?.status, "confirmed");
+  assert.equal(a1?.type, "root-domain");
+  assert.equal(a1?.method, "user-confirmed");
+  assert.equal(a1?.confidence, 1);
+  assert.ok(typeof a1?.source === "string" && a1.source.includes("用户归属确认"), "source 标注用户决定");
+  assert.equal(a2?.status, "excluded");
+  /* 投影消费端（UI 资产 tab/计数）：把最后一次权威驱动折进投影，结果必须仍是两个资产 */
+  const st = applySrcEvent(srcInitialState, pokes[pokes.length - 1]);
+  assert.ok(st.assets.some((a) => a.value === "partner-brand.test" && a.status === "confirmed"), "fold 权威驱动含确认域");
+  assert.ok(st.assets.some((a) => a.value === "other-brand.test" && a.status === "excluded"), "fold 权威驱动含否决域");
 });
 
-/* [local.57] 子代理 src_add_asset 跨会话写入的投影对齐：中通会话实测漂移——子代理把资产写入
-   engagement（父）单元（store 91 条），但父会话日志里没有任何 src_add_asset 事件（常规 tool/call
-   只落在子代理自己的日志），历史加载按父日志 fold 只余 43 条。修复：跨会话写入时实时合成
-   src_add_asset 投影事件进父日志（父自身调用不重复合成；src_submit 显式带同一资产时 store 判重、
-   也不会双投影）；折叠父日志全量事件必须与 store 资产集合一致。 */
-test("[local.57] 子代理 src_add_asset 实时合成父投影事件：fold 父日志与 store 资产对齐", async () => {
+/* [local.105] 子代理 src_add_asset 跨会话写入的投影对齐：中通会话实测漂移——子代理把资产写入
+   engagement（父）单元（store 91 条），但父会话日志里没有这些事件（常规 tool/call 只落在子代理
+   自己的日志），历史加载按父日志 fold 只余 43 条。原先的修法是往父日志合成 src_add_asset 行
+   （0.2 迁移器拒绝自造 tool/call ⇒ 历史加载失败），已废弃；现在改为：每次跨会话写入都把 store
+   权威快照 drive 给父投影（父自身调用不重复驱动；src_submit 判重后也不再改变资产集合）。 */
+test("[local.105] 子代理 src_add_asset 跨会话写入：父投影随 store 权威态对齐", async () => {
   const h = harness();
   const parent = h.exec("l57p");
   const child = h.exec("l57c", "l57p");
@@ -2798,25 +2900,34 @@ test("[local.57] 子代理 src_add_asset 实时合成父投影事件：fold 父�
   };
   await loggedRun("src_add_goal", { target: "zto.test", objective: "投影对齐验证" }, parent);
   const intent = await loggedRun("src_add_intent", { title: "recon", goalId: "goal-1" }, parent);
-  const syntheticCount = () => h.sessions.get("l57p").events.filter((e) => e.type === "tool/call" && String(e.data?.callId ?? "").startsWith("src-submit-") && e.data?.name === "src_add_asset").length;
-  /* 父自己登记：常规 tool/call 已在父日志，不得重复合成 */
+  const syntheticCount = () => syntheticLogRows(h.sessions.get("l57p").events).length;
+  /* 父自己登记：常规 tool/call 已在父日志，不得额外自造行 */
   await loggedRun("src_add_asset", { type: "root-domain", value: "zto.test", source: "goal 主域" }, parent);
-  assert.equal(syntheticCount(), 0, "父自身调用不得合成");
+  assert.equal(syntheticCount(), 0, "父自身调用不得自造日志行");
   /* 子代理直接登记 14 条（复刻中通 recon child） */
+  const drivenBefore = h.drivenCount("l57p");
   for (let i = 1; i <= 14; i++) await h.run("src_add_asset", { type: "subdomain", value: `n${i}.ztoglobal.test`, source: "crt.sh 证书日志" }, child);
-  assert.equal(syntheticCount(), 14, "每条跨会话登记都要合成进父日志");
-  const syntheticEvents = h.sessions.get("l57p").events.filter((e) => e.type === "tool/call" && String(e.data?.callId ?? "").startsWith("src-submit-") && e.data?.name === "src_add_asset");
-  for (const e of syntheticEvents) assert.ok(typeof e.data.callId === "string" && e.data.callId.length > "src-submit-".length, "合成事件必须带唯一 callId");
+  assert.equal(h.drivenCount("l57p") >= drivenBefore + 14, true, "每条跨会话登记都要驱动父投影");
+  /* 父日志里不得出现自造行（也不再有任何 src-submit-* callId） */
+  assertCleanLog(h.sessions.get("l57p").events, "cross-session asset writes");
+  for (const e of h.driven("l57p")) {
+    assert.equal(e.type, "src_authoritative_state", "驱动事件必须是专用类型（不得冒充 tool/call）");
+    assert.equal(typeof e.data?.view, "object", "驱动事件必须自带 store 权威视图载荷");
+  }
+  assert.equal((h.driven("l57p").at(-1).data.view.assets ?? []).filter((a) => String(a.value).endsWith(".ztoglobal.test")).length >= 14, true, "最后一次驱动必须带全部跨会话资产");
   /* 子代理再显式 submit 同一批：store 判重后 accepted 为 0，不得双投影 */
   const sub = await h.run("src_submit", { intentId: intent.id, stage: "completed", summary: "recon done", assets: Array.from({ length: 14 }, (_, i) => ({ type: "subdomain", value: `n${i + 1}.ztoglobal.test`, source: "crt.sh 证书日志" })) }, child);
   assert.equal(sub.assets, 0, "重复资产不重复受理");
-  assert.equal(syntheticCount(), 14, "src_submit 对已合成资产不再追加投影");
-  /* 终极对齐：fold 父日志全部 tool/call 事件 → 投影资产数必须等于 store 资产数（历史加载视角） */
+  assert.equal(syntheticCount(), 0, "src_submit 也不得自造日志行");
+  /* 终极对齐：面板数据源（store 权威快照驱动的投影）资产数必须等于 store 资产数 */
   const storeCount = (await h.run("src_state", {}, parent)).counts.assets;
+  const projection = h.projection("l57p");
+  assert.equal(projection.assets.length, storeCount, "投影资产数必须与 store 一致（含子代理登记的 14 条）");
+  assert.ok(projection.assets.some((a) => a.value === "n7.ztoglobal.test" && a.status === "confirmed"), "子代理登记的资产在投影可见");
+  /* 父日志 fold 只剩真实事件：不得再靠日志凑资产（历史加载视角的真相只有 store） */
   let st = srcInitialState;
   for (const ev of parentEvents) if (ev.type === "tool/call") st = applySrcEvent(st, ev);
-  assert.equal(st.assets.length, storeCount, "fold 父日志的资产数必须与 store 一致（含子代理登记的 14 条）");
-  assert.ok(st.assets.some((a) => a.value === "n7.ztoglobal.test" && a.status === "confirmed"), "子代理登记的资产在投影可见");
+  assert.ok(st.assets.length < storeCount, "日志 fold 不再等于 store（合成行已停写）——面板必须靠 store 投影");
 });
 
 test("[capability] 收编链路：wx-minapp-recon 清单可见 + SKILL.md 可读含登录待办引导", async () => {
@@ -3029,9 +3140,11 @@ test("[local.58] attackPrerequisites schema 可选：漏传不再被宿主拦截
 });
 
 /* [local.58] 跨会话审批投影对齐：子代理 src_http / src_resolve_approval 的审批 store 行落在 engagement（父）
-   单元，但合成事件此前只落在子代理自己的日志——父面板「待审」区永远空（中通会话 approval-1/3/4 实测漂移）。
-   跨会话时向父日志补同事件；fold 按 id 幂等去重。 */
-test("[local.58] 子代理挂起/解决审批实时合成父投影事件", async () => {
+   单元，但父面板「待审」区曾经永远空（中通会话 approval-1/3/4 实测漂移）。 */
+/* [local.105] 子代理挂起/解决审批的父投影对齐：原先靠往父日志合成 src_record_pending_approval/
+   src_resolve_approval 行（0.2 迁移器拒绝），现在改 drive store 权威快照——审批行本身落在
+   engagement（父）单元，所以父投影必须能直接看到它。 */
+test("[local.105] 子代理挂起/解决审批实时驱动父投影", async () => {
   let hitCount = 0;
   const server = http.createServer((req, res) => { hitCount++; res.writeHead(204); res.end(); });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -3043,19 +3156,15 @@ test("[local.58] 子代理挂起/解决审批实时合成父投影事件", async
   try {
     const result = await h.run("src_http", { url: `http://127.0.0.1:${port}/api-c/user/v1/closeAccount`, method: "GET", headers: { userId: "15", authorization: "Bearer t" }, justification: "删除 userId=15" }, child);
     assert.equal(result.approval, "pending");
-    const parentEvents = () => h.sessions.get("l58ap").events.filter((e) => e.type === "tool/call");
-    const childApprovalCount = h.sessions.get("l58apc").events.filter((e) => e.type === "tool/call" && e.data.name === "src_record_pending_approval").length;
-    assert.equal(childApprovalCount, 1, "子代理自己的日志照旧落事件");
-    assert.equal(parentEvents().filter((e) => e.data.name === "src_record_pending_approval").length, 1, "父日志必须合成同一条审批事件");
-    let st = srcInitialState;
-    for (const ev of parentEvents()) st = applySrcEvent(st, ev);
-    assert.equal(viewSrcState(st).counts.pendingApprovals, 1, "fold 父日志后待审区可见");
+    /* 两个会话的日志都不得再出现自造行（子代理自己也不再“照旧落事件”）。 */
+    assertCleanLog(h.sessions.get("l58ap").events, "child approval (parent log)");
+    assertCleanLog(h.sessions.get("l58apc").events, "child approval (child log)");
+    assert.equal(h.projection("l58ap").pendingApprovals.length, 1, "父投影必须直接看到子代理挂起的审批行");
     /* 子代理 resolve → 父投影同步 resolution，不 stale */
     const rejected = await h.run("src_resolve_approval", { id: result.pendingApprovalId, action: "reject", note: "误伤风险" }, child);
     assert.equal(rejected.status, "rejected");
-    st = srcInitialState;
-    for (const ev of parentEvents()) st = applySrcEvent(st, ev);
-    assert.equal(viewSrcState(st).pendingApprovals[0].status, "rejected", "子代理 resolve 后父投影不 stale");
+    assertCleanLog(h.sessions.get("l58ap").events, "child resolve (parent log)");
+    assert.equal(h.projection("l58ap").pendingApprovals[0].status, "rejected", "子代理 resolve 后父投影不 stale");
     assert.equal(hitCount, 0, "拒绝后不应发出");
   } finally { server.close(); }
 });
@@ -3165,15 +3274,17 @@ test("[local.31] src_http 同请求去重复用既有 pending（不堆队列）"
   const state = await h.run("src_state", {}, parent);
   assert.equal(state.counts.pendingApprovals, 1, "去重后表里只有一条 pending");
 });
-test("[local.31] src_http 挂起发 src_record_pending_approval 合成事件→投影出现待审节点", async () => {
+test("[local.105] src_http 挂起驱动投影待审节点（日志零自造行）", async () => {
   const h = harness();
   const parent = h.exec("ap-fold");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "fold 验证" }, parent);
   const r = await h.run("src_http", { url: "http://127.0.0.1:59998/api-c/user/v1/closeAccount", method: "GET", headers: { userId: "7", authorization: "Bearer t" }, justification: "删改" }, parent);
-  const events = h.sessions.get("ap-fold").events;
-  const synth = events.find((e) => e.type === "tool/call" && e.data?.name === "src_record_pending_approval");
-  assert.ok(synth !== void 0, "发了 src_record_pending_approval 合成事件");
-  assert.equal(JSON.parse(synth.data.arguments).id, r.pendingApprovalId);
+  /* [local.105] 待审节点不再合成日志行，改由 store 权威快照驱动投影（面板数据源）。 */
+  assertCleanLog(h.sessions.get("ap-fold").events, "src_http pending");
+  assert.equal(h.drivenCount("ap-fold") >= 1, true, "挂起必须驱动一次投影");
+  const pending = h.projection("ap-fold").pendingApprovals.find((row) => row.id === r.pendingApprovalId);
+  assert.ok(pending !== void 0, "投影待审区必须有这条挂起");
+  assert.equal(pending.status, "pending");
 });
 test("[local.31] src_resolve_approval 幂等：已 approved/rejected 不可重复审批", async () => {
   const server = http.createServer((_req, res) => { res.writeHead(204); res.end(); });
@@ -3351,9 +3462,12 @@ test("[local.32] src_add_goal 默认沿用上次会话基础设施（显式设�
   const infraB = await h.run("src_get_infra", {}, b);
   assert.equal(infraB.infra.proxyUrl, "http://127.0.0.1:7890");
   assert.equal(infraB.infra.burpMcpPort, "9876");
-  /* 投影同步：每个沿用项都有合成 src_set_infra 事件。 */
-  const events = h.sessions.get("sess-b").events.filter((e) => e.type === "tool/call" && e.data.name === "src_set_infra");
-  assert.equal(events.length, 2, "沿用项应有合成事件同步投影");
+  /* 投影同步：沿用结果必须落在投影 cell（日志不得有自造行）。 */
+  assertCleanLog(h.sessions.get("sess-b").events, "infra inheritance");
+  assert.equal(h.sessions.get("sess-b").events.filter((e) => e.type === "tool/call").length, 0, "沿用不再写日志行");
+  const projectionB = h.projection("sess-b");
+  assert.equal(projectionB.infra.proxyUrl, "http://127.0.0.1:7890", "投影带沿用来的 proxyUrl");
+  assert.equal(projectionB.infra.burpMcpPort, "9876", "投影带沿用来的 burpMcpPort");
   /* 会话 c：显式设置过自己的 proxyUrl → 完全不自动沿用。 */
   const c = h.exec("sess-c");
   await h.run("src_set_infra", { key: "proxyUrl", value: "http://127.0.0.1:9999" }, c);
@@ -3379,8 +3493,8 @@ test("[local.32] scan_surface 遇 401 不算风控：继续扫完且 protectionS
   } finally { globalThis.fetch = originalFetch; }
 });
 
-/* [local.33] 认证预算投影通道：src_test_bypass 发出认证请求后应发 src_auth_budget 合成事件（UI 头部「认证 used/limit」格数据源）。 */
-test("[local.33] src_test_bypass 认证请求后发 src_auth_budget 合成事件", async () => {
+/* [local.33] 认证预算投影通道：src_test_bypass 发出认证请求后，权威计数必须到达投影（UI 头部「认证 used/limit」格数据源）。 */
+test("[local.33] src_test_bypass 认证请求后投影带认证预算", async () => {
   const h = harness();
   const parent = h.exec("g33bud");
   await h.run("src_add_goal", { target: "https://example.test", objective: "预算投影", authorization: "t" }, parent);
@@ -3396,19 +3510,15 @@ test("[local.33] src_test_bypass 认证请求后发 src_auth_budget 合成事件
     }, parent);
     assert.equal(result.requiresDecision, false);
     assert.equal(result.authBudgetExhausted, void 0, "2 次认证请求不应触顶");
-    /* 合成事件携带权威计数（fold → 投影 → UI）。 */
-    const events = h.sessions.get("g33bud").events.filter((e) => e.type === "tool/call" && e.data.name === "src_auth_budget");
-    assert.equal(events.length, 1, "应恰好一条 src_auth_budget 事件");
-    const payload = JSON.parse(events[0].data.arguments);
-    assert.equal(payload.used, 2, "baseline + variant 各计一次");
-    assert.equal(payload.limit, 30);
-    /* 未发认证请求的调用不应发事件。 */
+    /* [local.105] 权威计数仍要到达投影（fold → 投影 → UI），但不再通过日志：断言投影 cell。 */
+    assertCleanLog(h.sessions.get("g33bud").events, "auth budget");
+    assert.deepEqual(h.projection("g33bud").authBudget, { used: 2, limit: 30 }, "baseline + variant 各计一次");
+    /* 未发认证请求的调用不应改动预算。 */
     await h.run("src_test_bypass", {
       intentId: intent.id, researchId: research.id, category: "method-bypass", baseUrl: "https://example.test",
       baseline: { method: "GET", path: "/api/me" }, variants: [{ method: "POST", path: "/api/me" }]
     }, parent);
-    const eventsAfter = h.sessions.get("g33bud").events.filter((e) => e.type === "tool/call" && e.data.name === "src_auth_budget");
-    assert.equal(eventsAfter.length, 1, "无认证请求不发事件");
+    assert.deepEqual(h.projection("g33bud").authBudget, { used: 2, limit: 30 }, "无认证请求不改预算");
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -3418,29 +3528,26 @@ test("[local.33] src_add_goal / src_record_domain_note 推送域笔记快照事�
   const a = h.exec("g33note-a");
   await h.run("src_add_goal", { target: "https://note.test", objective: "首轮", authorization: "t" }, a);
   let snaps = h.sessions.get("g33note-a").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
-  assert.equal(snaps.length, 1, "开局应有一条快照");
-  assert.deepEqual(JSON.parse(snaps[0].data.arguments).notes, [], "新目标开局快照为空");
+  /* [local.105] 开局不再写快照日志行：面板数据源改成投影 cell（store 权威快照）。 */
+  assert.equal(snaps.length, 0, "开局快照不再写日志");
+  assertCleanLog(h.sessions.get("g33note-a").events, "domain notes opening");
+  assert.deepEqual(h.projection("g33note-a").domainNotes, [], "新目标开局投影无域笔记");
   await h.run("src_record_domain_note", { category: "pitfall", title: "api/v1 限流", content: "burst 会 429" }, a);
-  snaps = h.sessions.get("g33note-a").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
-  assert.equal(snaps.length, 2, "落库后刷新快照");
-  const notesA = JSON.parse(snaps[1].data.arguments).notes;
+  assertCleanLog(h.sessions.get("g33note-a").events, "domain note recorded");
+  const notesA = h.projection("g33note-a").domainNotes;
   assert.equal(notesA.length, 1);
   assert.equal(notesA[0].title, "api/v1 限流");
-  assert.equal(notesA[0].content, "burst 会 429", "快照含 content 全文");
+  assert.equal(notesA[0].content, "burst 会 429", "投影必须带 content 全文（面板展开要显示正文）");
   assert.equal(notesA[0].category, "pitfall");
-  /* 新会话同目标续测：开局快照带出历史域笔记（跨会话）。 */
+  /* 新会话同目标续测：开局投影带出历史域笔记（跨会话）。 */
   const b = h.exec("g33note-b");
   await h.run("src_add_goal", { target: "https://note.test", objective: "续测", authorization: "t" }, b);
-  const snapsB = h.sessions.get("g33note-b").events.filter((e) => e.type === "tool/call" && e.data.name === "src_domain_notes_snapshot");
-  assert.equal(snapsB.length, 1);
-  const notesB = JSON.parse(snapsB[0].data.arguments).notes;
-  assert.equal(notesB.length, 1, "历史域笔记应被带出");
+  const notesB = h.projection("g33note-b").domainNotes;
+  assert.equal(notesB.length, 1, "历史域笔记应被带出（跨会话）");
   assert.equal(notesB[0].id, notesA[0].id, "同一条笔记（store 权威 id）");
-  /* 快照事件可直接被 fold 消费成投影（UI 渲染数据面）。 */
-  const { applySrcEvent, srcInitialState, viewSrcState } = await import("../lib/src.js");
-  let st = JSON.parse(JSON.stringify(srcInitialState));
-  st = applySrcEvent(st, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "note.test", objective: "续测" }) } });
-  st = applySrcEvent(st, { type: "tool/call", data: { name: "src_domain_notes_snapshot", arguments: JSON.stringify({ notes: notesB }) } });
+  /* 权威驱动事件可直接被 fold 消费成投影（UI 渲染数据面）。 */
+  const poke = h.driven("g33note-b").at(-1);
+  const st = applySrcEvent(srcInitialState, poke);
   const view = viewSrcState(st);
   assert.equal(view.domainNotes.length, 1);
   assert.equal(view.domainNotes[0].content, "burst 会 429");
@@ -3786,10 +3893,11 @@ test("[local.41] src_resolve_approval allow 执行 RUN 脚本返回 runOutput；
     assert.equal(r3.status, "rejected");
     assert.equal(r3.runOutput, undefined);
     assert.equal(fileExists(nodePath.join(env.capDir, "noop.flag")), false, "script must NOT execute on reject");
-    /* 审批事件入投影流（UI 待审面板数据源） */
-    const events = h.sessions.get("g41d").events.filter((e) => e.type === "tool/call" && e.data.name === "src_record_pending_approval").map((e) => JSON.parse(e.data.arguments));
-    assert.equal(events.length, 3, "each hang-up must emit src_record_pending_approval");
-    assert.equal(events[0].method, "RUN");
+    /* [local.105] 审批事件不再入日志（0.2 迁移器拒绝自造行），改由 store 权威快照驱动投影。 */
+    const pendingRows = h.projection("g41d").pendingApprovals;
+    assert.equal(pendingRows.length, 3, "each hang-up must land in the projection cell");
+    assert.equal(pendingRows[0].method, "RUN");
+    assertCleanLog(h.sessions.get("g41d").events, "capability approvals");
   } finally { restore(); await env.restore(); }
 });
 
@@ -4064,23 +4172,39 @@ test("[local.48] src_add_capability e2e：skill+mcp 全离线接入、重复 id 
   } finally { restore(); await fsPromises.rm(tmp, { recursive: true, force: true }); }
 });
 
-/* [local.49] 合成投影事件白名单闸：三层断言——①未登记名单的直写必须 throw；
+/* [local.105] 合成投影事件白名单闸：三层断言——①未登记名单的直写必须 throw；
    ②lib 源码里所有 appendSessionToolEvent 字面量调用点 ⊆ 名单；③名单 ⊆ applySrcEvent fold case 集合。
-   防「新合成事件忘加 fold / 忘登记名单」两类漂移在运行时才炸（local.26/local.46 教训）。 */
+   [local.105] 名单语义已从「守护写入」改为「守护老日志回放」：合成行不再写日志，但日志里
+   已存在的这些名字必须继续能被折叠（设备上存量会话回放不回归）。
+   新增断言：appendSessionToolEvent 绝不写日志，只会驱动投影；驱动载荷必须是可折叠的完整快照。 */
 test("合成投影事件白名单闸 [local.49]", async () => {
-	/* ① 直写未登记名 throw（parent 传 undefined——白名单校验先于 no-op 早退） */
+	/* ① 直写未登记名 throw（白名单校验先于 no-op 早退） */
 	assert.throws(() => appendSessionToolEvent(void 0, "src_not_a_real_event", {}),
 		/未登记 SYNTHETIC_PROJECTION_EVENTS/);
-	/* 白名单内 + parent 无 append → 静默 no-op（校验通过后早退） */
+	/* 白名单内 + 无 driver → 静默 no-op（校验通过后早退） */
 	assert.doesNotThrow(() => appendSessionToolEvent(void 0, "src_checkpoint", {}));
-	/* 合成 callId 必须跨 web 重启/并发会话不可碰撞，不能依赖模块级计数器。 */
+	/* ② 绝不写日志：即便 parent 有 append，也不得落任何行 */
 	const emitted = [];
-	const parent = { append(_type, data) { emitted.push(data); } };
+	const parent = { id: "l49-log-purity", append(_type, data) { emitted.push(data); } };
 	appendSessionToolEvent(parent, "src_checkpoint", {});
 	appendSessionToolEvent(parent, "src_checkpoint", {});
-	assert.equal(emitted.length, 2);
-	assert.match(emitted[0].callId, /^src-submit-[0-9a-f-]{36}$/);
-	assert.notEqual(emitted[0].callId, emitted[1].callId, "连续合成事件 callId 不得重复");
+	assert.equal(emitted.length, 0, "appendSessionToolEvent 绝不写会话日志");
+	/* ③ 有 driver 且会话有 id 时：每次调用驱动一次，callId 跨重启/并发不可碰撞（不得靠模块级计数器） */
+	const driven = [];
+	setSessionProjectionDriver((session, sessionId) => { driven.push({ sessionId, event: { type: "tool/call", seq: Number(session.seq ?? 0), data: { callId: `src-live-${randomUUID()}` } } }); });
+	try {
+		appendSessionToolEvent({ id: "l49-driven", seq: 3 }, "src_checkpoint", {});
+		appendSessionToolEvent({ id: "l49-driven", seq: 4 }, "src_checkpoint", {});
+	} finally { setSessionProjectionDriver(void 0); }
+	assert.equal(driven.length, 2, "每次合成事件驱动一次投影");
+	assert.equal(driven[0].sessionId, "l49-driven");
+	assert.match(driven[0].event.data.callId, /^src-live-[0-9a-f-]{36}$/);
+	assert.notEqual(driven[0].event.data.callId, driven[1].event.data.callId, "连续驱动事件的 callId 不得重复");
+	/* 无 id 的 parent（旧调用点形态）不得驱动也不得抛错 */
+	const orphan = [];
+	setSessionProjectionDriver(() => { orphan.push(1); });
+	try { assert.doesNotThrow(() => appendSessionToolEvent({ append() {} }, "src_checkpoint", {})); } finally { setSessionProjectionDriver(void 0); }
+	assert.equal(orphan.length, 0, "没有会话 id 时不得驱动（也不能回退到写日志）");
 	/* ② 源码扫描：所有字面量调用点 ⊆ 名单 */
 	const toolSources = await Promise.all([
 		fsPromises.readFile(new URL("../lib/src.js", import.meta.url), "utf8"),
@@ -4151,22 +4275,26 @@ test("clown-src 专题自动路由：intent/store/projection/state 四处一致"
   assert.deepEqual(PLAYBOOK_ROUTE_KEYS.includes("authorization"), true);
 });
 
-/* [local.50b] 单一 mutation API 三账本闸：一次调用必须同时完成 durable write、合成事件和 projection fold。 */
+/* [local.105] 单一 mutation API 三账本闸：一次调用必须同时完成 durable write、驱动投影、fold 一致。
+   （三账本里的“event 账”从日志行改成投影驱动：断言驱动次数与投影 cell 内容。） */
 test("单一 mutation API 保持 store/event/projection 三账本一致 [local.50b]", async () => {
+	const h = harness();
+	const session = h.exec("l50b");
+	await h.run("src_add_goal", { target: "https://l50b.test", objective: "mutation 边界", authorization: "t" }, session);
 	let durable = "old";
-	const emitted = [];
-	const parent = { append(type, data) { emitted.push({ type, data }); } };
-	const value = await commitSyntheticMutation(parent, async () => {
-		durable = "13800138000";
+	const drivenBefore = h.drivenCount("l50b");
+	const value = await commitSyntheticMutation(h.sessions.get("l50b"), async () => {
+		const out = await h.run("src_set_infra", { key: "testPhone", value: "13800138000,13900139000" }, session);
+		durable = out.value;
 		return { value: durable, events: [syntheticEvent("src_set_infra", { key: "testPhone", value: durable })] };
 	}, appendSessionToolEvent);
 	assert.equal(value, durable, "mutation 返回 durable write 结果");
-	assert.equal(emitted.length, 1, "同一 mutation 只发声明的一条合成事件");
-	let projection = structuredClone(srcInitialState);
-	projection = applySrcEvent(projection, emitted[0]);
-	assert.equal(projection.infra.testPhone, durable, "projection fold 与 durable write 一致");
+	assert.equal(h.drivenCount("l50b") > drivenBefore, true, "mutation 必须驱动投影");
+	assertCleanLog(h.sessions.get("l50b").events, "synthetic mutation");
+	assert.equal(h.projection("l50b").infra.testPhone, durable, "投影 cell 与 durable write 一致");
+	/* mutation 边界仍要校验事件名（无 name 的事件必须在边界失败） */
 	await assert.rejects(
-		commitSyntheticMutation(parent, async () => ({ value: null, events: [{ args: {} }] }), appendSessionToolEvent),
+		commitSyntheticMutation(h.sessions.get("l50b"), async () => ({ value: null, events: [{ args: {} }] }), appendSessionToolEvent),
 		/synthetic mutation events require/,
 		"无 name 的事件必须在 mutation 边界失败"
 	);
@@ -6183,13 +6311,18 @@ test("[local.99] HTTP 模型可见响应与自动证据：脱敏、去重不丢�
     const persisted = srcDomainSpec.tables.observations.valueSchema.parse(state.observations[0]);
     assert.match(persisted.reqHeaders, /<stored>/);
     assert.match(persisted.respBodySnippet, /MODEL_MUST_SEE_BODY/);
-    const events = h.sessions.get("l99-http").events.filter((e) => e.data?.name === "src_record_observation");
-    assert.equal(events.length, 2);
-    let folded = applySrcEvent(srcInitialState, { type: "tool/call", data: { name: "src_add_goal", arguments: JSON.stringify({ target: "127.0.0.1", objective: "fixture" }) } });
-    folded = applySrcEvent(folded, { type: "tool/call", data: { name: "src_add_intent", arguments: JSON.stringify({ title: "授权响应对照", goalId: "goal-1" }) } });
-    for (const e of events) folded = applySrcEvent(folded, e);
+    /* [local.105] 观察记录不再合成日志行：面板数据源改为 store 权威快照驱动的投影 cell。 */
+    assertCleanLog(h.sessions.get("l99-http").events, "http observations");
+    const projection = h.projection("l99-http");
+    assert.equal(projection.observations.length, 2);
+    assert.deepEqual(projection.observations.map((o) => o.id), state.observations.map((o) => o.id));
+    /* 权威驱动事件可被 fold 消费（历史回放/投影重建走同一数据面），且重复折叠幂等。 */
+    const poke = h.driven("l99-http").at(-1);
+    assert.equal(poke.type, "src_authoritative_state", "poke 必须是专用事件类型（避免宿主投影把它当真实工具调用记账）");
+    assert.equal(poke.data?.view?.observations?.length, 2);
+    const folded = applySrcEvent(srcInitialState, poke);
     assert.deepEqual(folded.observations.map((o) => o.id), state.observations.map((o) => o.id));
-    assert.equal(applySrcEvent(folded, events[0]).observations.length, 2);
+    assert.equal(applySrcEvent(folded, poke).observations.length, 2);
     const outsider = h.exec("l99-outsider");
     const missing = await h.run("src_get_evidence", { ids: [first.value.evidenceId] }, outsider);
     assert.equal(missing.items[0].found, false);
@@ -6260,10 +6393,13 @@ test("[local.99] submit ID 映射、部分失败保留父投影、受限复核�
   assert.match(modelText(await modelResult(h, "src_get_evidence", { ids: first.value.factIds }, child)), /LOCAL_FACT_MARKER/);
   const bad = { title: "unproved", severity: "medium", impact: "test", affectedScope: "test", remediation: "test", pocEvidence: ["test"], reproducibleSteps: ["test"] };
   await assert.rejects(() => h.run("src_submit", { ...batch, facts: [{ ...batch.facts[0], detail: "PARTIAL_FACT_MARKER" }], findings: [bad] }, child), /已持久化.*facts=fact-2/);
-  assert.ok(h.sessions.get("l99-submit").events.some((e) => e.data?.name === "src_add_fact" && e.data.arguments.includes("PARTIAL_FACT_MARKER")));
+  /* [local.105] 部分失败后：已持久化的 fact-2 必须在父投影可见（不再靠日志合成行）。 */
+  const facts = h.projection("l99-submit").nodes.filter((n) => n.kind === "fact");
+  assert.ok(facts.some((n) => String(n.detail ?? "").includes("PARTIAL_FACT_MARKER")), "已持久化的 fact 必须出现在父投影里");
+  assertCleanLog(h.sessions.get("l99-submit").events, "partial submit");
   const research = await modelResult(h, "src_record_research", { intentId: intent.id, category: "fixture", hypothesis: "local hypothesis", status: "verified", evidence: ["fact-1"] }, child);
   assert.ok(research.value.id);
-  assert.ok(h.sessions.get("l99-submit").events.some((e) => e.data?.name === "src_record_research"));
+  assert.ok(h.projection("l99-submit").research.some((row) => row.id === research.value.id), "研究记录必须出现在父投影里");
   const other = await h.run("src_add_intent", { title: "不同任务", goalId: "goal-1" }, parent);
   await assert.rejects(() => h.run("src_record_research", { intentId: other.id, category: "fixture", hypothesis: "wrong intent", status: "verified", evidence: ["fact-1"] }, child), /先用 src_submit/);
   await assert.rejects(() => h.run("src_record_research", { intentId: intent.id, category: "fixture", hypothesis: "wrong evidence", status: "verified", evidence: ["fact-999"] }, child), /evidence 必须/);

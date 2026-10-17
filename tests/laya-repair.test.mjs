@@ -120,11 +120,12 @@ test('host dispatch: advisory shadow/on never becomes execution; spawn uses effe
   state = (await h.run('src_state', {})).value;
   assert.equal(state.intents.find(r => r.id === intent.value.id).delegationMode, 'delegate');
   assert.equal(state.intents.find(r => r.id === intent.value.id).childSessionId, 'fixture-child');
-  const projection = h.events.reduce(applySrcEvent, srcInitialState);
-  assert.equal(projection.nodes.find(r => r.id === intent.value.id).delegationMode, 'delegate');
+  /* [local.105] 委派态不再靠合成日志行传播：断言 store 权威视图（面板的投影同源于它）。 */
+  assert.equal(state.intents.find(r => r.id === intent.value.id).delegationMode, 'delegate');
+  assert.equal(h.events.some(e => String(e.data?.callId ?? '').startsWith('src-submit-') || String(e.data?.callId ?? '').startsWith('src-live-')), false, '插件不得再往会话日志合成行');
   const takeover = await h.run('src_update_intent', { intentId: intent.value.id, delegationMode: 'self' });
   assert.equal(takeover.isError, false);
-  assert.equal(h.events.reduce(applySrcEvent, srcInitialState).nodes.find(r => r.id === intent.value.id).executionSource, 'commander');
+  assert.equal((await h.run('src_state', {})).value.intents.find(r => r.id === intent.value.id).executionSource, 'commander');
   const childAgent = { id: 'fixture-child', status: 'idle', session: { id: 'fixture-child', header: { parentSession: h.parent.id } } };
   h.agents.set(childAgent.id, childAgent);
   const original = await h.run('src_recover_child', { intentId: intent.value.id, childSessionId: childAgent.id, message: 'only remaining fixture' });
@@ -375,7 +376,9 @@ test('regression 3291: child credential evidence goes to engagement; bad IDs and
  assert.equal(result.isError,false,JSON.stringify(result));assert.equal(hits,1);
  const state=(await h.run('src_state',{})).value;
  assert.ok(state.facts.some(row=>row.intentId===intent.id));assert.ok(state.coverage.some(row=>row.phase==='credential-test'));
- assert.ok(h.events.some(r=>r.type==='tool/call'&&r.data.name==='src_add_fact'&&r.data.callId?.startsWith('src-submit-')));
+ /* [local.105] 跨会话证据靠 store 权威态同步（父会话日志不得再出现合成行），父视图可见即可。 */
+ assert.equal(h.events.some(r=>r.type==='tool/call'&&(String(r.data?.callId??'').startsWith('src-submit-')||String(r.data?.callId??'').startsWith('src-live-'))),false,'子代理证据不得合成父日志行');
+ assert.ok((await h.run('src_state',{})).value.facts.some(row=>row.intentId===intent.id),'子代理写入的证据在父（engagement）视图可见');
 });
 
 test('regression 3291: resident child turn error marks failed before subagent/end',async t=>{

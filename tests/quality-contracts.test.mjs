@@ -54,13 +54,26 @@ test('committed store IDs survive concurrent facts, coverage, failures and cold 
  await Promise.all(Array.from({length:12},(_,i)=>h.store.addFact(sid,{intentId:intent.nodeId,kind:'info',detail:`fact-${i}`,target:'fixture.invalid',confidence:.9})));
  await Promise.all(Array.from({length:6},(_,i)=>h.store.upsertCoverage(sid,{phase:'api',category:`c-${i}`,status:'completed',evidence:[],limitation:''})));
  await assert.rejects(()=>h.store.addFinding(sid,{intentId:intent.nodeId,title:'bad',severity:'high',impact:'',reproducibleSteps:[]}),/requires/);
- const view=await h.store.view(sid),state=h.events.reduce(applySrcEvent,srcInitialState);
+ const view=await h.store.view(sid);
  assert.equal(new Set(view.facts.map(r=>r.id)).size,12);
+ /* [local.105] 投影数据源 = store 权威快照（stateFromStore），不再是日志合成事件：
+    断言投影状态与 store 视图逐字段一致，同时确认日志里零自造行。 */
+ const state=stateFromStore(view,srcInitialState,0);
  assert.deepEqual(state.coverage.map(r=>r.id).sort(),view.coverage.map(r=>r.id).sort());
  assert.equal(state.nodes.filter(r=>r.kind==='fact').length,12);
  assert.equal(srcProjectionSchema.safeParse(viewSrcState(state)).success,true);
- const cold=stateFromStore(view,srcInitialState,state.lastAppliedEventSeq);assert.equal(cold.nodes.length,state.nodes.length);
- const duplicate=h.events.reduce(applySrcEvent,state);assert.deepEqual(duplicate,state);
+ assert.equal(h.events.length,0,'store 直写不得往会话日志合成行');
+ /* 权威快照折叠幂等：同一 drive 载荷重复折叠不改变状态（0.1 的 drive 不去重，重放靠状态自洽） */
+ /* [local.105] poke 用专用事件类型（不是 tool/call）：宿主自己的投影会忽略它，不会留下幽灵 pendingCalls。 */
+ const poke={type:'src_authoritative_state',seq:0,data:{view,eventSeq:0}};
+ const folded=applySrcEvent(srcInitialState,poke);
+ assert.deepEqual(applySrcEvent(folded,poke),folded);
+ assert.deepEqual(folded.nodes.map(r=>r.id).sort(),state.nodes.map(r=>r.id).sort());
+ const duplicate=applySrcEvent(folded,poke);assert.deepEqual(duplicate,folded);
+ /* 旧日志里的历史合成行（tool/call + src_authoritative_state 工具名）仍必须可 fold。 */
+ const legacy={type:'tool/call',data:{callId:'src-live-legacy',name:'src_authoritative_state',arguments:JSON.stringify({view,eventSeq:0})}};
+ const legacyFolded=applySrcEvent(srcInitialState,legacy);
+ assert.deepEqual(legacyFolded.nodes.map(r=>r.id).sort(),state.nodes.map(r=>r.id).sort());
  const commits=[...h.domain.table('src_commits').entries()].map(([,r])=>r);assert.equal(new Set(commits.map(r=>r.eventSeq)).size,commits.length);
 });
 
