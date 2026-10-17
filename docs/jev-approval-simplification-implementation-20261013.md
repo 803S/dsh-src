@@ -2,6 +2,11 @@
 
 依据：`docs/jev-approval-simplification-plan-20261012.md`（方案）与 `docs/audit-jev-rectification-20261012.md`（审计，判定不通过：594/595）。本文记录第 1–4 步代码实施与验收状态。**不构成"全部修好"声明**：第 5 步（真实 Jev 评测）与部署未执行，见文末"未覆盖项"。
 
+> 后续状态（追加于 2026-10-15，正文各节均为当时记录，不改写）：第 5 步真实 Jev 留出集评测**已执行**，见附录 H 与
+> `docs/jev-holdout-eval-20261015.md`；部署侧已完成双运行时验收与 tgz 交付。
+> 另：附录 G（local.138）已修掉「判定服务未启用时写类自动放行」，因此正文中「`write+new-test-file+POST` 残余自动路径」
+> 等描述**仅在判定服务为 `on` 时成立**。
+
 ## 改动清单（按方案步骤）
 
 ### 第一步：修请求输入投影（审计 F：review-body ≠ execution-body）
@@ -352,8 +357,10 @@
   瞬间读到过 0。
 - 0.1 侧没有等价的带 session id 的加载钩子（`init()` 无参），冷读沿用宿主持久化的 checkpoint 行
   （与 `infra`、`domainNotes` 同一条路径），已由 `/tmp/v135-01-jev.mjs` 的 checkpoint→restore 用例覆盖。
-- 真判定服务 token 仍失效（`http-401`），真留出集评测未做；写类无 Jev 兜底策略、`src_serve_proof` 是否并入
-  审批面板仍待用户拍板。
+- 真判定服务 token 曾失效（`http-401`，2026-10-13 记录）；**该状态已过期**：2026-10-15 实测
+  `~/.dsh/settings/src-decision.json` 为 `enabled:true`/`riskMode:'on'`/apiKey 73 字符有效，
+  真实留出集评测已完成（见附录 H）。
+- 写类无 Jev 兜底策略（local.138）、`src_serve_proof` 是否并入审批面板仍待用户拍板。
 
 ### 附录 E：0.2 提示词变量收窄事故（local.107；用户报告「模型无法调用工具 / 拒绝执行」）
 
@@ -496,3 +503,25 @@ if (writeMethod) return { verdict:"needs-judgement", hardBoundary:false, delegat
 
 **粒度说明（不外推）**：审批卡按**计划**计（一份 `src_http` 计划 = 一行 `gate_tasks` = 一张卡，计划上限 256 entries/1000 请求），
 因此本修复的洪水上界是「`src_http` 调用次数」，不是「PUT 次数」；存量卡不做批量处置（用户裁定：数据只作参考）。
+
+## 附录 H：第 5 步真实 Jev 留出集评测（2026-10-15）
+
+完整报告：`docs/jev-holdout-eval-20261015.md`；原始数据：`docs/jev-holdout-eval-20261015.json`；
+运行器：`scripts/holdout-jev-approval.mjs`（`npm run eval:holdout`）。
+
+- **接真实服务**：endpoint `https://openrouter.ai/api/alpha/decisions`，请求模型 `typesafe/jev-1.13`，
+  实际返回 `typesafe/jev-1.13-20260917`；`fallback 0`；**目标流量 0**（不发 `src_http`）。
+- **17 例全新留出集**（与 2026-10-12 的 17 例开发基准不重叠），覆盖未见同义 / 不同接口 / 理由与正文冲突 / 清单错误，
+  另加信息不足与只读对照；`probe:true` 保证 payload 与生产同构，只跳短路与计量。
+- **结果**：允许 **5/7**、人工 **8/8**、信息不足 **2/2**、总体 **15/17**；**危险误放 0**；
+  **低影响写入误拦 2**（建自己账号笔记、改自己昵称），均为**业务数据写**；文件类上传 **3/3 全部自动外发**。
+- **归因（2 次追加调用）**：给精确归属清单后两例**仍挂人工** —— `objectClass` 只有文件类两档算低风险
+  （`jev-client.js:148`），业务数据写结构性只能落 `business-or-unknown` ⇒ `risk=high`。
+  即计划第 10 节第 ③ 条「指定测试账号改昵称 → 明确无连带业务时正常」在**当前接线下不成立**，需用户定夺
+  （接受「业务数据写一律人工」，还是为业务数据写开一条受控低风险通道）；未自行放宽 rubric。
+- **纪律**：预算上限 20 次调用，实用 19 次（17 留出 + 2 归因），各 1 次尝试无重试；单次运行结果原样报告，
+  未改 rubric、未改 prompt、未挑拣重跑。
+- **未覆盖（不夸大）**：bash/脚本通路未评；未经过真实执行器（不含「实际发送→回读→证据关联」）；
+  定向小样本、单次运行，不是准确率统计。
+
+**版本**：`package.json` → `0.1.0-local.139`，重打 `lihua_dis-dsh-src-0.1.0-local.139.tgz`。
