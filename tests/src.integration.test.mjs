@@ -168,6 +168,39 @@ function harnessWithApproval({ policy } = {}) {
   };
   return h;
 }
+/* [local.138] 写类不再有本地豁免（classifyHttpRequest 对写方法一律 need-judgement + require:true）。
+   机制类测试需要“写入真的发出”时，必须同时给出判定服务结论——生产路径是「Jev 低风险写 → 自动外发」。
+   这里装一个只答 write/low/allow 的 stub，用完恢复。 */
+async function withJevLowRiskWrite(fn) {
+  const { saveDecisionSettings, decisionSettingsPath } = await import("../lib/src/decision/service-settings.js");
+  const fsp = await import("node:fs/promises");
+  const file = decisionSettingsPath();
+  /* 快照并原样恢复：这个 helper 不得改变后续测试看到的设置。
+     只 clearKey+改 endpoint 而不恢复，会触发 saveDecisionSettings 的
+     “供应商origin已更换”闸，把后面的 [local.106] 面板用例全打挂。 */
+  let prior = null;
+  try { prior = await fsp.readFile(file, "utf8"); } catch { prior = null; }
+  const prevFetch = globalThis.fetch, prevFlag = process.env.DSH_SRC_LAYA_DECISION;
+  await saveDecisionSettings({ enabled: true, endpoint: "https://jev.fixture/decide", clearKey: true, riskMode: "on", skillMode: "off", delegateMode: "off" });
+  process.env.DSH_SRC_LAYA_DECISION = "on";
+  globalThis.fetch = async (url, init) => String(url).includes("jev.fixture")
+    ? new Response(JSON.stringify({ model: "jev-fixture", answers: {
+        decision: { choice: "write", confidence: 1, probabilities: { read: 0, compute: 0, write: 1, external: 0, auth: 0, destructive: 0, unknown: 0 } },
+        /* [local.138] write 只有配上 objectClass=new-test-file 才落到 lowImpact→risk=low（见 jev-client.js:148）。
+           少了这一项 risk 就是 high，请求会挂人工卡 —— 这正是本 stub 第一版踩的坑。 */
+        objectClass: { choice: "new-test-file", confidence: 1, probabilities: { "not-applicable": 0, "new-test-file": 1, "owned-test-file": 0, "business-or-unknown": 0 } },
+        risk: { choice: "low", confidence: 1, probabilities: { low: 1, high: 0, unknown: 0 } },
+        verdict: { choice: "allow", confidence: 1, probabilities: { allow: 1, pending: 0 } },
+      } }), { status: 200, headers: { "content-type": "application/json" } })
+    : prevFetch(url, init);
+  try { return await fn(); }
+  finally {
+    if (prior === null) await fsp.rm(file, { force: true });
+    else await fsp.writeFile(file, prior, { mode: 0o600 });
+    globalThis.fetch = prevFetch;
+    if (prevFlag === undefined) delete process.env.DSH_SRC_LAYA_DECISION; else process.env.DSH_SRC_LAYA_DECISION = prevFlag;
+  }
+}
 
 test('panel approval dispatch uses stored request and records execution without a model round trip', async () => {
  const h=harness();const parent=h.exec('panel-direct-fixture');
@@ -2482,6 +2515,27 @@ test("[local.26] classifyHttpRequest 放行：强读语义 path + 未授权探�
   assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/orders/list", headers: {} }).require, false);
   assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/account/detail", headers: {} }).require, false);
 });
+
+/* [local.138] 写类无本地豁免：带签名的存储桶写入/覆盖过去掉到最后一条写方法分支（require:false），
+   判定服务未启用时会被自动外发——而本地无法区分「新建」与「覆盖已有对象」。 */
+test("[local.138] classifyHttpRequest 不再对写方法返回 require:false：桶写入/覆盖挂人工", () => {
+  const signed = classifyHttpRequest({ method: "PUT", path: "/assets/report.txt", headers: { authorization: "AWS4-HMAC-SHA256 Credential=x" }, body: "marker" });
+  assert.equal(signed.verdict, "needs-judgement");
+  assert.equal(signed.require, true, "带签名的对象写入没有本地豁免");
+  assert.equal(signed.category, "写类无本地豁免");
+  /* 覆盖已有对象与新建本地同形（无“该 key 已存在”知识、无数字 id、无删改语义词）→ 一律挂起。 */
+  assert.equal(classifyHttpRequest({ method: "PUT", path: "/assets/report.txt", headers: { "x-api-key": "k" }, body: "marker2" }).require, true);
+  assert.equal(classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: '{"method":"tools/call"}' }).require, true);
+  /* 只读快通道不受影响。 */
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/assets/report.txt", headers: {} }).require, false);
+  assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/users/query?userId=3", headers: {} }).require, false);
+  /* 不变量：任何写方法 + 任意头部组合都不会得到 require:false。 */
+  for (const method of ["POST", "PUT", "PATCH"]) {
+    for (const headers of [{}, { authorization: "Bearer t" }, { "x-api-key": "k" }, { cookie: "a=1" }, { "x-http-method-override": "DELETE" }]) {
+      assert.equal(classifyHttpRequest({ method, path: "/api/v1/thing", headers, body: "" }).require, true, `${method} ${JSON.stringify(headers)}`);
+    }
+  }
+});
 test("[local.26] classifyHttpRequest 不误伤：preset 不命中 reset、enclose 不命中 close", () => {
   /* preset/config 是读 → 放行；enclose 是 POST+无 token+非读语义 → 未授权删改挂（不含破坏性词） */
   assert.equal(classifyHttpRequest({ method: "GET", path: "/api/v1/preset/config", headers: {} }).require, false);
@@ -4758,6 +4812,7 @@ test("[local.67 #17-④] Content-Type 自动补全硬闸：JSON body 未带头�
   const parent = h.exec("g67ct");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17-④ 硬闸" }, parent);
   try {
+    await withJevLowRiskWrite(async () => {
     const acct = await h.run("src_add_test_account", { label: "用户A", credential: "Cookie: sid=own-token-1; role=user" }, parent);
     /* JSON 形态 body、未显式带 Content-Type：自动补 application/json → 200（无硬闸时是 415 假阴性）。 */
     const ok = await h.run("src_http", { url: `${range.url}/api/v1/schedule/upload`, method: "POST", credentialRef: acct.credentialRef, body: '{"title":"probe"}', justification: "写排程验证自动补头" }, parent);
@@ -4769,6 +4824,7 @@ test("[local.67 #17-④] Content-Type 自动补全硬闸：JSON body 未带头�
     const form = await h.run("src_http", { url: `${range.url}/api/v1/schedule/upload`, method: "POST", credentialRef: acct.credentialRef, body: "a=1&b=2", justification: "表单写入不自动补头" }, parent);
     assert.equal(form.status, 415, "非 JSON body 不补头，415 行为保留");
     assert.equal(form.contentTypeAutoAdded, void 0);
+    });
   } finally { await range.close(); }
 });
 test("[local.67 #17] 响应体透传：敏感端点 body 可见 + 截断 2KB + full 强制完整 + 二进制只回长度", async () => {
@@ -4803,6 +4859,7 @@ test("[local.67 #17] 响应哈希去重：同 host+method+path 完全相同响�
   const parent = h.exec("g67dedup");
   await h.run("src_add_goal", { target: "127.0.0.1", objective: "#17 去重" }, parent);
   try {
+    await withJevLowRiskWrite(async () => {
     const first = await h.run("src_http", { url: `${range.url}/api/v1/status`, method: "GET", justification: "状态探测一" }, parent);
     assert.match(first.responseBody, /"succ":"ok"/, "第一次完整透传");
     const second = await h.run("src_http", { url: `${range.url}/api/v1/status`, method: "GET", justification: "状态探测二（去重）" }, parent);
@@ -4819,6 +4876,7 @@ test("[local.67 #17] 响应哈希去重：同 host+method+path 完全相同响�
     assert.ok(recId, "写入响应透传出 id");
     const readBack = await h.run("src_http", { url: `${range.url}/api/v1/notes/${recId}`, method: "GET", justification: "回读" }, parent);
     assert.match(readBack.responseBody, /dedup-check/, "回读内容可见（不同响应不去重）");
+    });
   } finally { await range.close(); }
 });
 test("[local.67 #17] 凭证掩码：echo 回显的认证头值与 Bearer 形态均打 <stored>，不落会话明文", async () => {

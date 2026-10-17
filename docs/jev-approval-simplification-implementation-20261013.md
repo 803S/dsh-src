@@ -448,3 +448,51 @@ rewritten*）。我方行表里有一条 0.1 专有插件行（0.2 已移除的 
 `package.json` → `0.1.0-local.137`，重打 `lihua_dis-dsh-src-0.1.0-local.137.tgz`。
 
 **用户侧动作**：桌面 App 的 profile 归 App 插件管理器管，需**安装 .137 tgz 后重启 App**（真 App 的 `profiles/desktop` 未被我改动）。
+
+### 附录 G：写类的「无判定结论」兜底（local.138）
+
+**触发**：用户追问「Jev 未启用时，写类请求的兜底策略到底是什么」。答完发现**唯一一处真实漏洞**，本轮修掉。
+
+**三区间（结论，`mode = decisionModes(config).risk`）**
+
+| 区间 | 条件 | 写类（POST/PUT/PATCH/DELETE）行为 |
+| --- | --- | --- |
+| A | `mode === 'on'` 且判定服务可达 | 必过 Jev。仅 `fallback===false && action==='allow' && risk==='low'` 才自动外发，否则挂人工卡。**本轮零影响** |
+| B | `mode === 'on'` 但基础设施故障（`network`/`timeout`/`http-401`/`http-403`/`http-5xx`/`config`/`not-configured`/`cancelled`/`circuit-open`） | `serviceOutage()` 命中 → `raiseServiceOutage()`：**不发包、不生成审批卡**，只留每会话至多 1 条「判定服务不可用」待办。fail-safe，不是绕过 |
+| C | `mode !== 'on'`（`enabled:false` 或 `riskMode:'off'`，**全新安装默认如此**） | `authority:'legacy-rules'`，纯本地规则表决定 → **曾在此自动放行写类**（本次修复点） |
+
+`DELETE` 与本地硬边界（`hardBoundary`/`CORE_DESTROY_WORDS`/`X-HTTP-Method-Override`）属本地终审，Jev 无权覆盖。
+
+**漏洞原文（`lib/src/security.js` 最后一条写分支）**
+
+```js
+if (writeMethod) return { verdict:"needs-judgement", hardBoundary:false, delegate:true, require:false, category:"放行", … };
+```
+
+`require` 的唯一消费方是 `http-policy.js` 的 legacy 分支：`if (mode !== 'on') return { ...rule, authority:'legacy-rules' }`。
+所以这行的本意（「交给判定服务判定实际影响」）在判定服务关掉时退化成**没有 Jev 结论也自动外发**。
+
+**可命中的具体请求**：`PUT /bucket/key` 带 `Authorization: SigV4…`（或任一 token 头）
+- 不命中 `:104` 越权删改 —— 那条只认 `userId/uid/memberId/recordId/accountId/orderId/resourceId` 这类**小整数** id，S3 key 命不中；
+- 不命中 `:107` 无认证头分支 —— 它有 token；
+- ⇒ 直落最后一条 → 判定服务未启用即自动放行。
+
+**为什么这里没有保守豁免**：本地**物理上无法区分「新建 key」与「覆盖已有 key」**（没有对象存在性知识，两者分类完全相同；覆盖既没有数字 id，也没有 `delete/remove/purge` 这类语义词）。`STATIC_ASSET` 后缀只在读方法分支（`:103`）生效，与写无关。
+
+**修复**：写类一律 `needs-judgement` + `require:true`（`category` 由 `"放行"` 改为 `"写类无本地豁免"`，`reason` 注明「本地无法区分新建与覆盖，不设自动放行」）。
+- 区间 A **行为不变**：`needs-judgement` 分支看 `decision`，不看 `require`；
+- 只读快通道（`:115`/`:116` read-clear，以及 `http-policy` 的只读分支）**保持不变**；
+- `category` 是自由文本：`skill-recall.js` 的 `CATEGORY_ROUTES` 只映射 3 个硬类别（`破坏性写入`/`越权删改`/`未授权删改`），未命中即回落关键词匹配，无白名单依赖（`decision-policy.js` 同样没有）。
+- **未放宽、也未收紧**任何授权/Jev rubric/`objectClass`/范围语义；只把「无结论即外发」改成「无结论即人工」。
+
+**测试**（`npm test` **646/646**，新增 3 处）
+- `tests/src.integration.test.mjs`：`[local.138]` 分类器回归（带 `Authorization` 的桶写、覆盖写、`/mcp/` `tools/call` 全部 `require:true`；只读快通道不变）+ POST/PUT/PATCH × 头组合的不变量扫描，断言写方法**没有**任一组合返回 `require:false`。
+- `tests/jev-policy.test.mjs`：端到端（分类器 → `httpDecisionPolicy`），`off`/`shadow` 下 `require:true`/`authority:'legacy-rules'`，只读仍放行；`on` 下低风险写仍是 `jev-low-risk`/`require:false`。
+- `tests/project-defects.test.mjs`：「正文关键词不能豁免审批」那条改写为**对照断言**（带/不带关键词的 `require`/`category` 完全一致且为 `true`），保住原意。
+- 两条**机制类**测试（Content-Type 自动补全硬闸、响应哈希去重）的真实主语不是审批，但需要「写入真的发出」；加 `withJevLowRiskWrite()`（装 Jev stub，用完按原文快照恢复 `src-decision.json`，避免污染后续面板用例）。
+  **踩坑记录**：判定服务要答出 `risk=low` 才能自动外发，而 `write` 的 `lowImpact` 要求同时答 `objectClass ∈ {new-test-file, owned-test-file}`（`jev-client.js:148`）——只答 `write/allow` 会被判 `high` 而挂卡。
+
+**版本**：`package.json` → `0.1.0-local.138`，重打 `lihua_dis-dsh-src-0.1.0-local.138.tgz`。
+
+**粒度说明（不外推）**：审批卡按**计划**计（一份 `src_http` 计划 = 一行 `gate_tasks` = 一张卡，计划上限 256 entries/1000 请求），
+因此本修复的洪水上界是「`src_http` 调用次数」，不是「PUT 次数」；存量卡不做批量处置（用户裁定：数据只作参考）。

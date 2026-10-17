@@ -11,6 +11,8 @@
 | severity 无 info；low 未授权可达+PoC 即入库 | src_add_finding schema enum | prompt 证据诚实段 | #11b 准入放宽（local.71） |
 | evidence id 必须可解析（concreteLossEvidence 指向本会话真实节点） | store addFinding 引用校验 | prompt 证据诚实段 | 顺丰会话实证（2026-09-08） |
 | HTTP 授权闸：破坏性/越权/未授权写请求异步挂起待审，fail-closed | src_http execute 判据 + approval-locks 硬闸 | src_http description【判据】【审批锁】 | local.26/31/54/60/67 迭代 |
+| 写类无本地豁免：没有判定服务结论的 POST/PUT/PATCH/DELETE 一律挂人工，不再自动外发（`require:false` 只保留给「明确只读」） | `classifyHttpRequest` 写方法分支 `require:true` + `httpDecisionPolicy` 在 `mode!=="on"` 时原样透传 `require` | `lib/src/security.js` 头注释 [local.138]；`lib/src/decision/http-policy.js` | local.138（2026-10-15 用户指令「回到我之前的规则审批」；漏洞实例：带 `Authorization` 的 `PUT /bucket/key` 掉到最后一条写分支被自动放行） |
+| 判定服务故障 ≠ 放行（fail-safe）：网络/超时/401/403/5xx/未配置/熔断一律不发包、不写审批卡，只留每会话至多 1 条「判定服务不可用」待办 | `serviceOutage()` → `raiseServiceOutage()`（按标题前缀去重）；`httpDecisionPolicy` 因 `fallback!==false` 返回挂起 | `lib/src/decision/service-outage.js` | 2026-10-14 401 事故（28 次调用→32 张卡）后引入 |
 | 审批挂起期间同 host+path 禁止绕行（Burp MCP/curl 等通道直接拒绝） | approval-locks 桥接层拒绝 | src_http description【审批锁，硬闸】+ prompt 禁止绕行段 | 2026-08-22 Burp 破案（SSE 绕行路径封堵） |
 | 范围闸只约束写/影响类（读/枚举/探测不受限）；写类授权=用户声明域名（整域）∪精确 origin；资产清单=归属与写许可来源 | src_http/src_scan_surface/src_collect_* store 判定 + egress 范围闸（写类报 SRC_GATE_OUT_OF_SCOPE） | prompt 授权段；recon/audit persona【只读不受限 / 写类看归属】 | local.43 → 2026-10-13 用户指令（只读不再被挡） |
 | excluded 资产（用户/agent 明确排除）读与写一律拦 | 各探测/发送工具 store 判定（报「已被资产清单标记 excluded」） | prompt 授权段 | local.43 演进 |
@@ -30,6 +32,7 @@
 | infra 每次敏感动作前重读 | 无 | src_get_infra description【代理策略】【沿用机制】 |
 | src_http 响应体透传/去重/CT 补全 | src_http + http-output | src_http description【响应体透传】 |
 | src_http 认证头 credentialRef 引用（明文不落会话） | credentials 库 | src_http description + parameters.headers |
+| 写类审批只按「计划」计卡（一份 `src_http` 计划 = 一行 `gate_tasks` = 一张卡，计划上限 256 entries/1000 请求） | `lib/src/egress/ledger.js` 插行点 + `lib/src/egress/plan.js` 上限 | — |
 | 委派工具角色一致性（recon/audit/verify 工具面差异） | preset toolFilter deny 清单 | src-hunter persona + check-preset-consistency 闸 |
 
 ## 经验库层（explainedBy=lessons/Skill，可被上层推翻）

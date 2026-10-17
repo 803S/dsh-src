@@ -75,7 +75,12 @@ test("fd2a audit: URL credential redaction never consumes adjacent JSON fields",
 });
 
 test("project defect guard: body words and endpoint patches cannot waive approval", () => {
-  assert.equal(classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: '{"method":"tools/list"}' }).require, false);
+  // [local.138] body 里的读语义关键词（tools/list、query）不是放行理由：写类在本地无豁免。
+  const mcpWithWords = classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: '{"method":"tools/list"}' });
+  const mcpBare = classifyHttpRequest({ method: "POST", path: "/mcp/", headers: { authorization: "Bearer x" }, body: "" });
+  assert.equal(mcpWithWords.require, true);
+  assert.equal(mcpWithWords.require, mcpBare.require, "/mcp/ body 关键词不得改变判定");
+  assert.equal(mcpWithWords.category, mcpBare.category, "/mcp/ body 关键词不得改变分类");
   assert.equal(classifyHttpRequest({ method: "POST", path: "/utils/transform_request", headers: {}, body: '{"model":"x"}' }).require, true);
   assert.equal(classifyHttpRequest({ method: "POST", path: "/payments", headers: {}, body: '{"note":"schema query tools/list"}' }).require, true);
 });
