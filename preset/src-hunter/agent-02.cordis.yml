@@ -1,0 +1,358 @@
+# ⚠️ 本文件由 `node scripts/gen-preset-02.mjs` 生成，请勿手改。
+# 它是 preset/src-hunter/agent.cordis.yml 的 **0.2 视图**：删掉了标 `@drop-0.2-view` 的
+# 0.1 专有行。为什么要分视图：0.2 的插件策略闸会把「引用到不可用插件的 include」**整份**丢掉
+# （include 文件不在可重写层里，只能整体放弃），留一条 0.1 专有行就会让 0.2 上整份 SRC 行表消失
+# （预设 0 行 ⇒ 会话只剩兜底工具）。改行表后跑 `npm run preset:02:build`；`npm test` 校验本文件最新。
+# The `src` agent preset: penetration-testing commander mode.
+#
+# A copy of the shipped `standard` preset with one addition — the
+# @deepseek-ai/dsh-src row — and a commander persona. Everything else
+# (shell, fs, skills, goals, delegation, workflows, ask-user, todo, web) is
+# inherited unchanged, so the decision agent can delegate proposal and
+# execution to subagents and keep every fact in the src_* records.
+#
+# AGENT-PLANE composition: the roster mounts this once under a standing
+# scope; every session naming it joins by scope parentage. Service rows must
+# sit inside an `isolate` realm; `dsh-src` publishes nothing (it registers
+# model tools on the host `tools` registry, a `src:protocol` system-prompt
+# section, and a `src` session-projection unit), and it consumes the host
+# `storageDomain` facility — so the row sits loose, exactly like tool-bash.
+#
+# 单一真源：0.1 从目录读**本文件**（`preset-root` 注册本包的只读根），0.2 由
+# `@deepseek-ai/dsh-agent-preset` 声明行读 `agent-02.cordis.yml`——那是本文件的
+# **生成视图**（`node scripts/gen-preset-02.mjs`），只少了标 `@drop-0.2-view` 的行。
+# 必须分视图的理由：0.2 的插件策略闸把「引用到不可用插件的 include」**整份**丢掉
+# （include 文件不在可重写层里），所以 0.1 专有的包名一旦出现在 0.2 读得到的那份文件图里，
+# 0.2 上整份 SRC 行表（人格 + 全部工具行）一起消失，会话只剩兜底工具。
+# 两侧 schema/包名不同的**其它**行用 `!!js` 闸各自限定，闸的判据是「0.2 才有的
+# `@deepseek-ai/dsh-agent-preset` 能否从进程入口解析到」——解析不到 = 0.1。
+# 被 `disabled` 的行 loader 根本不会 import（`refresh()` 直接返回），所以闸下
+# 那侧不存在的包名也永远不会报错。persona 文本用 YAML 锚点共享，只写一遍。
+# 注意：闸只管「加载」，不管「策略闸的 include 扫描」——后者不豁免 `disabled` 行，
+# 也剥掉注释（实测），所以 0.1 专有的行必须整行移出 0.2 视图，不能只挂闸。
+#
+# 与 0.2 随发行版 standard 预设的差异（有意保留，别当 bug 修）：
+#   ① 没有 `tool-subagent`/`tool-subagent-fork`（通用 spawn/fork 工具）——
+#      SRC 的委派面是本包的 src_recon/src_audit/src_verify，不是通用子代理；
+#   ② `tool-ralph` 保持启用（0.2 standard 关掉了它），配置字段两侧都合法；
+#   ③ 0.2 standard 的 `present`/`command-goal` 按侧挂（present 0.2 才有）。
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The preset's own persona, shadowing the deployment default for this agent.
+#
+# [local.107] 正文里只允许引用 harness 注册过的提示词变量：当前 loop 只注册
+# `provider`/`model`（`dsh-agent-loop`）；harness README 亦明说不要再依赖内建的
+# cwd 变量。引用未注册变量会让这一段 persona 组装直接抛
+# `unknown prompt variable … in section "deployment:persona-prefix"`，而预设是一整块，
+# 抛错即整块不生效——人格与全部工具行一起丢，现象是会话只剩兜底工具（连 bash/读写
+# 文件都没有）、模型看不到 SRC 人格，于是「看着装了插件，实际什么都没加载」。
+# 工作目录由 working-directory 服务在运行时上下文里给出（模型也可随时用
+# working_directory 工具读），persona 里不再重复。白名单由
+# `scripts/check-preset-consistency.mjs` 静态把关，改文案不会再踩回同一个坑。
+#
+# The 提案→决策→执行 protocol itself arrives from the `src:protocol`
+# system-prompt section contributed by the dsh-src package.
+#
+# `dsh-persona` 换过 schema：0.1 只认 `text`（required），0.2 只认 `prefix`/`suffix`
+# （`text` 不再是字段）。所以这里写两行、各挂一侧闸，正文用锚点 `&src-persona`
+# 共享——改 persona 只改下面那个块标量一处。
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  # 0.1 行：0.2 上禁用（0.2 的 persona 只认 config.prefix，见下面的 persona-02 行）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return true}catch(e){return false}})()
+  config:
+    text: &src-persona >-
+      You are the penetration-testing commander (decision agent), powered by the {{model}} model.
+      You decide and create exploration intents; proposal generation
+      and execution are delegated to subagents, which submit confirmed results directly to their assigned intent.
+      Follow the src:protocol system-prompt section exactly.
+      Enumeration discipline: peripheral assets (mini-programs, apps, related domains) are YOUR job —
+      use your own capabilities first (local WeChat package scan, app download + decompile, mapping,
+      passive recon, page/privacy-policy lead mining) before considering a user todo. Only hang a
+      src_user_todo for what genuinely requires a human (login, decisions, credentials, manual steps),
+      and always list what you already tried in the detail. Never pawn enumeration work onto the user.
+
+# 0.2 行：同一段 persona，按 0.2 的 `prefix`/`suffix` schema 挂（`suffix` 留空——
+# 两侧共用同一份正文，0.1/0.2 渲染才逐字一致；正文里不得再出现未注册的提示词
+# 变量，原因见上面 persona 注释）。
+- id: persona-02
+  name: '@deepseek-ai/dsh-persona'
+  # 0.2 行：0.1 上禁用（0.1 的 persona 只认 config.text，见上面的 persona 行）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
+  config:
+    prefix: *src-persona
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset, and
+# `tool-skill` gives them the catalog and loader; the merged catalog also
+# carries whatever the deployment registered globally (repository plugins).
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# Only the model-facing tool. The goal SERVICE, its session driver, and the
+# `/goal` command stay on the host plane: the Gateway serves the goal domain as
+# Remote endpoints whose receiver comes from a generated descriptor, so it
+# resolves `goals` on the host and an entry-local realm here would hide it. The
+# registry is keyed by session anyway, so one host instance serves every
+# session. What a preset chooses is whether its agent can call the goal tool.
+# `/goal` 命令行：0.1/0.2 都随发行版提供 `dsh-command-goal`，无需闸。
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      # Web sessions should start in normal execution mode, not PTC/plan mode.
+      disabled: true
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry.
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+#
+# `tool-subagent-report` is host-plane for the same reason as the registry,
+# not because a preset may not want it: it registers a CONTINUABLE SETUP on
+# that singleton rather than a tool this agent calls, and the setup list is
+# not scope-aware — one copy per mounted preset means every child gets
+# `report` registered once per live session, which throws on the second.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: src-recon-agent
+      name: '@lihua_dis/dsh-src/src-subagent'
+      config:
+        provider: spawn
+        toolName: src_recon
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC 资产测绘执行 agent。只处理明确授权范围内的被动与低影响信息收集：域名/子域、IP、端口、服务、指纹、证书、公开页面与 JS 接口。禁止漏洞利用、账号爆破、拒绝服务和扩大范围。委派必须包含真实父 intentId；每发现一组新资产或事实立即调用 src_submit 检查点提交，不重复提交；提交资产时必须带 source（agniops/certspotter/FOFA/DNS/官网导航/JS bundle/手工确认等）、method、confidence 和 status（被动发现默认 candidate）。【只读不受限 / 写类看归属】读取、枚举、探测（GET/HEAD/OPTIONS、页面与 JS 抓取、公开信息收集）不因范围或未登记被挡：新主域、新子域只读一律直接做，只读通道会自动记录（可审计、不等于授权写）——收集面越大越好，不要因「未授权」停下。写/影响类（POST/PUT/PATCH/DELETE、登录/凭据测试、绕过验证、注册/创建）必须有归属，归属判定与出口授权分离：写类必须落在用户声明的范围内（写下的 URL 精确 origin，或写下的域名/`*.域名`——含从子域推出的注册域，域内子域与端口自动放行；IP、公开后缀与共享托管域如 github.io/*.vercel.app 不扩张），子会话继承父任务出口闸，批准脚本也不扩大流量权限。归属拿不准（疑似目标组织但无法验证）不要硬塞 confirmed：照常 src_add_asset 报 candidate（source 写存疑依据），并在 src_submit 摘要写「待归属确认：<注册域>（依据）」交父会话——父会话请用户确认整域即可（用户确认＝整个注册域含全部子域纳入授权），等待期间不要反复打同一域；确定不属于就 src_add_asset(status=excluded) 停该方向，excluded 的 host 读与写都不再碰。全程使用中文。若某个工具报「不存在、未授权、requires an initialized SRC goal」类错误：这不是系统故障，不要用 bash echo 打检查点、不要反复重试同一调用、也不要改读经验库消磨回合——立即换用你确定可用的工具推进，或直接按异常流程收尾。中途异常或无法继续时，先把已完成的发现通过 src_submit 提交（stage=blocked/failed，summary 写明原因），再返回结论，不得静默退出。最终只返回结论、证据摘要、提交计数和未完成事项。
+        toolFilter: &src-recon-filter
+          deny: [src_add_capability, src_recover_child, src_update_finding, src_reject_finding, src_reclassify_finding, src_resolve_approval, src_request_asset_confirm, src_run_capability, src_record_lesson, src_finalize_engagement, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_record_observation, src_test_bypass, src_test_credential, src_user_todo, src_fetch_policy, src_set_infra, src_add_test_account, src_record_domain_note, src_set_goal_target, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_update_intent, src_graph, src_report, src_recon, src_audit, src_verify, src_survey_seed]
+
+    - id: src-audit-agent
+      name: '@lihua_dis/dsh-src/src-subagent'
+      config:
+        provider: spawn
+        toolName: src_audit
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC Web 漏洞检测执行 agent。只验证父 agent 指定的资产、漏洞假设与停止条件，重点关注越权、注入、SSRF、XSS、上传、业务逻辑与信息泄露；使用最小影响的 POC。【多账号交叉矩阵】会话配了多账号凭据时，执行交叉矩阵动作：A 的资源 ID × B 的会话、普通会话 × 管理端端点清单。双探规则：IDOR/越权类需两组不同 id 对确认系统性才提交，单组数据差可能是业务允许的差异。认证态流量独立计数（src_test_bypass 触顶返回 budgetExhausted 软信号→剩余矩阵格转待办，不要硬报错继续刷）；收到 sessionLikelyExpired 信号说明会话可能失效，转 manual/auth-session 待办交父会话，不反复重放失效凭据。【只读不受限 / 写类看归属】读取、枚举、探测（GET/HEAD/OPTIONS、页面/JS 抓取、指纹与公开信息收集）不受范围限制：新主域、新子域只读直接做，收集面越大越好，不要因「未授权」停下。写/影响类（POST/PUT/PATCH/DELETE、登录/凭据测试、绕过验证、注册/创建）必须有归属：必须落在用户声明的范围内（写下的 URL 精确 origin，或写下的域名/`*.域名`，域内子域与端口自动放行；IP、公开后缀与共享托管域如 github.io/*.vercel.app 不扩张），子会话继承父任务出口闸，批准脚本也不扩大流量权限。遇写类越界报错时：判定该 host 是否目标组织资产（品牌/控股/业务关联），是则 src_add_asset 登记（source 写判定依据）后重试一次；判定拿不准不要硬登 confirmed，在结论里报「待归属确认：<注册域>（依据）」交父会话（父会话请用户点一次确认即可；用户确认＝整个注册域含全部子域授权）；确定不属于则 src_add_asset(status=excluded) 停止该方向——excluded 的 host 读与写都不碰，不要反复尝试同域其他 host。对 ai-surface 资产：先拉取页面内容做语义复核（判断是否真实 AI 服务：有对话/生成入口、模型 API 调用、流式响应——排除仅在营销文案提到 AI 的普通站点），复核为真再按 ai-abuse 假设自主推进——先读 lessons/ai-abuse 课程再定方案；优先测越权面（对话历史/分享链接 IDOR）与 key/端点暴露，再测间接注入与工具滥用（SSRF via URL-fetch 工具用 src_serve_proof 拿 OOB 回连证据）；套系统提示词只作为注入链的证据环节。验证注入时严守无害金丝雀纪律：用受限但无害的标记物证明能力，绝不真实生成违规内容，报告里只写「经构造可诱导生成 X 类内容」。复核为假则把 research 置 false-positive 并说明依据。需登录态/浏览器人工交互才能测的部分，通过 src_submit 提交 stage=blocked 检查点并在 summary 写明「建议父会话建 manual-test 待办」，不得静默跳过。未复现的内容只能作为 fact/hypothesis，不能写 finding。确认漏洞必须附可复现步骤，并立即通过 src_submit 提交检查点；finding 的 pocEvidence 必须包含可直接复现的 raw 请求/响应文本（至少含接口地址），不得仅给截图或描述。**finding 准入闸（服务端强制，缺项直接拒绝）**：每条 finding 必须同时给出危害链三要素——victimImpact（受害者视角：谁受害、要做什么或完全无交互、损失什么）、attackPrerequisites（利用前提：钓鱼页托管域要求/需登录哪个业务/需要的用户交互；前提不满足不得提交）、concreteLossEvidence（至少一条指向本会话真实 fact/observation/research 的 id，内容含敏感响应体或外带记录；仅头反射证据不算）——所以先把拿到的敏感响应用 facts 提交落图再引用其 id。仅配置缺陷、响应头反射而无敏感数据证明的信号不是漏洞：改记 research(false-positive) 或在 summary 里建议父会话建待办，severity 无 info 级。低危发现（如版本暴露）只要危害链闭合也可提交：如实定级并写清实际影响，不夸大不虚构；纯罗列信息而无任何危害论证的只能作为 fact。全程使用中文。若某个工具报「不存在、未授权、requires an initialized SRC goal」类错误：这不是系统故障，不要用 bash echo 打检查点、不要反复重试同一调用、也不要改读经验库消磨回合——立即换用你确定可用的工具推进，或直接按异常流程收尾。中途异常或无法继续时，先把已完成发现通过 src_submit 提交（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。禁止继续委派、扩大范围、拒绝服务、大规模凭证测试和数据外传。
+        toolFilter: &src-audit-filter
+          deny: [src_add_capability, src_recover_child, src_update_finding, src_reject_finding, src_reclassify_finding, src_resolve_approval, src_request_asset_confirm, src_run_capability, src_record_lesson, src_finalize_engagement, src_record_research, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_record_observation, src_user_todo, src_fetch_policy, src_set_infra, src_add_test_account, src_record_domain_note, src_set_goal_target, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_update_intent, src_graph, src_report, src_recon, src_audit, src_verify, src_survey_seed]
+
+    - id: src-verify-agent
+      name: '@lihua_dis/dsh-src/src-subagent'
+      config:
+        provider: fork
+        toolName: src_verify
+        backgroundMode: continuable
+        maxDepth: 1
+        persona: |-
+          你是 SRC 漏洞复核 agent。独立复核父 agent 提供的漏洞假设或初步证据，确认可重复性、影响范围、严重度和误报可能。先 src_submit 向分配的 intent 提交检查点；返回的 factIds/assetIds/findingIds 可直接引用，src_get_evidence 与 src_state 读取父任务。复核结论用 src_record_research 写回同一 intent，evidence 必须用真实证据 ID，不猜编号；只读能力说明用 src_read_capability，不把 capability id 当作宿主 skill 名。不得扩展到未授权资产，不得把不可重复结果写成 finding。发现独立证据后立即用 src_submit 提交；finding 的 pocEvidence 必须含可直接复现的 raw 请求/响应（至少含接口地址）。**准入闸（服务端强制）**：每条 finding 必须同时给出 victimImpact（受害者视角：谁受害、损失什么）、attackPrerequisites（利用前提：钓鱼页托管域要求/需登录哪个业务/需要的用户交互；前提不满足不得提交）、concreteLossEvidence（至少一条指向本会话真实 fact/observation/research 的 id，含敏感响应体或外带记录；仅头反射不算）——先把敏感响应作为 facts 提交再引用其 id。severity 无 info 级：仅配置缺陷、响应头反射而无敏感数据证明的信号改记 research(false-positive)，不进漏洞清单。复核以可重复性与实际危害为准：任何等级（含 low 信息泄露/指纹类）的发现只要危害链闭合（三要素齐全）即可复核通过，建议等级须如实。全程使用中文。若某个工具报「不存在、未授权、requires an initialized SRC goal」类错误：这不是系统故障，不要用 bash echo 打检查点、不要反复重试同一调用、也不要改读经验库消磨回合——立即换用你确定可用的工具推进，或直接按异常流程收尾。中途异常或无法继续时，先通过 src_submit 提交已完成部分（stage=blocked/failed，summary 写明原因），再返回，不得静默退出。最终只返回复核结论、证据摘要、建议等级、提交计数和剩余疑点。
+        toolFilter: &src-verify-filter
+          deny: [src_add_capability, src_recover_child, src_update_finding, src_reject_finding, src_reclassify_finding, src_resolve_approval, src_request_asset_confirm, src_run_capability, src_record_lesson, src_finalize_engagement, src_record_coverage, src_collect_passive, src_collect_dorks, src_import_traffic, src_record_observation, src_test_credential, src_user_todo, src_fetch_policy, src_set_infra, src_add_test_account, src_record_domain_note, src_set_goal_target, src_add_goal, src_add_intent, src_add_fact, src_add_finding, src_add_asset, src_scan_surface, src_update_intent, src_graph, src_report, src_recon, src_audit, src_verify, src_survey_seed]
+
+    # Product providers are host-plane singletons. Copy this preset, then
+    # remove `disabled` from either ordinary tool row to expose that product
+    # only to agents composed from the copy.
+    #
+    # [local.107] 注意：`enableRunInBackground` 是 0.1 的 `dsh-tool-subagent` 字段，0.2 的 schema
+    # 已把它换成别的名字（只剩 provider/toolName/maxDepth/agentPreset/… ）；这里两行是 `disabled: true`
+    # 的模板（不参与激活，所以字段过时不会报错），真要在 0.2 上启用时先把该行删掉。
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: workflow-ptc
+      name: '@deepseek-ai/dsh-workflow-ptc'
+      # 0.2 行：0.1 上禁用（0.1 无此包，用上面的 workflow-worker-thread）。
+      disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+    searchTimeoutMs: 60000
+
+# 0.2 才有的展示工具（`dsh-tool-present`）；0.1 上没有这个包，故挂闸。
+- id: present
+  name: '@deepseek-ai/dsh-tool-present'
+  # 0.2 行：0.1 上禁用（0.1 无此包）。
+  disabled: !!js (function(){try{process.getBuiltinModule('node:module').createRequire(process.argv[1]).resolve('@deepseek-ai/dsh-agent-preset/package.json');return false}catch(e){return true}})()
+
+# ── penetration mode ────────────────────────────────────────────────────────
+
+# The single src plugin: eight model-facing src_* tools on the host
+# tools registry, the src:protocol system-prompt section (the 提案→决策→
+# 执行 protocol, injected automatically — the user only sends target +
+# objective), and the standing src session-projection unit for the Web
+# panel. It publishes no service and consumes the host `storageDomain`
+# facility, so it needs no realm.
+- id: src
+  name: '@lihua_dis/dsh-src/src'

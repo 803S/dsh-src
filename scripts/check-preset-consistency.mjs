@@ -6,6 +6,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { viewDiff, VIEW_FILE, DROP_MARKER } from "./gen-preset-02.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const text = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8");
@@ -240,9 +241,10 @@ function findDuplicateKeys(source) {
  * resolve 成功时 `return true`（禁用），反之“0.1 上禁用”的行必须 resolve 成功时 `return false`。
  * 极性写反了两个运行时上会阴差阳错地加载错形态的行（例如 0.1 载入只认 config.prefix 的 persona），
  * 而两侧启动都不报错——所以这里强制：每个解析闸上方必须有意图注释，且极性与注释一致；
- * 两侧同极性（等于没闸）也报错。 */
-{
-	const presetLines = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8").split("\n");
+ * 两侧同极性（等于没闸）也报错。真源与生成的 0.2 视图都扫（视图是 0.2 实际加载的那份）。 */
+function checkRuntimeGates(file, text) {
+	let count = 0;
+	const presetLines = text.split("\n");
 	let rowId = null;
 	for (let i = 0; i < presetLines.length; i++) {
 		const row = /^\s*-\s*id:\s*(\S+)\s*$/.exec(presetLines[i]);
@@ -257,21 +259,29 @@ function findDuplicateKeys(source) {
 		const context = presetLines.slice(Math.max(0, i - 3), i).join("\n");
 		const off02 = /0\.2 上禁用/.test(context), off01 = /0\.1 上禁用/.test(context);
 		if (onResolve === undefined || onThrow === undefined) {
-			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸解析不出极性（形式应为 ...resolve(...);return <A>}catch(...){return <B>}）`);
-			violations += 1;
+			console.error(`::error file=${file}::第 ${i + 1} 行的运行时闸解析不出极性（形式应为 ...resolve(...);return <A>}catch(...){return <B>}）`);
+			count += 1;
 		} else if (onResolve === onThrow) {
-			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸两侧同极性，等于未设闸`);
-			violations += 1;
+			console.error(`::error file=${file}::第 ${i + 1} 行的运行时闸两侧同极性，等于未设闸`);
+			count += 1;
 		} else if (!off02 && !off01) {
-			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的运行时闸上方必须有意图注释（「0.2 上禁用」或「0.1 上禁用」）`);
-			violations += 1;
+			console.error(`::error file=${file}::第 ${i + 1} 行的运行时闸上方必须有意图注释（「0.2 上禁用」或「0.1 上禁用」）`);
+			count += 1;
 		} else if (off02 && onResolve !== "true") {
-			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的闸写成“0.2 上禁用”但极性是 0.1 的（resolve 成功时应 return true）——两个运行时上会加载错形态的行`);
-			violations += 1;
+			console.error(`::error file=${file}::第 ${i + 1} 行的闸写成“0.2 上禁用”但极性是 0.1 的（resolve 成功时应 return true）——两个运行时上会加载错形态的行`);
+			count += 1;
 		} else if (off01 && onResolve !== "false") {
-			console.error(`::error file=preset/src-hunter/agent.cordis.yml::第 ${i + 1} 行的闸写成“0.1 上禁用”但极性是 0.2 的（resolve 成功时应 return false）——两个运行时上会加载错形态的行`);
-			violations += 1;
+			console.error(`::error file=${file}::第 ${i + 1} 行的闸写成“0.1 上禁用”但极性是 0.2 的（resolve 成功时应 return false）——两个运行时上会加载错形态的行`);
+			count += 1;
 		}
+	}
+	return count;
+}
+for (const file of ["preset/src-hunter/agent.cordis.yml", "preset/src-hunter/agent-02.cordis.yml"]) {
+	try { violations += checkRuntimeGates(file, readFileSync(join(root, file), "utf8")); }
+	catch {
+		console.error(`::error file=${file}::行表读不到——0.2 视图由 \`node scripts/gen-preset-02.mjs\` 生成，请先跑 \`npm run preset:02:build\``);
+		violations += 1;
 	}
 }
 
@@ -334,13 +344,13 @@ function findDuplicateKeys(source) {
 			}
 		}
 		const includePath = /^\s*path:\s*(.+)$/m.exec(configText)?.[1]?.trim().replace(/^'(.*)'$/, "$1") ?? "";
-		const expectedInclude = "./node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent.cordis.yml";
+		const expectedInclude = "./node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent-02.cordis.yml";
 		if (includePath !== expectedInclude) {
-			console.error(`::error file=cordis.patch.yml::preset-src-hunter 的 include path 应为 '${expectedInclude}'（include 相对 profile 目录解析，插件就装在 profile 的 node_modules 里），实际 ${includePath || "(缺失)"}`);
+			console.error(`::error file=cordis.patch.yml::preset-src-hunter 的 include path 应为 '${expectedInclude}'（include 相对 profile 目录解析，插件就装在 profile 的 node_modules 里；且必须指向 **0.2 视图** 而非真源 preset/src-hunter/agent.cordis.yml——真源含 0.1 专有行，会让 0.2 的策略闸把整份行表丢掉），实际 ${includePath || "(缺失)"}`);
 			violations += 1;
 		} else {
-			try { readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8"); }
-			catch { console.error("::error file=cordis.patch.yml::preset-src-hunter 的 include path 指向的行表不存在——0.2 上预设声明会加载失败"); violations += 1; }
+			try { readFileSync(join(root, "preset/src-hunter/agent-02.cordis.yml"), "utf8"); }
+			catch { console.error("::error file=cordis.patch.yml::preset-src-hunter 的 include path 指向的 0.2 行表视图不存在——0.2 上预设声明会加载失败（跑 `npm run preset:02:build` 生成）"); violations += 1; }
 		}
 		if (!/^\s*-\s*id:\s*src-preset-root\s*$/m.test(patchLines.join("\n"))) {
 			console.error("::error file=cordis.patch.yml::缺少 src-preset-root 行——0.1 上 src-hunter 预设不再被发现");
@@ -358,7 +368,9 @@ function findDuplicateKeys(source) {
  * 这里去掉注释行后静态扫描交付物正文，白名单外的 `{{name}}` 一律 fail（注释里做反面记录不受影响）。 */
 const PROMPT_VARIABLES = new Set(["provider", "model"]);
 const promptTextSources = [["preset/src-hunter/agent.cordis.yml", readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8")], ["lib/src.js", srcJs]];
-try { promptTextSources.push(["cordis.patch.yml", readFileSync(join(root, "cordis.patch.yml"), "utf8")]); } catch { /* 仓库无 patch 时跳过 */ }
+for (const file of ["preset/src-hunter/agent-02.cordis.yml", "cordis.patch.yml"]) {
+	try { promptTextSources.push([file, readFileSync(join(root, file), "utf8")]); } catch { /* 视图/补丁缺失由各自闸报错 */ }
+}
 let promptVariableViolations = 0;
 for (const [file, source] of promptTextSources) {
 	const body = source.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
@@ -370,6 +382,53 @@ for (const [file, source] of promptTextSources) {
 	}
 }
 if (promptVariableViolations === 0) console.log(`check-preset-consistency: 提示词变量白名单 OK（正文只出现 ${[...PROMPT_VARIABLES].join("/")}）`);
+
+/* [local.137] 0.2 行表视图闸：0.2 的插件策略闸对 `cordis:include` 是「**整份丢弃**」
+ * （原文：a native Include that reaches a denied plugin is omitted whole, because its file
+ * is never rewritten；include 文件不在可重写层里，普通行能被降成 detached `disabled: true`，
+ * include 只能整体放弃）。于是 0.2 读得到的那份行表图里只要出现一条「该运行时不可用的插件名」，
+ * 整份 SRC 行表（人格 + 全部工具行）一起消失，会话只剩基础 agent 的兜底工具——2026-10-17
+ * 桌面 App 会话塌缩为 2~11 个工具就是这个原因：0.1 专有的 `@deepseek-ai/dsh-workflow-worker-thread`
+ * （0.2 已移除，改用 `dsh-workflow-ptc`）被策略闸判掉 ⇒ `preset-src-hunter-rows` 连坐丢弃。
+ * 判据是**求值后的行**：行级 `disabled` 不豁免（实测被拒行仍连坐父 include）、注释被剥掉
+ * （实测注释里的包名字面量不触发）、`!!js` 动态 `name` 不被加载器解析（`name.startsWith is not a function`）。
+ * 这里强制：① 真源里那条 0.1 专有行还在且带 `@drop-0.2-view` 标记（别被顺手删掉，否则 0.1
+ * 丢工作流引擎）；② 视图由生成器产出且最新；③ 视图**正文（非注释）**里不出现 0.1 专有包名；
+ * ④ 部署清单带上视图文件。新增这类行时把它加进 ONLY_01_PACKAGES。 */
+const ONLY_01_PACKAGES = ["@deepseek-ai/dsh-workflow-worker-thread"];
+{
+	const sourceLines = readFileSync(join(root, "preset/src-hunter/agent.cordis.yml"), "utf8").split("\n");
+	for (const pkg of ONLY_01_PACKAGES) {
+		const at = sourceLines.findIndex((line) => line.includes(`'${pkg}'`));
+		const above = at < 0 ? "" : sourceLines.slice(Math.max(0, at - 6), at).join("\n");
+		if (at < 0 || !above.includes(DROP_MARKER)) {
+			console.error(`::error file=preset/src-hunter/agent.cordis.yml::0.1 专有包 ${pkg} 的行不见了或丢了 ${DROP_MARKER} 标记——它是 0.1 的工作流引擎，删了 0.1 会静默失去该能力`);
+			violations += 1;
+		}
+	}
+	let view = "";
+	try { view = readFileSync(join(root, VIEW_FILE), "utf8"); } catch { /* 缺失由 viewDiff 报 */ }
+	const viewBody = view.split("\n").filter((line) => !/^\s*#/.test(line)).join("\n");
+	for (const pkg of ONLY_01_PACKAGES) {
+		if (viewBody.includes(pkg)) {
+			console.error(`::error file=${VIEW_FILE}::0.2 视图正文引用了 0.1 专有包 ${pkg}——0.2 的插件策略闸会把整份 include 丢掉，SRC 预设变 0 行（会话只剩兜底工具）`);
+			violations += 1;
+		}
+	}
+	const diff = viewDiff(root);
+	if (diff) {
+		console.error(`::error file=${VIEW_FILE}::0.2 行表视图不是最新的（${diff}）——改过真源后跑 \`npm run preset:02:build\``);
+		violations += 1;
+	} else {
+		console.log(`check-preset-consistency: 0.2 行表视图 OK（与真源同步；正文无 ${ONLY_01_PACKAGES.join("/")}）`);
+	}
+	try {
+		if (!readFileSync(join(root, "scripts/deploy.mjs"), "utf8").includes(`"${VIEW_FILE}"`)) {
+			console.error(`::error file=scripts/deploy.mjs::部署清单缺少 ${VIEW_FILE}——部署到 profile 后 preset-src-hunter 的 include 会指向不存在的文件`);
+			violations += 1;
+		}
+	} catch { /* 无部署脚本时跳过 */ }
+}
 
 if (violations > 0) { console.error(`check-preset-consistency: ${violations} 处不一致`); process.exit(1); }
 console.log(`check-preset-consistency: lessons 预算 OK（内置 ${Object.keys(LESSON_BUDGETS).length + extraLessons.length} 篇合计 ${lessonsTotal} ≤ 20000）`);

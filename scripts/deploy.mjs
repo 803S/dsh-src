@@ -35,7 +35,7 @@ const files = [
   ...runtimeFiles(repo),
   "package.json", "cordis.patch.yml", "scripts/caps-sync.mjs",
   "scripts/laya-decision-daemon.py", "scripts/check-web-idle.mjs", "scripts/start-dsh-web.sh",
-  "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/preset.yml",
+  "preset/src-hunter/agent.cordis.yml", "preset/src-hunter/agent-02.cordis.yml", "preset/src-hunter/preset.yml",
 ];
 /* [local.62] 内置经验文件（preset/src-hunter/lessons）：触发器元数据在文件尾部 lesson-meta 里，
  * 改后必须随部署同步——此前不在清单里，部署副本是首装 rsync 的遗留（后续内置经验更新全部丢丢）。 */

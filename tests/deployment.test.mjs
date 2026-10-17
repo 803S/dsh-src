@@ -20,6 +20,22 @@ test('发布回归同时执行源码卫生与预设防膨胀检查',async()=>{
  for(const script of ['scripts/check-source-hygiene.mjs','scripts/check-preset-consistency.mjs'])
   execFileSync(process.execPath,[script],{cwd:repo,encoding:'utf8',stdio:'pipe'});
 });
+test('0.2 行表视图由生成器产出：不含 0.1 专有插件，两个运行时的引擎行都还在自己那份里',async()=>{
+ const {renderView,viewDiff,VIEW_FILE,SOURCE_FILE,DROP_MARKER}=await import('../scripts/gen-preset-02.mjs');
+ const read=(file)=>readFileSync(new URL('../'+file,import.meta.url),'utf8');
+ const body=(text)=>text.split('\n').filter((line)=>!/^\s*#/.test(line)).join('\n');
+ const source=read(SOURCE_FILE), view=read(VIEW_FILE);
+ assert.equal(viewDiff(repo),'', '视图必须与真源同步（跑 npm run preset:02:build）');
+ assert.equal(view,renderView(source));
+ assert.ok(source.includes(DROP_MARKER));
+ assert.match(body(view),/@deepseek-ai\/dsh-workflow-ptc/, '0.2 视图必须留住 0.2 的工作流引擎行');
+ assert.doesNotMatch(body(view),/@deepseek-ai\/dsh-workflow-worker-thread/, '0.2 视图正文不得出现 0.1 专有引擎——0.2 的策略闸会把整份 include 丢掉');
+ assert.match(body(source),/@lihua_dis\/dsh-src/, '真源必须留住 src 行');
+ assert.match(body(view),/@lihua_dis\/dsh-src\/src/,'真源与视图都必须留住 src 插件行');
+ const patch=read('cordis.patch.yml');
+ assert.match(patch,/agent-02\.cordis\.yml'/, '0.2 声明行的 include 必须指向生成视图');
+ assert.doesNotMatch(patch,/preset\/src-hunter\/agent\.cordis\.yml'/, '0.2 声明行的 include 不得直接指向真源（含 0.1 专有行）');
+});
 test('deployment includes every runtime entry and the Python inspection addon',()=>{
  const files=runtimeFiles(repo);
  for(const entry of ['lib/src-egress.js','lib/src-bash-executor.js','lib/src/egress/manager.js','lib/src/egress/mitm-addon.py','lib/src/egress/browser-worker.cjs','lib/ui-src.client.js'])assert.ok(files.includes(entry),entry);

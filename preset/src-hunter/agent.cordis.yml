@@ -13,12 +13,18 @@
 # section, and a `src` session-projection unit), and it consumes the host
 # `storageDomain` facility — so the row sits loose, exactly like tool-bash.
 #
-# 双运行时共用这一份行表：0.1 从目录读它（`preset-root` 注册本包的只读根），
-# 0.2 由 `@deepseek-ai/dsh-agent-preset` 声明行读它（bundle patch 携带）。
-# 两侧 schema/包名不同的行用 `!!js` 闸各自限定，闸的判据是「0.2 才有的
+# 单一真源：0.1 从目录读**本文件**（`preset-root` 注册本包的只读根），0.2 由
+# `@deepseek-ai/dsh-agent-preset` 声明行读 `agent-02.cordis.yml`——那是本文件的
+# **生成视图**（`node scripts/gen-preset-02.mjs`），只少了标 `@drop-0.2-view` 的行。
+# 必须分视图的理由：0.2 的插件策略闸把「引用到不可用插件的 include」**整份**丢掉
+# （include 文件不在可重写层里），所以 0.1 专有的包名一旦出现在 0.2 读得到的那份文件图里，
+# 0.2 上整份 SRC 行表（人格 + 全部工具行）一起消失，会话只剩兜底工具。
+# 两侧 schema/包名不同的**其它**行用 `!!js` 闸各自限定，闸的判据是「0.2 才有的
 # `@deepseek-ai/dsh-agent-preset` 能否从进程入口解析到」——解析不到 = 0.1。
 # 被 `disabled` 的行 loader 根本不会 import（`refresh()` 直接返回），所以闸下
 # 那侧不存在的包名也永远不会报错。persona 文本用 YAML 锚点共享，只写一遍。
+# 注意：闸只管「加载」，不管「策略闸的 include 扫描」——后者不豁免 `disabled` 行，
+# 也剥掉注释（实测），所以 0.1 专有的行必须整行移出 0.2 视图，不能只挂闸。
 #
 # 与 0.2 随发行版 standard 预设的差异（有意保留，别当 bug 修）：
 #   ① 没有 `tool-subagent`/`tool-subagent-fork`（通用 spawn/fork 工具）——
@@ -297,6 +303,8 @@
 
     # 工作流引擎实现按运行时二选一（同一个 `workflowEngine` 服务，名字换过）：
     # 0.1 = `dsh-workflow-worker-thread`（0.2 已移除），0.2 = `dsh-workflow-ptc`。
+    # @drop-0.2-view 0.1 专有包：0.2 的插件策略闸会在 include 里扫到它并把**整份**行表丢掉
+    # （`preset-src-hunter-rows` 连坐），所以它只留在本真源里、不进 0.2 视图。
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
       # 0.1 行：0.2 上禁用（0.2 用下面的 workflow-ptc 工作流）。

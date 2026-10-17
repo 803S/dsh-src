@@ -94,8 +94,12 @@
               # include 的实现是 `new URL(path, ctx.baseUrl)`，而 baseUrl 是**profile 目录**
               # （不是本补丁文件所在目录）——写成 './preset/...' 会去 profile 里找而报
               # `config file not found`。插件就装在 profile 自己的 node_modules 里，所以这里
-              # 用 profile 相对路径指回同一份行表（不复制、不落盘到 DSH_HOME）。
-              path: './node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent.cordis.yml'
+              # 用 profile 相对路径指向行表的 **0.2 视图**（`agent-02.cordis.yml`，由
+              # `scripts/gen-preset-02.mjs` 从 `agent.cordis.yml` 生成、删掉 0.1 专有行）。
+              # 不能直接指向 `agent.cordis.yml`：0.2 的插件策略闸对 include 是「整份丢弃」，
+              # 里面那条 0.1 专有的 workflow-worker-thread 行会让整份行表连坐消失，
+              # SRC 预设变 0 行、会话只剩兜底工具（scripts/check-preset-consistency.mjs 守着）。
+              path: './node_modules/@lihua_dis/dsh-src/preset/src-hunter/agent-02.cordis.yml'
 
 # dsh-src local.100: keyless web search provider. It is deliberately inside the
 # SRC plugin context so web_search has a usable provider without DeepSeek search key.

@@ -391,3 +391,60 @@
 并互斥闸；`enableRunInBackground` 是 0.1 的 `dsh-tool-subagent` 字段 → 只出现在两行 `disabled: true` 的模板行（不激活），
 已就地加注说明；仓库、`~/.dsh`（排除 sessions/logs/node_modules）与会话工作区的指令文件（`AGENTS.md`）里再无其他
 `{{var}}` 引用。
+
+### 附录 F：0.2 插件策略闸「include 整份丢弃」事故（local.137；用户报告「工具又只剩几个」）
+
+**症状（2026-10-17 19:07 后，.136 已装、`{{cwd}}` 报错已消失）**：桌面 App 新会话 `agentPreset: src-hunter`、`permission/preset: workspace-write`，
+但 `request/header` 只有 **2~11 个工具、`src_*` = 0**，会话仍无 SRC 人格。探针副本（`/tmp/probe17` 等干净 home）同版本、同插件却稳定 **80~81 / 55**。
+
+**定位过程**：① 逐字复制 App 的 profile 到 `/tmp/probe18/19/20`（App 式 argv + `DSH_HOME` 隔离）→ 全部 81/55，
+排除工作区、真 home 状态、`DSH_HOME`、profile 名、App 的 IPC（读 `app.asar` 内 host 入口：IPC 只有 `shutdown`/`quit-inspection`/`update-tasks`，不碰插件行）；
+② 发现 `~/.dsh/profiles/node_modules`（8-22 装的 0.1 期共享依赖，267 项，含 `@deepseek-ai/dsh-agent-presets`、`@deepseek-ai/dsh-workflow-worker-thread@0.1.0-rc.8`）
+位于 profile 的 Node 父目录解析链上，会**遮挡** 0.2 内建模块；
+③ `/tmp/probe22` 复现：把该目录符号链接成 `<probe home>/profiles/node_modules` + App 式启动 → 与真 App 完全一致的塌缩，日志逐字复现：
+
+```
+dsh: disabling profile plugin row "workflow-worker-thread": Plugin @deepseek-ai/dsh-workflow-worker-thread@0.1.0-rc.8
+     is incompatible with dsh 0.2.1-rc.1: requirements {...}
+dsh: disabling profile plugin row "preset-src-hunter-rows": its included file …/preset/src-hunter/agent.cordis.yml
+     reaches an incompatible plugin, and that file is never rewritten
+```
+
+**根因**：0.2 的插件策略闸对 `cordis:include` 是「**整份丢弃**」（asar 文档原话：*a denied ordinary row becomes a
+detached `disabled: true` row; a native Include that reaches a denied plugin is omitted whole, because its file is never
+rewritten*）。我方行表里有一条 0.1 专有插件行（0.2 已移除的 `dsh-workflow-worker-thread`，改用 `dsh-workflow-ptc`），
+被策略闸判为不可用 ⇒ **携带它的 `preset-src-hunter-rows` include 连坐整份丢弃** ⇒ src-hunter 预设 0 行 ⇒ 回退基础 agent（2 工具）。
+行级 `!!js` 闸（`disabled`）**不豁免策略闸扫描**——实测被拒行仍连坐父 include；策略闸看的是**求值后的行**：注释被剥掉
+（注释里的包名字面量不触发），`!!js` 动态 `name` 不被加载器解析（`name.startsWith is not a function`），把 0.1 行挪进嵌套 include 也仍连坐。
+**附录 E 里「该行早已用 `!!js` 闸限定为 0.1 专用、无运行时风险」这句是错的**，以本条为准。
+**不是插件安装失败**（依赖串/lockfile/落地文件三处一致），也**未放宽或收紧任何授权/审批语义**。
+
+**修复（单一真源 + 生成的 0.2 视图，两侧能力都不退）**：
+- 真源 `preset/src-hunter/agent.cordis.yml`（0.1 从目录读它）保留 0.1 专有行，并在其上方标 `# @drop-0.2-view`；
+- 新增生成器 `scripts/gen-preset-02.mjs`（`npm run preset:02:build`）产出 0.2 视图 `preset/src-hunter/agent-02.cordis.yml`
+  （= 真源删掉带标记的行，首行写明「生成文件、勿手改」），`cordis.patch.yml` 的 include 改指视图；
+- `scripts/check-preset-consistency.mjs` 增闸（`[local.137]`，`npm test` 已覆盖）：① 真源里 0.1 专有行必须还在且带标记（防有人顺手删掉 0.1 能力）；
+  ② 视图必须与真源同步（跑过生成器）；③ 视图**正文（非注释）**不得出现 0.1 专有包名；④ `deploy.mjs` 清单必须带上视图文件；
+  ⑤ 运行时闸极性扫描扩到两份文件；⑥ 提示词变量白名单扩到视图；
+- `scripts/deploy.mjs` 清单 + `tests/deployment.test.mjs` 用例（视图由生成器产出、两个运行时的引擎行各留自己那份、include 不得直接指真源）。
+- 静态审计 0.2 可达行引用的 36 个 `name`：除该 0.1 专有包外**全部存在于 0.2 asar**（372 个 `@deepseek-ai/*` 包），
+  即策略闸只会在「asar 没有、profile 链上却有」时被判不可用，故删掉这一条即够（不是逐行加闸能解的问题）。
+
+**为什么不删掉那行（更小的改法）**：那条行是 **0.1 的工作流引擎**（`workflow` + `ralph` 工具靠它），删了 0.1 会静默失去该能力；
+`!js` 动态 `name`、嵌套 include、把行挪进 0.1 专用文件都不成立；也不动 `~/.dsh/profiles/node_modules`——它是 0.1 各 profile 的**载荷依赖**
+（`~/.dsh/profiles/web/node_modules/@deepseek-ai/` 内没有 `dsh-agent-presets`，要靠上层目录解析），删/挪会打断 0.1。
+
+**验收（双运行时，全部用部署副本 + 临时 home；真 web PID 62164 与真桌面 App 未动）**：
+
+| 运行时 | 环境 | 工具数 | `src_*` | 工作流工具 | 宿主日志 |
+| --- | --- | --- | --- | --- | --- |
+| 0.2 | `/tmp/probe22`（**带 `profiles/node_modules` 影子 = 复现真 App 条件**） | 81 | 55 | `workflow`（ptc） | 无 deny / 无报错，SRC 预设正常 |
+| 0.2 | `/tmp/probe17`（干净 home，回归） | 80 | 55 | `workflow` + `ralph` | 干净 |
+| 0.1 | `/tmp/probe13`（SRC 模式新会话，回归） | 86 | 55 | `workflow` + `ralph` | 干净 |
+| 0.1 | `/tmp/probe13` 改动前旧会话（基线） | 85 | 55 | `workflow` + `ralph` | — |
+
+`npm test` **644/644 pass**（新增视图用例）；`deploy.mjs` 同步 web/headless/探针 13/16/17/22（EXIT 0，逐文件 md5 一致）；
+反向自检三例（删标记 / 改真源不重生成 / 视图正文塞回 0.1 包名）都能让闸变红；
+`package.json` → `0.1.0-local.137`，重打 `lihua_dis-dsh-src-0.1.0-local.137.tgz`。
+
+**用户侧动作**：桌面 App 的 profile 归 App 插件管理器管，需**安装 .137 tgz 后重启 App**（真 App 的 `profiles/desktop` 未被我改动）。
