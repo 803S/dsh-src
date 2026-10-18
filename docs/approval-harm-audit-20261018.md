@@ -55,18 +55,34 @@ $("#cmdChangePassword").click(function() {
 真方法改写头（`x-http-method-override`/`x-method-override`/`x-http-method`/`x-original-method`）与路径改写头
 （`x-original-url`/`x-rewrite-url`）行为不变，测试已锁（`tests/egress-gate.test.mjs`）。
 
-### 2. 强删改语义词命中「读方法」时本地终审——**待用户拍板**
+### 2. 强删改语义词命中「读方法」时本地终审——**已按用户拍板收敛（local.146）**
 
 `GET /users/reset/1` 之所以无危害却被终审，是因为 `reset ∈ CORE_DESTROY_WORDS` 且规则明确写「即使方法为 GET 也按确定危害」。
 这与本项目的分层原则冲突：本地硬闸保留的是**无需语义即可证明**的危害（DELETE、编码后仍命中的删改词、方法/路由改写头）；
 读方法 + 空 body 无法被一张词表证明有危害。而 Jev 三例都判了 `read/low/allow`，卡4 的 POST 则被判 `unknown/pending`
 （无论怎么改，写方法路径上的行为都不变）。
 
-提案（未实施）：**读方法命中强删改词 → 交判定服务（needs-judgement），写方法命中仍为 hard-boundary**。
-保留 write 侧全部现状是硬约束；读侧仍要过判定服务，`action≠allow` 照样挂人工。
-风险要写清楚：GET 型状态变更（`/delete?id=1` 这类）会落到判定服务手上，一旦它误判 `read/low/allow` 就会自动发出。
-替代收敛方案（可选）：强删改词只出现在 **path 段**（表单路径）时交判定服务，出现在 **query**（`?action=delete` 习惯用法）时维持终审。
-两条都需要用户明确点头才做。
+用户拍板原文：「交给 jev 判断呗，jev 不就是干这个的嘛，能删数据的这种就限制的死一点吧」。
+
+落地方案（`lib/src/security.js`）——**按动词是不是这个 URL 的端点分档**：
+
+| 场景 | 判据 | 结果 |
+|---|---|---|
+| 动词在**路径中段**（`/users/reset/1`：末段是 id） | 表单页形态，本地词表看不出有没有副作用 | 交判定服务（不再终审） |
+| 动词是**路径末段**（`/delete`、`/users/1/delete`、`/admin/purge`、`/deleteUser`、解码后 `/%64elete`） | 该 URL 本身就是删改端点 | 维持本地终审 |
+| 动词在**查询串**（`?action=delete`、`?do=purge`） | `?action=…` 就是状态变更端点的常规写法 | 维持本地终审 |
+| **写方法**（POST/PUT/PATCH）或 DELETE | 原样不变 | 维持本地终审 |
+
+「末段」按 `/` 分段后再做 camelCase 拆分，故 `/deleteUser` 仍算端点。残留口子写清楚：`/delete/1` 这种「动词后跟 id」形态会落到判定服务手上——
+但如果它误判 `read/low/allow` 就会被自动发出。这是本次收敛接受的残余风险，以换取 6 张卡里 4 张的白卡消失。
+
+端到端验证（`/tmp/harm/e2e.mjs`，零目标流量）：
+
+```
+GET /users/reset/1   → 本地 needs-judgement → Jev read/low/allow → 自动发送，不建卡
+GET /delete?id=1     → 本地 hard-boundary（未调用 Jev）        → 挂人工卡
+GET /users/1/delete  → 本地 hard-boundary（未调用 Jev）        → 挂人工卡
+```
 
 ### 3. 卡 6/7 的挂起不是本地越权，是判定服务自己说 `unknown`
 
@@ -74,6 +90,36 @@ $("#cmdChangePassword").click(function() {
 本次复算里同样两笔在最新载荷下得到 `read/low/allow` —— 说明 `unknown` 与载荷细节/服务抖动有关（空 body 的 GET 命中 `create` 语义词）。
 诚实结论：**这一张不能靠「放宽本地规则」修掉**；把 `unknown` 一律当自动放行是真降门槛。
 可做的是让判定服务拿到更多上下文（见 `docs/jev-context-feed-ablation-20261018.md` 的反直觉结论：喂模型自述会**降低**风险判定，故默认关）。
+
+## 4. 「查看判定记录」里的水词——已清理（local.146）
+
+用户追问：「查看判定记录详情里咋这么多内容？都是必须的还是单纯代码填充一个统一的无意义内容放着的？」
+
+把该会话 7 张卡的 `reason` 原文拉出来逐字比对，**每次都不一样的只有 6 个值**（摘要哈希、影响、对象类别、风险、动作、hardVeto/authority），
+其余逐字相同。逐句判定：
+
+| 片段 | 必须吗 | 处置 |
+|---|---|---|
+| `执行前判定{...}` JSON | **必须**：不是给人看的装饰，而是**真数据通道**——UI `approval-explanation.ts` 的 `assessmentOf()` 与 `approvalBlockReason()` 都在正则解析它，5 个展示判断依赖 `effect/risk/action/hardVeto/fallback` | 保留（一字不动） |
+| `摘要<64 位>` | 必须：去重标识（同内容第二次提交靠它认出同一张卡）；UI 的「旧记录无可解析阻断原因」分支也按这个字面词判断 | 保留 |
+| `判定依据：影响=…；对象类别=…；风险=…；动作=…；判定服务正常；模式=on` | **不必**：与紧随其后的 JSON **完全同一批字段的第二遍** | 删除（`describeVerdict()` 整个函数移除） |
+| `用途说明（系统默认说明（模型未申报用途，不是模型自述））：单笔目标请求，完整内容由出口捕获；需审核实际语义` | **不必**：闸对自己说的一句空话；且同一句已存在 `justification` 字段里 | 改成一行「用途：模型未申报（系统默认说明，不是模型自述）」 |
+| `1个精确请求，最多1次，间隔250ms` | 单笔车道恒定值 | 单笔时改「冻结报文：1 笔，批准后只发送这一次」 |
+| `有界任务待审（…）` 前缀 | 卡片标题（模型可见事件标题也用它） | 保留 |
+
+新格式（多行，UI 用 `<pre>` 渲染，故换行可读）：
+
+```
+有界任务待审：只读取回（本地确定性危害，判定服务无权覆盖）
+冻结报文：1 笔，批准后只发送这一次
+用途：模型未申报（系统默认说明，不是模型自述）
+摘要4420a62cc1593b8a…
+执行前判定{"effect":"read","risk":"low","action":"allow",...}
+这是单笔冻结请求：用户可直接批准发送原请求（仅一次）或拒绝；…
+```
+
+回归锁：`tests/jev-approval-escalation.test.mjs` 增断言——`reason` 不得出现 `判定依据：影响=`（禁止重复 JSON 字段）、
+不得出现 `需审核实际语义`（禁止把闸的默认串当用途）、必须出现 `用途：模型未申报`。
 
 ## 顺带确认的观感来源（非危害问题，但放大「一堆审批」）
 
@@ -85,7 +131,7 @@ $("#cmdChangePassword").click(function() {
 
 ## 验收
 
-- `npm test` **680/680**（679 + 新增 CORS 预检头回归测试）；`node scripts/check-source-hygiene.mjs` 通过。
+- `npm test` **681/681**（679 + 新增两条回归测试：CORS 预检头、读方法强删改词分档；另 jev-approval-escalation 增水词断言）；`node scripts/check-source-hygiene.mjs` 通过。
 - 部署副本一致性：`diff -rq lib/src ~/.dsh/profiles/web/node_modules/@lihua_dis/dsh-src/lib/src` 无差异（除 gitignore 的 `__pycache__`）。
 - 部署副本行为验收 `/tmp/harm/verify-deployed.mjs` 6/6（CORS 放开、真改写头仍终审、DELETE 仍终审、GET reset 仍终审=待拍板现状、effect-policy 在位）。
 - 版本 `0.1.0-local.146`；web 已重启（PID 29920；无 token 401 / 带 token 303）。

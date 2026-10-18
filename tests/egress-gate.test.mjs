@@ -748,7 +748,21 @@ test('本地硬闸只保留确定危害，编码歧义与可疑词一律交判�
  for(const name of ['x-forwarded-for','x-real-ip'])assert.equal(requiresHuman({entries:[{request:request({method:'GET',headers:[[name,'203.0.113.9']]})}]}),false,name);
 });
 
-// [local.146] CORS 预检协议头不是“请求方法改写”。
+test('读方法命中强删改语义词：动词收尾/查询串仍终审，路径中段（表单页形态）交判定服务',()=>{
+ const cls=(method,url)=>{const u=new URL(url);return classifyHttpRequest({method,path:u.pathname,query:u.search,headers:{},body:''})};
+ // [local.146] 用户拍板「交给 jev 判断」：动词后面还跟着别的段 —— 现场 Jorani 把自己的改密码弹窗表单体
+ // 写成 load('/users/reset/1')；本地词表看表不到“这是表单页还是删改端点”，判定服务看得到方法+body。不再本地终审。
+ assert.equal(cls('GET','https://fixture.invalid/users/reset/1').verdict,'needs-judgement');
+ assert.equal(cls('GET','https://fixture.invalid/users/reset/1').hardBoundary,false);
+ assert.equal(cls('GET','https://fixture.invalid/users/reset/1').require,true,'判定服务不可用时本地兜底：仍要人工');
+ assert.equal(requiresHuman({entries:[{request:request({method:'GET',url:'https://fixture.invalid/users/reset/1'})}]}),false,'不再本地终审（由判定服务判实际影响）');
+ // 「能删数据的限制死一点」：动词收尾、动词在查询串、写方法、DELETE、解码后仍命中 —— 维持本地终审。
+ for(const [method,url] of [['GET','https://fixture.invalid/delete'],['GET','https://fixture.invalid/users/1/delete'],['GET','https://fixture.invalid/admin/purge'],['GET','https://fixture.invalid/%64elete'],['GET','https://fixture.invalid/deleteUser'],['GET','https://fixture.invalid/deleteUser?id=1'],['GET','https://fixture.invalid/op?action=delete'],['GET','https://fixture.invalid/op?do=purge'],['GET','https://fixture.invalid/users/2/reset'],['POST','https://fixture.invalid/users/reset/1'],['PUT','https://fixture.invalid/users/reset/1'],['DELETE','https://fixture.invalid/users/1']]){
+  assert.equal(cls(method,url).hardBoundary,true,method+' '+url);
+  assert.equal(requiresHuman({entries:[{request:request({method,url})}]}),true,method+' '+url);
+ }
+});
+
 // 现场：模型测 CORS 配置 —— OPTIONS /users + Origin: evil.example.com + Access-Control-Request-Method: GET，
 // 判定服务判 read/low/allow，本地旧正则 /method|rewrite|forward|original/i 却命中 `access-control-request-method`，
 // 按“请求方法改写”终审挂人工（Jev 无权覆盖）。该头只是浏览器询问“我能不能用这个方法”，不改写任何东西。

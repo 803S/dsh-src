@@ -69,8 +69,13 @@ test("单笔写入待审：审批卡与错误都给出可执行人类选项，�
   assert.doesNotMatch(pending.nextAction, /不要重新发送请求或凭目的说明猜正文/, "不再把补材料写成唯一出路");
   const card = f.rows.get(pending.approvalId);
   assert.ok(card, "待审必须落审批卡");
-  assert.match(card.reason, /有界任务待审（业务数据写入/);
+  assert.match(card.reason, /^有界任务待审：业务数据写入/);
   assert.match(card.reason, /执行前判定\{/, "原始判定值仍保留供审计");
+  // [local.146] 同一批字段不得写两遍：中文散文侧只留“这是什么操作 + 谁做的判定”，
+  // 字段值一律看 `执行前判定{...}`（UI 说明卡与阻断原因都在解析它），且不再回显系统默认用途空话。
+  assert.doesNotMatch(card.reason, /判定依据：影响=/, "不得重复 JSON 里的字段");
+  assert.doesNotMatch(card.reason, /需审核实际语义/, "不得把闸对自己的默认串当用途说明");
+  assert.match(card.reason, /用途：模型未申报/);
   assert.match(card.reason, /可直接批准/);
   assert.doesNotMatch(card.reason, /需补齐实际影响及相应执行材料/);
   assert.equal(f.sent.length, 0, "待审期间不得发送任何目标请求");
