@@ -103,7 +103,7 @@ function ApprovalCard({ approval, runCommand, onFeedback }: { readonly approval:
       <div className={css.actionMeta}><code>{approval.id}</code></div>
       <ApprovalExplanationCard request={approval} />
       {approval.reason && <details className={css.requestDetails}><summary>查看判定记录</summary><pre>{approval.reason}</pre></details>}
-      {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看冻结请求（脱敏，非抓包）'}</summary><pre>{approvalRequestText(approval)}</pre></details>}
+      {approval.method !== 'ASSET' && <details className={css.requestDetails}><summary>{approval.method === 'SCOPE' ? '查看精确 origins' : '查看冻结请求（原始报文，非抓包）'}</summary><pre>{approvalRequestText(approval)}</pre></details>}
       {approval.responseBody && <details className={css.requestDetails}><summary>查看已保存响应（不重放）</summary><pre>{approval.responseBody}</pre></details>}
       {retryUnsent && <p>此前批准后被资源锁拦住，未发送。重新确认时先核验账本无发送记录，再执行原请求一次。</p>}
       {interrupted && <p>批准已记录；若执行已中断，可核验后继续，也可拒绝放弃。已有发送记录时不会重放。</p>}

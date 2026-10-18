@@ -65,9 +65,11 @@ export function approvalRequestText(input: ApprovalExplanationInput): string {
   if(Array.isArray(entries)){
     try { return entries.map(({request})=>{
       const url=new URL(request.url);
-      const headers=Object.entries(request.headers??{}).map(([name,value])=>`${name}: ${/authorization|cookie|token|key|secret/i.test(name)?'<stored>':String(value)}`);
+      // [local.146 用户拍板] 卡上显示原始报文：不再按头名把凭据类头换成 <stored>（那是安全戏——
+      // 值就在会话 cookie jar 里，模型 `-b jar.txt` 本来就拿得到；打码只让用户看不到真相）。
+      const headers=Object.entries(request.headers??{}).map(([name,value])=>`${name}: ${String(value)}`);
       return `${request.method} ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\n${headers.length?headers.join('\r\n')+'\r\n':''}\r\n${request.body??''}`;
-    }).join('\n\n────\n\n') } catch { /* 无法解析则保留原始脱敏记录。 */ }
+    }).join('\n\n────\n\n') } catch { /* 无法解析则退回下面按行拼接的原文。 */ }
   }
   return `${input.method} ${input.url}${input.headers?'\n'+input.headers:''}${input.body?'\n\n'+input.body:''}`;
 }

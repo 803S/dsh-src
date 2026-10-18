@@ -177,13 +177,14 @@ test('高危TASK安全说明不一致时无执行按钮，但普通资产审批�
  assert.equal(approvalMissingSafety({...input,method:'ASSET',url:'fixture.invalid'}),false);
  assert.equal(approvalMissingSafety({...input,body:JSON.stringify({entries:[],safety:{effect:'delete',precondition:{},verification:{}}})}),true);
 });
-test('审批展示冻结HTTP请求、脱敏凭据，空PUT没有可执行按钮',()=>{
+test('审批展示原始冻结HTTP请求（凭据不打码），空PUT没有可执行按钮',()=>{
  const review={risk:'low',effect:'read',action:'allow',mode:'on',fallback:false,hardVeto:true};
  const input={method:'TASK',url:'src-egress://fixture',reason:'执行前判定'+JSON.stringify(review),body:JSON.stringify({entries:[{request:{method:'GET',url:'http://127.0.0.1:23456/health?q=1',headers:{authorization:'secret','x-forwarded-for':'127.0.0.1'},body:''}}],safety:null})};
  assert.equal(approvalMissingSafety(input),false);
  assert.match(approvalRequestText(input),/^GET \/health\?q=1 HTTP\/1.1\r\nHost: 127.0.0.1:23456\r\n/);
- assert.match(approvalRequestText(input),/authorization: <stored>/);
- assert.doesNotMatch(approvalRequestText(input),/secret|src-egress/);
+ // [local.146 用户拍板] 显示原始报文：认证头原样展示（值就在会话凭据里，打码只是让用户看不到真相）。
+ assert.match(approvalRequestText(input),/authorization: secret/);
+ assert.doesNotMatch(approvalRequestText(input),/<stored>|src-egress/);
  assert.match(approvalOperation(input),/代理信任/);
  const put={...input,body:JSON.stringify({entries:[{request:{method:'PUT',url:'http://127.0.0.1/render',headers:{},body:''}}],safety:null})};
  assert.equal(approvalMissingSafety(put),true);assert.match(approvalOperation(put),/清空资源/);

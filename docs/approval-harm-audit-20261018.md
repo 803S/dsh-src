@@ -121,6 +121,39 @@ GET /users/1/delete  → 本地 hard-boundary（未调用 Jev）        → 挂�
 回归锁：`tests/jev-approval-escalation.test.mjs` 增断言——`reason` 不得出现 `判定依据：影响=`（禁止重复 JSON 字段）、
 不得出现 `需审核实际语义`（禁止把闸的默认串当用途）、必须出现 `用途：模型未申报`。
 
+## 5. 审批卡不再打码：直接展示原始冻结报文（local.146）
+
+用户追问：「密码是谁的密码？模型看到密码无所谓吧，不影响啥吧」——追着查明「谁的密码」之后，结论是**打码本身是安全戏**。
+
+### 事实取证（现场 session-c8341c79）
+
+| 卡上的 `<stored>` | 实际是什么 | 有价值的机密吗 |
+|---|---|---|
+| `password=<stored>`（卡4 body） | **模型自己编的测试密码**（想把目标 1 号用户改成 `Test@12345`）；模型自己的会话日志里明文出现 6 次，且同一行隔壁 `confirm=Test@12345` 就是同一个值的明文 | 不是。打码只造成「半张脸」的观感 |
+| `cookie: <stored>`（卡1/3/4/5/7） | 目标站（Jorani）发给模型的**登录会话票据**；模型用 `-b jar.txt` 从 cookie 罐里取用 | 不是用户自己的凭据。而且**值就在会话目录的 cookie jar 里**：`cat jar.txt` 是只读操作（本就不拦），模型随时能读 |
+
+进一步：模型登录用的账号是 Jorani 的公开默认口令 `bbalet/bbalet`（应用自带文档），不是用户的账号。
+
+### 所以打码保护了什么
+
+- **不保护用户**：值就在用户自己机器的 cookie jar 里，用户想看随时能看。
+- **不阻挡模型**：`password=` 那个值是模型自己写的；cookie 值它 `cat` 一下就能拿到。
+- 唯一实际效果：审批卡看起来「没头没尾」，用户没法核对真实报文。
+
+唯一有意义的残留情形是「模型被目标站返回内容里的提示注入诱导，把票据转发出去」——
+但出口闸另有一道**独立**防线：未经用户授权的 origin 根本发不出去（`assertScopeCurrent` 校验 plan.origins ⊆ scope.origins）。
+
+### 落地
+
+- `lib/src/egress/plan-presentation.js` 增 `raw` 通道：审批卡用 `presentPlan(input,{raw:true})`，原样输出 `method/URL/headers/body`。
+- 发给**外部判定服务**的那份**仍走打码版**（`presentPlan(...,{review:true})`，凭据名与值一律 `<stored>`）：Jev 是外部服务，没有理由把用户凭据交给它。默认投影（事件/工具结果）也仍打码。
+- UI：`src/dsh-client-ui-src/src/client/approval-explanation.ts` 去掉按头名的 `<stored>` 替换；`ActionCenter.tsx` 面板标题由「查看冻结请求（脱敏，非抓包）」改为「**原始报文**，非抓包」。
+- 回归锁：`tests/jev-approval-escalation.test.mjs` 新增「卡展示原始报文（凭据不打码）+ review/默认投影仍打码」；`tests/project-defects.test.mjs` 的「审批展示冻结HTTP请求、脱敏凭据」改为断言认证头原样展示且卡内不出现 `<stored>`。
+
+### 验收
+
+`npm test` **682/682**；`/tmp/harm/verify-raw.mjs`（部署副本）7/7；UI 重建 `lib/ui-src.client.js`（766093 B）。
+
 ## 顺带确认的观感来源（非危害问题，但放大「一堆审批」）
 
 - **重复卡**：同一 URL 带/不带 cookie 因 digest 不同各出一张（卡1 vs 卡2、卡6 vs 卡7）。同资源合并是待办 1/3。

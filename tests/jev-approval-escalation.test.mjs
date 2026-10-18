@@ -81,6 +81,46 @@ test("单笔写入待审：审批卡与错误都给出可执行人类选项，�
   assert.equal(f.sent.length, 0, "待审期间不得发送任何目标请求");
 });
 
+/* [local.146 用户拍板 2026-10-18] 审批卡给用户看原始冻结报文，不再打码。
+ * 取证依据（现场 session-c8341c79）：卡里 `cookie: <stored>` 的值就在会话 cookie jar 里
+ * （模型 `-b jar.txt` 本来就能用，且 `cat jar.txt` 是只读操作、本就不拦），
+ * 而 `password=<stored>&confirm=Test@12345` 里那个值是模型自己编的测试密码、同一行隔壁就是明文——
+ * 打码既不保护用户也不阻挡模型，只让卡看起来没头没尾。发给**外部判定服务**的那份仍打码。 */
+test("审批卡展示原始冻结报文（凭据不打码），发给外部判定服务的那份仍打码", async (t) => {
+  const f = await fixture(t, writeHigh);
+  const session = randomUUID(), origin = "http://127.0.0.1:23456";
+  await f.manager.user.setScope(session, [origin]);
+  let pending;
+  try {
+    await f.manager.fetch(session, `${origin}/users/reset/1`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", cookie: "jorani_session=fixture-session-value", authorization: "Bearer fixture-token" },
+      body: "password=chosen-by-model&confirm=chosen-by-model"
+    });
+  } catch (error) { pending = error; }
+  const card = f.rows.get(pending?.approvalId);
+  assert.ok(card, "待审必须落审批卡");
+  const stored = JSON.parse(card.body);
+  const request = (stored.entries ?? stored)[0].request;
+  assert.equal(request.headers.cookie, "jorani_session=fixture-session-value", "卡上必须是真实 cookie 值");
+  assert.equal(request.headers.authorization, "Bearer fixture-token", "卡上必须是真实认证头");
+  assert.equal(request.body, "password=chosen-by-model&confirm=chosen-by-model", "卡上必须是真实表单正文（不得只打码 password 而留下 confirm 明文）");
+  assert.doesNotMatch(card.body, /<stored>/, "审批卡不再出现 <stored>");
+  // 通道隔离：发给外部判定服务的投影仍打码（review=true），事件/工具结果的默认投影也仍打码。
+  const { presentPlan } = await import("../lib/src/egress/plan-presentation.js");
+  const plan = { entries: [{ maxRequests: 1, request: { method: "POST", url: "https://fixture.invalid/users/reset/1", headers: [["cookie", "jorani_session=fixture-session-value"], ["authorization", "Bearer fixture-token"]], bodyBase64: Buffer.from("password=chosen-by-model", "utf8").toString("base64") } }] };
+  const raw = presentPlan(plan, { raw: true }).entries[0].request;
+  assert.equal(raw.headers.cookie, "jorani_session=fixture-session-value");
+  assert.equal(raw.headers.authorization, "Bearer fixture-token");
+  assert.equal(raw.body, "password=chosen-by-model");
+  for (const options of [{}, { review: true }]) {
+    const masked = presentPlan(plan, options).entries[0].request;
+    assert.equal(masked.headers.cookie, "<stored>", JSON.stringify(options));
+    assert.equal(masked.headers.authorization, "<stored>", JSON.stringify(options));
+    assert.match(masked.body, /<stored>/, JSON.stringify(options));
+  }
+});
+
 test("影响未定单笔待审：写明这是单点挂起、可直接放行，而不是逼模型补材料", async (t) => {
   const f = await fixture(t, unknownDeferred);
   const session = randomUUID(), origin = "http://127.0.0.1:23456";
