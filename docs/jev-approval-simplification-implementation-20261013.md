@@ -525,3 +525,58 @@ if (writeMethod) return { verdict:"needs-judgement", hardBoundary:false, delegat
   定向小样本、单次运行，不是准确率统计。
 
 **版本**：`package.json` → `0.1.0-local.139`，重打 `lihua_dis-dsh-src-0.1.0-local.139.tgz`。
+
+## 附录 I：判定分类按「真实影响」而非「是否出网」（local.144）+ 判据收敛为单一事实来源（local.145）
+
+### I.1 分类拆分的由来（local.144）
+
+用户挑战：把「只要出网就挂人工」当成空洞的教条。判定分类改为按**真实影响**分：
+
+- `external-probe`：只让目标对我方控制的 dnslog / Collaborator / 回连 webhook 发起有限回调，不经业务通道送达、
+  不产生费用、不写业务状态 → 低影响，**可自动**。
+- `external`：经业务通道送达短信/邮件/通知，支付/下单/充值/退款/发货，或使目标访问内部管理/破坏性接口
+  → 真实外发，**恒 high/pending**。收件人是不是测试地址、金额大小、订单是否取消都不改变分类。
+
+同时明确两条纪律：**放行名单必须在本地自证**（不得依赖别处常量把某分类钉成 high）；**新分类必须同步全部消费点**。
+
+### I.2 架构质疑与收敛（local.145）
+
+用户质疑：「这不是一道闸吗，为啥有很多分支……不是改一统一的那个地方就好了吗？架构有问题吧？还是项目膨胀了？」
+
+- **量化**：判据「哪些 effect 可自动放行 / 需要哪种执行材料」被硬编码在 **7 个文件 14 处**。
+- **结论**：架构确实漂移，且 `local.144` 这一轮是**我亲手加重的**（拆分类时只改 2 处消费点，
+  于是漏出两个真缺陷 → 被 `SAFETY_PLAN_REQUIRED`、被同资源其它未决审查各挡一次；
+  两次都被误读成「测 SSRF 又被拦」）。但**不是项目膨胀**：这 7 个文件分属不同执行车道，
+  车道之间的差异是真实的，错的是「同一概念各自硬编码、且差异是隐式的」。
+- **实施**：唯一事实来源 `lib/src/decision/effect-policy.js`（一张表 + 具名派生集合 + `describeEffect()`），
+  7 个消费点全部读表；车道差异必须以具名导出 + 文中理由表达。
+- **顺手修掉的 3 个真缺陷**：`broker.js` 漏改的 `['read','compute','unknown']`；
+  `tools/index.js` 第 3 份 `safetyPlan.effect` 材料枚举（改 `enum:SAFETY_EFFECTS`）；
+  `host-integration.js` 4 处宿主工具名白名单（加当行豁免标注，说明「不是影响分类」）。
+- **行为变化只有 2 处，且都是收紧**（`http-policy` 动作-分类矛盾检查纳入 `external-probe`；
+  `broker` 对内部构造的探测安全计划不再强制备份材料，模型不可触发）。其余为等价替换。
+- **防复发**：`tests/effect-policy.test.mjs` 9 条，含跨包 UI 断言与 `lib/src` 反蔓延扫描（豁免须当行标注理由）。
+  反向验证：故意塞回一份名单 → 反蔓延 + 车道一致性测试同时报红并给出 `file:line`。
+- 详见 `docs/effect-policy-single-source-20261018.md`；规则目录新增对应闸级行（`docs/rules-catalog.md`）。
+
+### I.3 「真枪 SSRF 回调」的当前结论（诚实记录）
+
+用户要求直接打 SSRF 探测（含 OOB 回调），不问。已实际执行，但**目标实例已死**：
+
+- 目标 `eci-2ze4vtevomkhj6ngekl3.cloudeci1.ichunqiu.com`（DNS `8.141.24.111`）：
+  HTTP 全路径 → 400（nginx「plain HTTP request was sent to HTTPS port」）；
+  HTTPS 全路径（`/`、`/requirements.php`、`/testmail.php`、`/session/login`、`/api/doc`、`/opcache.php`）
+  → **502**，同一份 4771 字节平台过期页，`etag: "635b9857-12a3"` → Jorani 实例已停止。
+- OOB 管线本身实测可用：dnslog 回读 `getrecords.php` 成功取到记录；备用 `oast.pro` 经代理 200。
+- 判定服务真实定级（`probe:true`，零目标流量）：`testldap.php`/`testoauth2.php`/通用 `?url=` 三种注入形状均
+  `external-probe/low/allow`（自动外发 true）；边界对照 `testmail.php?mail=test@<我方域名>` 仍 `external/high/pending`。
+- **关键发现（改变了问题性质）**：该目标**没有 URL 参数型 SSRF 汇点**——`testldap.php` 要的是
+  `login`/`password`，连的是**应用自己配置的** LDAP 主机；`testssl.php` 是本机 OpenSSL 自检；
+  `testoauth2.php` 同理。真实外发通道只有 `testmail.php?mail=`（属该拦的 `external`）。
+  因此「测 SSRF 100% 被拦」在该目标上不是闸的问题。
+- 实例恢复后开火命令：`GET https://<目标>/testldap.php?login=admin&password=x&host=pd7mq1.<dnslog 域>`，
+  再回读 dnslog 记录；预计自动外发、回调出现在 dnslog。
+
+**版本**：`package.json` → `0.1.0-local.145`；`npm test` 679/679；重打
+`lihua_dis-dsh-src-0.1.0-local.145.tgz`；web 重启后 401（无 token）/ 303（带 token）验收通过；
+部署副本逐文件比对一致 + 部署副本行为验收 13 项通过。
