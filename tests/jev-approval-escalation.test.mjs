@@ -145,3 +145,47 @@ test("危险误放回归：批量/无归属删除与归属不明写入不自动�
   assert.deepEqual(Object.keys(summary).sort(), ["action", "authority", "effect", "fallback", "hardVeto", "hostExecution", "mode", "objectClass", "risk"].sort());
   assert.ok(!JSON.stringify(summary).includes("sk-leak"));
 });
+
+/* [local.143] 会话自述默认不进判定服务。
+ * 真实服务消融（10 笔现场冻结报文 × 6 组输入，docs/jev-context-feed-ablation-20261018.md）显示：
+ * 把“我们在测未授权面”这类自述喂进去之后，判定服务把发信 GET（external/high）与空 body 写
+ * 改判成 read/low/allow —— 被审对象的自述成了把自己的请求说轻的杠杆。默认 off 是安全默认，
+ * 开启前必须先有“判定不得单向下调本地门槛”的兜底。 */
+test("会话自述默认不进判定服务；开关打开才提供，且只提供事实（不编造）", async t => {
+  const home = await mkdtemp(path.join(tmpdir(), "src-jev-ctx-"));
+  const seen = [];
+  let sessionDataCalls = 0;
+  const store = {
+    addPendingApproval: async (session, data) => ({ ...data, id: "approval-ctx", status: "pending", sessionId: session, createdAt: Date.now() }),
+    getPendingApproval: async () => undefined,
+    listScopeApprovals: async () => [],
+    updateApprovalExecution: async () => undefined,
+    sessionData: async () => { sessionDataCalls++; return { goal: { target: "fixture.test", objective: "授权范围内验证", authorization: "仅 fixture.test" }, intents: [{ id: "i-1", title: "未授权接口面", detail: "确认 /api/x 可达性", status: "running" }] }; }
+  };
+  const manager = await createEgressManager({
+    home, allowLoopbackFixtures: true, storeFor: async () => store,
+    assess: async (plan, exec) => { seen.push(exec); return { action: "pending", effect: "unknown", risk: "unknown", mode: "on", fallback: true }; },
+    directFetch: async () => { throw new Error("待审不得发包"); }
+  });
+  t.after(async () => { await manager.close(); await rm(home, { recursive: true, force: true }); });
+  const session = randomUUID(), origin = "http://127.0.0.1:23457";
+  await manager.user.setScope(session, [origin]);
+  // 每笔请求用不同路径，避免被“同一冻结请求只挂一张卡”的去重挡住（去重是另一条既有契约）。
+  const send = (name = "users") => manager.fetch(session, `${origin}/api/${name}/`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }).catch(error => error);
+
+  delete process.env.DSH_SRC_JEV_SESSION_CONTEXT;
+  await send();
+  assert.equal(seen.length, 1, "本地非 clear 的写请求必须交判定服务");
+  assert.equal(seen[0].srcWorkContext, undefined, "默认不得把会话自述交给判定服务");
+  assert.equal(sessionDataCalls, 0, "默认连会话数据都不读（零成本、零外泄面）");
+
+  process.env.DSH_SRC_JEV_SESSION_CONTEXT = "on";
+  t.after(() => { delete process.env.DSH_SRC_JEV_SESSION_CONTEXT; });
+  await send("teams");
+  assert.equal(typeof seen[1].srcWorkContext, "function", "开关打开后按需读取");
+  assert.equal(sessionDataCalls, 0, "仍按需惰性读取：只有判定服务真要调用时才读");
+  const context = await seen[1].srcWorkContext();
+  assert.equal(context.intentTitle, "未授权接口面");
+  assert.equal(context.goalTarget, "fixture.test");
+  assert.equal(context.authorization, "仅 fixture.test");
+});

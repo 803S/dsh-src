@@ -14,6 +14,9 @@ import { assessEgressPlan } from "../lib/src/egress/advisor.js";
 import { jevDecide } from "../lib/src/decision/jev-client.js";
 import { requestSecrets } from "../lib/src/evidence-output.js";
 import { saveDecisionSettings } from "../lib/src/decision/service-settings.js";
+/* [local.143] 用途归属：系统默认说明 ≠ 模型自述。 */
+import { isSystemDefaultPurpose, purposeAttribution, declaredPurpose, PURPOSE_SINGLE_CAPTURED, PURPOSE_NO_SAFETY_MATERIAL } from "../lib/src/egress/purpose.js";
+import { pickWorkIntent, workContextFrom } from "../lib/src/egress/session-work-context.js";
 
 const b64 = (text) => Buffer.from(text, "utf8").toString("base64");
 
@@ -200,4 +203,88 @@ test("broker 出口判定补 telemetry：risk-grade/scan-plan 可归因、无正
   assert.equal(scan.payload.fallback, true);
   assert.equal(scan.payload.errorType, "SERVICE_DOWN");
   assert.ok(!JSON.stringify(rows).includes("telemetry-secret-in-body"), "telemetry 旁路不得携带请求正文");
+});
+
+test("purpose attribution [local.143]: 未申报用途不得被当成模型自述，也不得喂给判定服务", () => {
+  assert.equal(isSystemDefaultPurpose(PURPOSE_SINGLE_CAPTURED), true);
+  assert.equal(isSystemDefaultPurpose(PURPOSE_NO_SAFETY_MATERIAL), true);
+  assert.equal(isSystemDefaultPurpose("Burp 原生单次发送 login；调用摘要 abc；信任已配置的 Burp 执行冻结参数。"), true);
+  assert.equal(isSystemDefaultPurpose("上传独立测试标记文件"), false);
+  assert.equal(isSystemDefaultPurpose(""), true, "空 = 未申报");
+  assert.match(purposeAttribution(PURPOSE_SINGLE_CAPTURED), /系统默认说明（模型未申报用途，不是模型自述）/);
+  assert.match(purposeAttribution("上传独立测试标记文件"), /模型自述/);
+  assert.equal(declaredPurpose(PURPOSE_SINGLE_CAPTURED), "");
+  assert.equal(declaredPurpose("上传独立测试标记文件"), "上传独立测试标记文件");
+});
+
+test("advisor wire [local.143]: Jev 拿到完整冻结报文 + 用户声明的意图/目标；系统默认用途不冒充模型自述", async () => {
+  const calls = [];
+  const decide = async (a) => { calls.push(a); return { action: "pending", effect: "unknown", risk: "unknown", fallback: false }; };
+  // 现场原样：bash+curl 发往 /api/users/ 的空 body POST，无凭据、模型没申报用途
+  const frozen = { method: "POST", url: "https://fixture.test/api/users/", headers: [["accept", "*/*"], ["user-agent", "curl/8.7.1"]], bodyBase64: "" };
+  const work = { intentId: "intent-7", intentTitle: "Jorani 认证面与未授权接口测绘", intentDetail: "确认 /api/users/ 在无凭据下的可达性与返回语义", goalTarget: "fixture.test", goalObjective: "评估授权范围内的 Jorani 目标面" };
+  const exec = { agent: { session: { id: "wire-143" } }, callId: "call-143", name: "bash", srcWorkContext: async () => work };
+  await assessEgressPlan({ maxRequests: 1, scopeRevision: 1, purpose: PURPOSE_SINGLE_CAPTURED, entries: [{ maxRequests: 1, request: frozen }] }, exec, decide);
+  assert.equal(calls.length, 1);
+  const wire = calls[0];
+  /* ① 报文完整性：“Jev 只看到 URL”不成立——方法/URL/全量请求头/正文都在载荷里。 */
+  assert.equal(wire.method, "POST");
+  assert.equal(wire.url, "https://fixture.test/api/users/");
+  assert.deepEqual(wire.headers, { accept: "*/*", "user-agent": "curl/8.7.1" });
+  assert.equal(wire.body, "");
+  /* ② 意图/目标进载荷：此前 buildOperationContext 从不接收它们 → title/detail 恒为空串。 */
+  assert.equal(wire.title, "Jorani 认证面与未授权接口测绘");
+  assert.equal(wire.detail, "确认 /api/users/ 在无凭据下的可达性与返回语义");
+  assert.equal(wire.goalTarget, "fixture.test");
+  assert.equal(wire.objective, "评估授权范围内的 Jorani 目标面");
+  /* ③ 系统默认串不是模型自述：不得作为 justification 送进判定服务（那等于喂假线索→只能判 unknown）。 */
+  assert.equal(wire.justification, "");
+  /* ④ 真实申报用途仍原样送。 */
+  calls.length = 0;
+  await assessEgressPlan({ maxRequests: 1, scopeRevision: 1, purpose: "上传独立测试标记文件", entries: [{ maxRequests: 1, request: frozen }] }, { ...exec, callId: "call-143b" }, decide);
+  assert.equal(calls[0].justification, "上传独立测试标记文件");
+  /* ⑤ 会话事实取不到 → 上下文退化为空，但判定调用与失败关闭语义不受影响。 */
+  calls.length = 0;
+  await assessEgressPlan({ maxRequests: 1, scopeRevision: 1, purpose: PURPOSE_SINGLE_CAPTURED, entries: [{ maxRequests: 1, request: frozen }] }, { agent: { session: { id: "wire-143" } }, callId: "call-143c", name: "bash", srcWorkContext: async () => { throw new Error("store down"); } }, decide);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].title, "");
+  assert.equal(calls[0].justification, "");
+  assert.equal(calls[0].method, "POST", "会话事实缺失不得削掉真实报文");
+});
+
+test("session work context [local.143]: 取“当前工作线”而不是最后一条废弃意图；无事实即空串，不编造", () => {
+  /* 现场形状：intents 里既有废弃的 "test/test"，也有已完成的真实工作线；按时间取最后一条会喂给判定服务一句 "test"。 */
+  const intents = [
+    { id: "intent-1", title: "Jorani 认证与未授权访问面测绘", detail: "验证 /session/login 与 /api/*", status: "completed" },
+    { id: "intent-6", title: "test", detail: "test", status: "deprecated" },
+    { id: "intent-5", title: "未授权调试脚本与信息泄露面验证", detail: "", status: "completed" }
+  ];
+  assert.equal(pickWorkIntent(intents).id, "intent-5", "废弃意图不得胜出；同分取更新的一条");
+  assert.equal(pickWorkIntent([{ id: "a", title: "x", status: "planned" }, { id: "b", title: "y", status: "running" }]).id, "b", "在用 > 计划");
+  assert.equal(pickWorkIntent([]), null);
+  assert.equal(pickWorkIntent(undefined), null);
+
+  const ctx = workContextFrom({ goal: { target: "target.test", objective: "授权范围内验证", authorization: "仅 target.test；无真实外发" }, intents });
+  assert.equal(ctx.intentId, "intent-5");
+  assert.equal(ctx.intentTitle, "未授权调试脚本与信息泄露面验证");
+  assert.equal(ctx.goalTarget, "target.test");
+  assert.equal(ctx.authorization, "仅 target.test；无真实外发");
+  const empty = workContextFrom(null);
+  assert.deepEqual(Object.values(empty), ["", "", "", "", "", ""], "无会话事实时全部留空，绝不编造意图或授权");
+});
+
+test("advisor wire [local.143]: 会话授权说明进载荷；缺失时不冒充（退回出口通用表述）", async () => {
+  const calls = [];
+  const decide = async (a) => { calls.push(a); return { action: "pending", effect: "unknown", risk: "unknown", fallback: false }; };
+  const frozen = { method: "DELETE", url: "https://fixture.test/api/users/1", headers: [["accept", "*/*"]], bodyBase64: "" };
+  const plan = { maxRequests: 1, scopeRevision: 1, purpose: PURPOSE_NO_SAFETY_MATERIAL, entries: [{ maxRequests: 1, request: frozen }] };
+  const work = workContextFrom({ goal: { target: "fixture.test", objective: "授权范围内验证", authorization: "仅 fixture.test；写入仅限自建对象" }, intents: [{ id: "i", title: "未授权接口面", detail: "确认 /api/users/ 可达性", status: "running" }] });
+  await assessEgressPlan(plan, { agent: { session: { id: "wire-a" } }, callId: "c1", name: "bash", srcWorkContext: async () => work }, decide);
+  assert.equal(calls[0].authorization, "仅 fixture.test；写入仅限自建对象");
+  assert.equal(calls[0].title, "未授权接口面");
+  assert.equal(calls[0].objective, "授权范围内验证");
+  assert.equal(calls[0].justification, "", "系统默认说明仍不冒充模型自述");
+  calls.length = 0;
+  await assessEgressPlan(plan, { agent: { session: { id: "wire-b" } }, callId: "c2", name: "bash" }, decide);
+  assert.match(calls[0].authorization, /出口已由用户确认精确目标/, "无会话事实时退回出口通用表述，不编造授权内容");
 });
