@@ -70,6 +70,24 @@ function isSrcSession(snapshot: SessionListState, id: string): boolean {
   return false
 }
 
+/**
+ * Turn one refused `commands.execute` into the message a human can act on.
+ *
+ * 0.2 gives every session ONE exclusive write owner: while a session is open
+ * in another dsh instance (the desktop App, a second web server, another
+ * browser window) this instance still folds the session for reading, but every
+ * management command is refused with `session/writer-held`. Rendered raw, that
+ * reads like damaged data — the panels say「读取失败」 for the infrastructure /
+ * domain buttons only, while the conversation itself looks healthy. Name the
+ * cause and the two ways out instead.
+ */
+export function commandFailureMessage(code: string | undefined, message: string | undefined): string {
+  if (code === 'session/writer-held') {
+    return '该会话已被另一个 dsh 实例独占写入：桌面 App、另一台 Web 或另一个窗口。0.2 起一个会话同时只能在一个客户端里操作——请先在那一边关闭这个会话，或退出那个实例（重启即释放锁），然后重试（session/writer-held）'
+  }
+  return `命令执行失败（${code ?? '?'}）：${message ?? 'transport error'}`
+}
+
 /** Required services for the view registration and its copy. */
 export const inject = ['slots', 'locale', 'sessions', 'remote', 'remote.commands']
 
@@ -111,7 +129,7 @@ export function apply(ctx: ClientContext): void {
         inject: (sessionId: string) => ({
           runCommand: async (line: string) => {
             const outcome = await ctx.remote.commands.execute(sessionId, line, [])
-            if (!outcome.ok) throw new Error(`command execute failed: ${outcome.error?.code ?? '?'}: ${outcome.error?.message ?? 'transport error'}`)
+            if (!outcome.ok) throw new Error(commandFailureMessage(outcome.error?.code, outcome.error?.message))
             return outcome.value === undefined ? { kind: 'error', text: `unknown or malformed command: ${line}` } : outcome.value.result
           },
         }),

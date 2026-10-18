@@ -284,3 +284,65 @@ pnpm 据此解析到 `0.1.0-rc.8` 并 hoist 到 profile 根目录（`pnpm why` �
 - `npm test` **647/647 pass**（新增「空闲守卫两层探测并 fail-closed」用例；旧用例 `DSH API health check failed` 随探针一起改写）。
 - `node scripts/check-preset-consistency.mjs`、`node scripts/gen-preset-02.mjs --check` 均 OK。
 - **版本**：`package.json` → `0.1.0-local.140`，重打 `lihua_dis-dsh-src-0.1.0-local.140.tgz`；不推远端（用户自行 push）。
+
+## 8. 真实故障复现与定性：`session/writer-held`（2026-10-18，切到 0.2 当晚）
+
+用户报告：0.2 会话里「基础设施」「域数据」**全部读取失败**，报错原文
+
+```
+command execute failed: session/writer-held: session "session-8c4c7dba-559e-4135-8644-36f6da78b4f1"
+is already owned by an active write handle
+```
+
+而同一个会话的正文、标题、用量、页签都正常。结论先说：**升级没弄坏数据，这是 0.2 的独占写所有权规则在起作用**——那个会话当时正被另一个 dsh 实例握着。
+
+### 8.1 三线定位法（本轮确立，不靠猜日志）
+
+| 线 | 手段 | 回答什么 |
+| --- | --- | --- |
+| 客户端 | Playwright（headless + 真实 token）抓 `/api/remote.mux` 帧 + 读 `[data-tone]` 文案 | 这个报错是**客户端**发起的哪个请求被拒 |
+| 宿主 | `lsof` 查 `<session>/session.lock` 的持有 fd/pid | 这个会话现在**谁**握着写句柄 |
+| 持久化 | 读 `~/.dsh/storages/session_projcache/sessions/session-*.json` | 会话 id/预设/轮次边界（判忙、认页签） |
+
+报错来源已逐层确认：文案出自**我们自己的客户端 bundle**（`src/dsh-client-ui-src/src/client/index.ts` 的 `runCommand`），格式 `command execute failed: ${code}: ${message}`（官方 0.2 客户端是带点的 `command.execute failed:`，可据此区分来源）；`session/writer-held` 由宿主 `@deepseek-ai/dsh-api-session-controller` 把 `dsh-session-persistence` 的 `SessionAlreadyOwnedError` 映射而来；「读取失败：」前缀来自我们的 `InfrastructureView.tsx`／`DomainDataView.tsx`。
+
+### 8.2 真实复现（真实 `~/.dsh`，可重复）
+
+| 场景 | 会话 | 结果 |
+| --- | --- | --- |
+| 会话被**本实例**持有 | 新会话（web 69860 新建、真实一轮问答） | 基础设施面板读出真实配置项、域数据面板读出 `jd.com 284 种子`／`zto.com 424 资产`／`keeta-global.com`／`mi.com`… → **读得到** |
+| 会话被**另一个实例**持有 | `f075f8f3`（桌面 App 72008 持有） | 点「基础设施」：`command execute failed: session/writer-held: session "session-f075f8f3-…" is already owned by an active write handle`；点「域数据」：`读取失败：…` → **与用户报错逐字一致** |
+
+即：报错会话 `8c4c7dba` 当晚由 **web（PID 69860）**持有（`session.lock` 的 fd `31w`，mtime 11:00），用户是在**另一边**打开它的，所以面板全挂而正文可读。
+
+### 8.3 机制：0.2 的独占写句柄
+
+- 0.2 每个会话目录多出 `session.lock`（0.1 时代目录只有 `session.v4.jsonl.zstd`，**无锁文件**）；`lsof` 实测：web 69860 持 `8c4c7dba`／`6cc311fc`，桌面 App 72008 持 `6aa422f9`／`f075f8f3`。
+- `session/follow`（客户端打开会话）是读路径：别的实例持有的会话仍会下发 `baseline` 快照，正文渲染正常。
+- `commands.execute` 是写路径：要写开该会话 → 第二实例必然 `session/writer-held`。我们的面板（基础设施／域数据／待办／审批）全部走这条路径，**所以症状恰好是"只有这几个面板挂"**。
+- 锁不在客户端断开时释放：关掉浏览器后实测 4 分钟仍持有；会话重开也只因**同进程**已有 live agent 才没报错。要释放得靠持锁实例退出（重启）或在该实例里关闭那个会话。
+
+### 8.4 本轮处置
+
+1. **客户端文案**：`commandFailureMessage()` 把 `session/writer-held` 翻成可操作提示（点出"另一个实例独占"、两边各怎么办、重启即释放），并保留可 grep 的 `session/writer-held` code；其余错误仍保留 `code`／`message` 供排查；不再把宿主原文（`already owned by an active write handle`）抛给用户。源码 `src/dsh-client-ui-src/src/client/index.ts`，重建 `lib/ui-src.client.js`（检入件）。
+2. **只读诊断**：新增 `node scripts/session-locks.mjs [--json]`，列出每个 `session.lock` 的持有进程并归类（桌面 App／Web:端口／其他）；不看自己、不改文件、不发请求，报告刻意不含命令行（启动参数里可能带 token）。
+3. **测试**：`tests/deployment.test.mjs` 新增两条——从交付 bundle 切片断言 `session/writer-held` 的翻译（含"不得回退成裸 code"）与其余错误保留原码；诊断脚本的持有者解析/归类/自身排除/报告脱敏。
+4. **文档**：本节 + `docs/DEVELOPMENT.md`「0.2 的会话写所有权」小节。
+
+### 8.5 给使用者的可用性结论
+
+- 0.2 会话的规则是**一个会话同时只能在一个客户端里操作**；只读看正文不冲突，SRC 面板/审批按钮/管理命令都是写路径。
+- 撞上 `writer-held` 时：在另一边**关闭该会话**或**退出那个实例**（重启即释放锁），然后重试；桌面 App 与 Web 各用各的会话最省事。
+- 未决（属宿主行为，交上游，本轮不改我们的安全面）：锁在客户端断开后不立即释放，宿主没有"谁持有"的可见性，且 App 启动会 resume 最近会话并长期持锁 → 同机双客户端会互相"占用"。
+
+### 8.6 修复后的真实验收（2026-10-18 11:2x–11:3x，真实 `~/.dsh`，web 已按空闲守卫重启）
+
+| 检查 | 会话 | 结果 |
+| --- | --- | --- |
+| 撞上独占时给可操作提示 | `f075f8f3`（桌面 App 独占） | 基础设施／域数据面板给出新文案「该会话已被另一个 dsh 实例独占写入：桌面 App、另一台 Web 或另一个窗口…（session/writer-held）」；无 `already owned`／`command execute failed` 残留；句末不再出现两个句号 |
+| 不碰独占会话时读取正常 | `6cc311fc`（web 自己持有） | 基础设施面板读出真实配置项；域数据面板读出真实域行（`mi.com` 60 资产／`jd.com` 284 种子／`zto.com` 424 资产…） |
+| 真实模型回合 | `6cc311fc` | 真实 prompt → 投影 `turns: 2 / steps: 2 / llmMs 26642`，`openTurnStartSeq: null`（轮次闭合），`lastPromptAt 11:34:57`；正文可见回复 |
+| 重启即释放锁 | `8c4c7dba`（用户报错的会话） | 重启前由旧 web 进程 69860 独占；重启后锁消失，Web 再打开它读面板正常 —— **该会话已恢复可用** |
+
+- `npm test` **650/650 pass**（含本轮新增 2 条：bundle 文案映射、锁诊断解析）；`scripts/deploy.mjs` 已同步 profile 副本（`lib/ui-src.client.js` 两侧 md5 一致）；web 重启走空闲守卫（忙判据只用 `openTurnStartSeq`，`disabled_plugin_rows=0`）。
+- **版本**：`package.json` → `0.1.0-local.141`；重打 tgz；不推远端（用户自行 push）。

@@ -215,3 +215,64 @@ test('交付的 SRC 客户端 bundle 在 0.1/0.2 两种会话形状下都判定�
  assert.equal(isSrcSession(lineage,'s3'),true,'SRC 会话的子会话必须继承该页签');
  assert.equal(currentSessionId({byId:{}}),undefined,'没有主视图会话时不得凭空造一个 id');
 });
+
+/* [local.141] 0.2 给每个会话一个**独占写句柄**（`<session>/session.lock`）：一个会话在被
+ * 另一个 dsh 实例（桌面 App／另一台 Web／另一个窗口）打开期间，本实例仍能折叠日志阅读，
+ * 但所有管理命令都被 `session/writer-held` 拒绝——2026-10-18 真实环境实测：App 持有
+ * f075f8f3 时，Web 侧点「基础设施」「域数据」拿到
+ * `command execute failed: session/writer-held: session "…" is already owned by an active write handle`。
+ * 面板原先直接抛宿主原文，人看起来像"数据坏了"。这里锁住两件事：这句话必须说清成因与处置，
+ * 其余命令错误仍要保留 code/message 供排查。 */
+test('SRC 客户端把 session/writer-held 翻成可操作提示，其余命令错误仍保留 code 与 message',()=>{
+ const bundle=readFileSync(new URL('../lib/ui-src.client.js',import.meta.url),'utf8');
+ const start=bundle.indexOf('function commandFailureMessage(');
+ assert.ok(start>=0,'交付 bundle 必须带上方言化命令失败的翻译函数');
+ const end=bundle.indexOf('\n}',start);
+ assert.ok(end>start,'bundle 里的翻译函数必须可切片取出');
+ const {commandFailureMessage}=new Function(`${bundle.slice(start,end+2)}\nreturn { commandFailureMessage };`)();
+ const held=commandFailureMessage('session/writer-held','session "session-f075f8f3" is already owned by an active write handle');
+ assert.match(held,/另一个 dsh 实例/,'必须点出成因是另一个实例独占写入');
+ assert.match(held,/关闭这个会话|退出那个实例/,'必须给出可执行的处置');
+ assert.match(held,/重启/,'必须点出重启即可释放锁');
+ assert.match(held,/session\/writer-held/,'必须保留可 grep 的 code（日志与工单要对得上）');
+ assert.doesNotMatch(held,/[。！？]$/,'行文不得以句号结尾：InfrastructureView 会在后面接「。未用示例值覆盖配置。」，否则出现两个句号');
+ assert.doesNotMatch(held,/already owned/,'不得把宿主原文抛给用户（面板上无从判断会话归属）');
+ assert.doesNotMatch(held,/command execute failed/,'不得再回退成裸 code 前缀');
+ const other=commandFailureMessage('unknown-command','no such command');
+ assert.match(other,/unknown-command/,'其余错误必须保留 code 便于排查');
+ assert.match(other,/no such command/,'其余错误必须保留 message');
+ assert.equal(commandFailureMessage(undefined,undefined),'命令执行失败（?）：transport error');
+});
+
+/* 同一个实测的另一半：当面板说"另一个实例独占"时，用户得能查出来是哪一边。
+ * scripts/session-locks.mjs 只读锁文件与进程表，这里用假 lsof 文本与临时 DSH_HOME 锁住解析。 */
+test('会话锁诊断能认出桌面 App／Web 的持有者，并且不外泄命令行参数',async t=>{
+ const {describeHolder,parseLsofHolders,collectSessionLocks,publicReport}=await import('../scripts/session-locks.mjs');
+ assert.equal(describeHolder('/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness -').kind,'desktop-app');
+ const web=describeHolder('node /Users/x/.dsh/profiles/web/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port 3080 --token=SECRET');
+ assert.equal(web.kind,'web');assert.match(web.label,/:3080/);assert.ok(!web.label.includes('SECRET'),'身份标签不得带出参数');
+ assert.equal(describeHolder('/bin/zsh -l').kind,'other');
+ const holders=parseLsofHolders('p69860\ncsleep\nn/tmp/a/session.lock\np72008\nn/tmp/a/session.lock\nn/tmp/b/session.lock\n');
+ assert.deepEqual([...holders.get('/tmp/a/session.lock')].sort(),[69860,72008]);
+ assert.deepEqual([...holders.get('/tmp/b/session.lock')],[72008]);
+ const fs=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const home=fs.mkdtempSync(join(tmpdir(),'dsh-locks-'));t.after(()=>fs.rmSync(home,{recursive:true,force:true}));
+ for(const id of ['session-held','session-idle'])fs.mkdirSync(join(home,'sessions','--proj--',id),{recursive:true});
+ const held=join(home,'sessions','--proj--','session-held','session.lock');
+ const idle=join(home,'sessions','--proj--','session-idle','session.lock');
+ for(const file of [held,idle])fs.writeFileSync(file,'');
+ // held 由 pid 123 持有；idle 只被本诊断进程自己打开——自己不算持有者。
+ const lsofText=`p123\nn${held}\np${process.pid}\nn${idle}\n`;
+ const result=collectSessionLocks({home,lsofText});
+ assert.equal(result.probeError,null);
+ assert.deepEqual(result.rows.map(row=>row.session),['session-held','session-idle']);
+ const rows=Object.fromEntries(result.rows.map(row=>[row.session,row]));
+ assert.equal(rows['session-held'].holders.length,1,'被持有的会话必须报出持有者');
+ assert.equal(rows['session-held'].project,'--proj--');
+ assert.equal(rows['session-idle'].holders.length,0,'自己（诊断脚本进程）不算持有者');
+ assert.equal(typeof rows['session-held'].lockedAtMs,'number');
+ const report=publicReport(result);
+ assert.ok(!JSON.stringify(report).includes('command'),'对外报告必须去掉命令行原文');
+ assert.deepEqual(report.rows[0].holders[0].pid,123);
+ assert.equal(collectSessionLocks({home,files:[held],lsofText}).rows.length,1,'显式给文件时不再枚举目录');
+});
