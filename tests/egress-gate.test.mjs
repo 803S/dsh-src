@@ -748,6 +748,20 @@ test('本地硬闸只保留确定危害，编码歧义与可疑词一律交判�
  for(const name of ['x-forwarded-for','x-real-ip'])assert.equal(requiresHuman({entries:[{request:request({method:'GET',headers:[[name,'203.0.113.9']]})}]}),false,name);
 });
 
+// [local.146] CORS 预检协议头不是“请求方法改写”。
+// 现场：模型测 CORS 配置 —— OPTIONS /users + Origin: evil.example.com + Access-Control-Request-Method: GET，
+// 判定服务判 read/low/allow，本地旧正则 /method|rewrite|forward|original/i 却命中 `access-control-request-method`，
+// 按“请求方法改写”终审挂人工（Jev 无权覆盖）。该头只是浏览器询问“我能不能用这个方法”，不改写任何东西。
+test('CORS 预检头 access-control-request-* 不按方法改写硬拦',()=>{
+ for(const headers of [[['access-control-request-method','GET']],[['access-control-request-method','DELETE']],[['access-control-request-headers','x-a']],[['access-control-request-method','GET'],['origin','https://evil.example.com']]])
+  assert.equal(requiresHuman({entries:[{request:request({method:'OPTIONS',url:'https://fixture.invalid/users',headers})}]}),false,JSON.stringify(headers));
+ // 同一批头出现在非 OPTIONS 方法上也不得变成硬闸（该头在任何方法上都不改写实际执行的方法）。
+ assert.equal(requiresHuman({entries:[{request:request({method:'GET',url:'https://fixture.invalid/users',headers:[['access-control-request-method','GET']]})}]}),false);
+ // 真方法改写头必须仍然硬拦（修复不得扩大豁免）。
+ for(const [name,value] of [['x-http-method-override','DELETE'],['x-method-override','PUT'],['x-http-method','PATCH'],['x-original-method','DELETE']])
+  assert.equal(requiresHuman({entries:[{request:request({method:'GET',url:'https://fixture.invalid/users',headers:[[name,value]]})}]}),true,name);
+});
+
 // [审批收缩 2026-10-14] 本地规则先行：明确只读的请求不调用判定服务、直接放行、不建卡。
 test('明确只读的读方法不调用判定服务、不建卡、直接放行',async t=>{
  const f=fixture(t);
