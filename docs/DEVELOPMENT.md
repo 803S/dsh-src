@@ -409,6 +409,20 @@ DSH_WEB_FORCE=1 bash ~/Software/dsh-src/scripts/start-dsh-web.sh   # 确认无�
 - 查是谁占着：`node scripts/session-locks.mjs`（只读、不发请求；列出每个 `session.lock` 的持有进程并归类成 桌面 App／Web:端口／其他，`--json` 供脚本引用，报告不含命令行以免带出 token）。
 - 因此：**桌面 App 与 Web 不要同时操作同一个会话**（各用各的会话最省事，也最不容易撞）。这也解释了 0.1 → 0.2 后"某个会话突然面板全挂"：不是数据坏了，是那个会话正被另一边握着。
 
+### 0.2 移除了 `Session.events`：会话日志一律走 `sessionLogEvents()`
+
+0.1（`dsh-session@0.1.0-rc.8`）给 `Session` 一个读取器 `get events(): readonly SessionEvent[]`；**0.2.1-rc.1 删掉了它**，只留 `eventAt(seq)` / `snapshotEvents(fromSeq,toSeqExclusive)` / `ownEvents()`（见 `~/.dsh/profiles/web/node_modules/@deepseek-ai/dsh-session/lib/index.js:1439-1483`），没有迁移期兼容读取器。
+
+后果是**静默降级**——不是抛错，而是读到 `undefined` 后各自走偏：
+
+| 位置 | 旧读法 | 0.2 下的症状 |
+| --- | --- | --- |
+| `lib/src/egress/user-commands.js` | `invocation.agent.session.events` | 用户命令守卫恒失败 → `/src-approve`、`/src-egress-status` 等全部返回 `SRC_GATE_USER_COMMAND_REQUIRED`，**审批卡永远批不了** |
+| `lib/src/egress/user-scope.js` | 同上（倒序扫 `agent/inbox/spliced` 里的真实用户消息） | 用户写下的目标句**永不成为范围** → 每次写类请求都新挂「范围确认单」 |
+| `lib/src/child-outcome.js` | 同上 | 子代理失败回合永不观测 |
+
+统一口径：会话日志只用 `lib/src/session-log.js` 的 `sessionLogEvents(session)`（`events` → `snapshotEvents()` → `ownEvents()` → `[]`），**不要再直读 `session.events`**；读不到日志按**空日志**返回，由调用方各自 fail-closed（命令守卫拒绝、范围不授权、失败退回未观测）。单测 `tests/session-log-compat.test.mjs` 同时覆盖 0.1 与 0.2 两种会话形状。
+
 ### 旧版（0.1 时代）手工启动方式，仅作历史参考
 
 ```bash

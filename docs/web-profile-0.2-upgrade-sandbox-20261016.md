@@ -346,3 +346,92 @@ is already owned by an active write handle
 
 - `npm test` **650/650 pass**（含本轮新增 2 条：bundle 文案映射、锁诊断解析）；`scripts/deploy.mjs` 已同步 profile 副本（`lib/ui-src.client.js` 两侧 md5 一致）；web 重启走空闲守卫（忙判据只用 `openTurnStartSeq`，`disabled_plugin_rows=0`）。
 - **版本**：`package.json` → `0.1.0-local.141`；重打 tgz；不推远端（用户自行 push）。
+
+## 9. 升级后暴露的第二个 0.2 破坏性变更：`Session.events` 被删（`approval-1` 批不了 / 用户目标句不生效）
+
+用户现场报障（真实 SRC 会话 `session-f63f1da9`，靶场 `https://eci-2zec3z682q4ut1t3ytr1.cloudeci1.ichunqiu.com:80`，2026-10-18 12:0x）：
+
+1. 面板给出「范围确认单 `approval-1`」，点批准**毫无反应**；
+2. 「待办看着是发送了但没生效」；
+3. 用户直接判断：**「这个审批毫无必要」**——目标是他自己在对话里写下的单一 URL。
+
+结论先说：**用户的判断是对的**。审批卡本不该出现（他写过目标句，应当自动成为范围），而即便出现了，也**批不动**——两条路都被同一个宿主变更堵死。
+
+### 9.1 根因：0.2 删除了 `Session.events` 读取器
+
+| | 0.1.0-rc.8 | 0.2.1-rc.1 |
+| --- | --- | --- |
+| 会话日志读取 | `get events(): readonly SessionEvent[]`（`~/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts:174`） | **没有 `events`**；`eventAt(seq)` / `snapshotEvents(fromSeq,toSeqExclusive)` / `ownEvents()`（`~/.dsh/profiles/web/node_modules/@deepseek-ai/dsh-session/lib/index.js:1439-1483`） |
+
+0.2 **没给迁移期兼容读取器**，于是我们三处直读 `session.events` 的地方全部拿到 `undefined`，各自**静默降级**（不抛错）：
+
+| 位置 | 症状 |
+| --- | --- |
+| `lib/src/egress/user-commands.js`（`assertUserCommand`） | 用户命令守卫恒失败 → **所有**用户命令（`/src-approve`、`/src-egress-status`、`/src-egress-scope`…）返回 `SRC_GATE_USER_COMMAND_REQUIRED`，**审批卡永远批不了** |
+| `lib/src/egress/user-scope.js`（`explicitUserScope`） | 倒序扫不到任何 `agent/inbox/spliced` 用户消息 → 用户写下的目标句**永不成为范围** |
+| `lib/src/child-outcome.js`（`childTurnFailure`） | 子代理失败回合永不观测 |
+
+现场证据（会话日志 `zstdcat` 逐帧 + `~/.dsh/storages/src-sessions.db`）：
+
+- `/src-approve approval-1 allow` ×5 **全部** `kind:error` `SRC_GATE_USER_COMMAND_REQUIRED`（seq 356/357、365/366、369/370、374/375、376/377，12:14:08–12:14:38 CST）；
+- `/src-todo userTodo-1 abandoned 无账号` 成功（seq 371-373）→ 正好是**没有守卫**的那条命令，反证守卫就是唯一卡点；
+- `approval-1` = `method:SCOPE`／`category:egress/scope`，body `{"origins":["https://eci-…:80"]}`，createdAt 12:06:11 CST。
+
+### 9.2 死结：`seedScope` 的早退 + 守卫失败
+
+`lib/src/egress/host-integration.js:80` 在每次出网工具前调 `manager.user.seedScope()`；而 `lib/src/egress/manager.js:593`：
+
+```js
+if(scopes.get(session)?.origins.length || …) return;
+if((await store.listScopeApprovals(session)).length) return;   // ← 任何 SCOPE 行都会早退
+```
+
+`listScopeApprovals`（`lib/src/store.js:549`）返回**全部** scope 行（含 pending）。于是形成闭环：**卡在 pending → 聊天里写目标句永不生效；而卡又因守卫 bug 无法批准**。用户「这个审批毫无必要」的判断由代码直接印证。
+
+### 9.3 同时解释了「只读是通的、写类被卡」
+
+`~/.dsh/control/src-egress/scopes.json` 里该会话 `origins: []`、`readOrigins` 已含目标 origin（+ `github.com`/`codeload.github.com`/`cdn.jsdelivr.net`）——读走 advisory 通道并自动记账（`lib/src/egress/manager.js:181-201`），写类走 `scopeRequests.require` 才被 SCOPE 卡拦住，所以「只读 302 正常、一写就要审批」。
+
+### 9.4 「待办发了却没生效」与用户目标句的派生范围
+
+- `u_src_user_todos` 里 `userTodo-1`（abandoned 后）与 `userTodo-2`（pending）**同标题两行**，且 `agent/inbox/spliced`（seq 372）确实送达过——**命令生效了**，是 agent 随后把同一请求**重建**成 `userTodo-2`，面板看起来才像"没生效"。
+- 用户 seq 9 原文：`挖掘该资产 src 漏洞， 不进行资产收集，只针对该目标：https://eci-…:80` → 修复后 `explicitUserScope` 会得到 `{origins:['https://eci-…:80'], domains:['cloudeci1.ichunqiu.com']}`：**host 是子域时只剥一层就把父域也授权了**（`lib/src/egress/user-scope.js` 的 `domainSpaceOf`）。靶场平台每个实例都是子域，等于顺带授权了同平台的其它实例域名——需要向用户明示；若要严格只授权该 origin，用 `/src-egress-scope` 显式给精确 origins，或批准 SCOPE 卡（卡只授予卡里列的精确 origins，不授予整域）。
+
+### 9.5 修复（local.142）
+
+1. 新增 `lib/src/session-log.js` → `sessionLogEvents(session)`：`Array.isArray(session.events)` → `snapshotEvents()` → `ownEvents()` → `[]`（读不到即空日志，调用方各自 fail-closed）。
+2. 三处改用它：`lib/src/egress/user-commands.js`、`lib/src/egress/user-scope.js`、`lib/src/child-outcome.js`。
+3. 新增 `tests/session-log-compat.test.mjs`（4 条）：0.1(`events`)／0.2(`snapshotEvents`) 读同一份日志；0.1 复用冻结快照；命令守卫放行 + `commandId`/名称/来源/模型上下文/取消 逐项拒绝；真实用户目标句派生范围；子代理失败回合仍观测。接进 `package.json` 的 `npm test` 显式清单。
+4. 文档：本节 + `docs/DEVELOPMENT.md`「0.2 移除了 `Session.events`」小节。
+
+安全面**一律不放宽**：守卫读不到日志仍然拒绝（fail-closed）；范围派生读不到日志仍然不授权；只在 0.2 下恢复成"能读到就正常判定"。
+
+### 9.6 真实验收（同一台机器上的 0.2.1-rc.1 宿主）
+
+**A. 修复前 → 修复后（沙盒 `DSH_HOME=/tmp/wsb/home`，profile 先装 `.139`（含 bug）再装 `.142`；同一会话、同一条命令）**
+
+| 命令 | `.139`（修复前） | `.142`（修复后） |
+| --- | --- | --- |
+| `/src-egress-status` | `失败：SRC_GATE_USER_COMMAND_REQUIRED` | `{"scope":…,"proxy":{…}}` ✅ |
+
+**B. 用户路径全链路（`.142`，沙盒 0.2 宿主）**
+
+| 场景 | 结果 |
+| --- | --- |
+| 用户消息未写目标 → 首笔写类请求被拦 | 建 `approval-1`（`egress/scope`，`scope-confirmation-required`），**请求未发出** |
+| `/src-approve approval-1 allow`（用户在对话里下命令） | `{"state":"approved","origins":["https://example.org"],"sent":false,…}` ✅ 守卫放行、只授精确 origin、**不发请求** |
+| 用户消息写明目标（"只针对 https://example.org"）→ 首笔写类请求 | **不再挂范围卡**；`/src-egress-status` → `scope.origins:["https://example.org"]`、`domains:["example.org"]`、pins 已解析 ✅（"这个审批毫无必要"的场景恢复为自动生效）；拦点只剩影响闸的 `human-impact-confirmation-required` |
+| `/src-approve approval-1 reject 沙盒验证` | `{"state":"denied",…}` ✅ |
+
+- **零真实流量**：全程 `targetRequestsSent=0`；被拒 TASK 行 `executionState:rejected`／`responseStatus:0`，`u_src_observations` 无任何对应响应证据。
+
+**C. 真实部署（`~/.dsh`，web :3080）**
+
+- `node scripts/deploy.mjs` 同步 profile 副本：`lib/src/session-log.js` 等 4 个文件两侧 md5 一致；`--dump-config` 1396 行、**0 incompatible**；重启走空闲守卫，`disabled_plugin_rows=0`；首页 + SRC 视图 10 个页签渲染正常（`pageerror` 0，除 0.2 打不开的 v0 历史会话噪音）。
+- **桌面 App**：宿主是 App（pid 79508 持 `f63f1da9` 写句柄），App 只加载 `~/.dsh/profiles/desktop/node_modules/@lihua_dis/dsh-src`——本轮已把 `.142` 代码同步进该副本（改动前已备份 `~/.dsh/backups/desktop-profile-plugin-pre-142-20261018-123735/`），**需重启 App 生效**；若 App 启动时按 profile 里 `.141` 的 pin 重装，则改用 App 插件管理器安装 `~/Downloads/dsh-plugins/lihua_dis-dsh-src-0.1.0-local.142.tgz`。
+
+### 9.7 版本
+
+- `npm test` **654/654 pass**（含本轮新增 4 条）。
+- 版本 `package.json` → `0.1.0-local.142`；tgz `~/Downloads/dsh-plugins/lihua_dis-dsh-src-0.1.0-local.142.tgz`（225 项）；本地提交、不推远端。
+- 属宿主行为（交上游）：0.2 删 `Session.events` 未给兼容读取器，插件侧自行兼容；`seedScope` 的「有 pending scope 行就不自动派生范围」也让"用户已写明目标"的情形被无关卡片拖住，本轮**不改**这条语义（它保护的是"人工拒绝/待审不可被自动范围越过"），只保证卡片能被正常批准。
