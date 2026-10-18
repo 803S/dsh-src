@@ -122,7 +122,7 @@ test("jev-client wire: full body reaches remote review state; credentials scrubb
   let captured;
   globalThis.fetch = async (url, init) => {
     captured = { url, payload: JSON.parse(init.body), headers: init.headers };
-    return new Response(JSON.stringify({ model: "jev-fixture", answers: { decision: { choice: "unknown", confidence: .9, probabilities: { read: 0, compute: 0, write: 0, external: 0, auth: 0, destructive: 0, unknown: 1 } } } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ model: "jev-fixture", answers: { decision: { choice: "unknown", confidence: .9, probabilities: { read: 0, compute: 0, write: 0, external: 0, 'external-probe': 0, auth: 0, destructive: 0, unknown: 1 } } } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   t.after(async () => { globalThis.fetch = previousFetch; for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key]; Object.assign(process.env, env); await fs.rm(home, { force: true, recursive: true }); });
   await saveDecisionSettings({ enabled: true, endpoint: "https://jev.fixture/decide", apiKey: "sk-fixture-api-key" });
@@ -155,7 +155,7 @@ test("jev-client wire: scan-plan taskSpec carries task context beside the presen
   let captured;
   globalThis.fetch = async (url, init) => {
     captured = JSON.parse(init.body);
-    return new Response(JSON.stringify({ model: "jev-fixture", answers: { decision: { choice: "read", confidence: .9, probabilities: { read: 1, compute: 0, write: 0, external: 0, auth: 0, destructive: 0, unknown: 0 } } } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ model: "jev-fixture", answers: { decision: { choice: "read", confidence: .9, probabilities: { read: 1, compute: 0, write: 0, external: 0, 'external-probe': 0, auth: 0, destructive: 0, unknown: 0 } } } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   t.after(async () => { globalThis.fetch = previousFetch; for (const key of Object.keys(process.env)) if (!(key in env)) delete process.env[key]; Object.assign(process.env, env); await fs.rm(home, { force: true, recursive: true }); });
   await saveDecisionSettings({ enabled: true, endpoint: "https://jev.fixture/decide" });

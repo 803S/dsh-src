@@ -185,7 +185,7 @@ async function withJevLowRiskWrite(fn) {
   process.env.DSH_SRC_LAYA_DECISION = "on";
   globalThis.fetch = async (url, init) => String(url).includes("jev.fixture")
     ? new Response(JSON.stringify({ model: "jev-fixture", answers: {
-        decision: { choice: "write", confidence: 1, probabilities: { read: 0, compute: 0, write: 1, external: 0, auth: 0, destructive: 0, unknown: 0 } },
+        decision: { choice: "write", confidence: 1, probabilities: { read: 0, compute: 0, write: 1, external: 0, 'external-probe': 0, auth: 0, destructive: 0, unknown: 0 } },
         /* [local.138] write 只有配上 objectClass=new-test-file 才落到 lowImpact→risk=low（见 jev-client.js:148）。
            少了这一项 risk 就是 high，请求会挂人工卡 —— 这正是本 stub 第一版踩的坑。 */
         objectClass: { choice: "new-test-file", confidence: 1, probabilities: { "not-applicable": 0, "new-test-file": 1, "owned-test-file": 0, "business-or-unknown": 0 } },
@@ -6419,7 +6419,7 @@ test("Jev 高置信读取建议不越过审批；统一注入认证/Content-Type
   const prevFetch = globalThis.fetch, prevFlag = process.env.DSH_SRC_LAYA_DECISION;
   const {saveDecisionSettings}=await import('../lib/src/decision/service-settings.js');
   await saveDecisionSettings({enabled:true,endpoint:'https://jev.fixture/decide'});
-  globalThis.fetch = async (url, init) => String(url).endsWith("/decide") ? new Response(JSON.stringify({ model:'jev-fixture',answers: { decision: { choice: "read", probabilities: { read:1,compute:0,write:0,external:0,auth:0,destructive:0,unknown:0 }, confidence: 1 },risk:{choice:'low',confidence:1,probabilities:{low:1,high:0,unknown:0}},verdict:{choice:'allow',confidence:1,probabilities:{allow:1,pending:0}} } }), { status: 200 }) : prevFetch(url, init);
+  globalThis.fetch = async (url, init) => String(url).endsWith("/decide") ? new Response(JSON.stringify({ model:'jev-fixture',answers: { decision: { choice: "read", probabilities: { read:1,compute:0,write:0,external:0,'external-probe':0,auth:0,destructive:0,unknown:0 }, confidence: 1 },risk:{choice:'low',confidence:1,probabilities:{low:1,high:0,unknown:0}},verdict:{choice:'allow',confidence:1,probabilities:{allow:1,pending:0}} } }), { status: 200 }) : prevFetch(url, init);
   process.env.DSH_SRC_LAYA_DECISION = "on";
   try {
     await h.run("src_add_goal", { target: "127.0.0.1", objective: "approval fixture" }, parent);

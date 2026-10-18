@@ -82,6 +82,9 @@ export function approvalHumanSummary(input: ApprovalExplanationInput): string {
   const method = String(request.method ?? '请求')
   const body = String(request.body ?? '')
   const email = /(?:^|[&])(?:oubli|email|mail|to)=([^&]+)/i.exec(body)?.[1]
+  if (assessment.effect === 'external-probe') {
+    return `${method} 请求会让目标向我方控制的探测端（dnslog/Collaborator/自建回连地址）发起一次有界回调，用于确认 SSRF 或外带通道是否可达；它不经过目标业务通道向真实地址发送消息，也不写入业务数据。批准后按原报文执行，发送前中断可恢复，不自动重试。`
+  }
   if (assessment.effect === 'external') {
     if (email) {
       let target = email
@@ -140,7 +143,7 @@ export function approvalBlockReason(input: ApprovalExplanationInput): string {
   if(assessment.fallback===true)return 'Jev未返回有效判定；本请求未获自动执行许可。'
   if(assessment.hardVeto===true)return '宿主策略阻断了特殊头或编码请求；旧版也曾误拦来源 IP 头，请核对下方冻结报文。'
   if(assessment.risk==='high'){
-    const effect: Record<string,string>={destructive:'识别到删除或破坏性操作',write:'识别到数据写入或覆盖',external:'识别到外发或费用影响',auth:'认证操作被判为高风险'}
+    const effect: Record<string,string>={destructive:'识别到删除或破坏性操作',write:'识别到数据写入或覆盖',external:'识别到外发或费用影响','external-probe':'识别到有界外发探测（回调我方控制端）',auth:'认证操作被判为高风险'}
     return `Jev：${effect[String(assessment.effect)] ?? '本次请求被判为高风险'}。${['read','compute'].includes(String(assessment.effect))?'操作分类与风险不一致，请核对原始请求。':'请核对下方实际请求。'}`
   }
   if(assessment.risk==='unknown')return 'Jev未能确定本次操作的实际影响。'
