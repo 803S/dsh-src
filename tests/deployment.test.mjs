@@ -49,13 +49,41 @@ test('deployment cannot auto-start the retired Laya daemon',()=>{
  assert.doesNotMatch(deployment,/spawn\(|srcLayaDecisionFlag/);
 });
 
-test('Web launcher detaches from caller and never trusts a stale PID file',()=>{
+test('Web launcher 用 profile 自带的 0.2 host 启动，就绪探针不依赖 0.1 专有端点',()=>{
  const script=readFileSync(new URL('../scripts/start-dsh-web.sh',import.meta.url),'utf8');
+ // 注释里会提到旧端点名（解释为什么不那么写），所以负向断言只看可执行正文。
+ const body=(text)=>text.split('\n').filter((line)=>!/^\s*#/.test(line)).join('\n');
  assert.match(script,/detached:true/);
  assert.match(script,/child\.unref\(\)/);
  assert.match(script,/commands?=|command=/);
  assert.doesNotMatch(script,/xargs kill|kill \"\$OLD\".*sleep 1/);
- assert.match(script,/DSH API health check failed/);
+ assert.match(script,/profiles\/web\/node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js/,'必须用 profile 自带的 0.2 host：全局 dsh 只有 0.1，起不了 0.2 web');
+ assert.doesNotMatch(body(script),/management\.html/,'0.2 已无 management.html，留着会让就绪探针永远 404');
+ assert.match(body(script),/"\$CODE" = 401/,'0.2 回环也鉴权：401 = 服务已监听，与 200 同为就绪');
+ assert.match(body(script),/"\$CODE" = 200/,'仍要接受带 token 时的 200');
+ assert.match(script,/check-web-idle\.mjs/,'重启前必须跑空闲探测');
+ assert.match(script,/DSH_WEB_FORCE/,'0.2 无单方法 RPC 时探测失败是预期，必须有显式强推开关');
+});
+test('空闲守卫两层探测并在探测不可用时 fail-closed',()=>{
+ const script=readFileSync(new URL('../scripts/check-web-idle.mjs',import.meta.url),'utf8');
+ assert.match(script,/\/api\/\$\{method\}/,'第一层仍是 0.1 的单方法 RPC');
+ assert.match(script,/session_projcache/,'第二层读 host 侧投影缓存');
+ assert.match(script,/openTurnStartSeq/,'用进行中的轮次判定忙闲');
+ assert.match(script,/exitCode = 3/,'两层都不可用必须 fail-closed，不得默认空闲');
+});
+test('投影缓存只认 openTurnStartSeq；陈旧 openStep 不算忙',async()=>{
+ const {summarizeProjection}=await import('../scripts/check-web-idle.mjs');
+ const entry=(id,openTurnStartSeq,openStep,ageMs=1000)=>({id,openTurnStartSeq,openStep,ageMs});
+ const step={turn:1,step:3};
+ const result=summarizeProjection([
+  entry('busy',42,step,2000),
+  entry('stale',null,step,9e8),   // 真实环境 486 份投影里有 70 份这种崩溃残留
+  entry('idle',null,null),
+ ]);
+ assert.deepEqual(result.busy.map(row=>row.id),['busy'],'只有 openTurnStartSeq 非空才算忙');
+ assert.equal(result.staleOpenSteps.length,1,'陈旧 openStep 单独统计，用来诊断但不是忙');
+ assert.equal(result.oldestBusyAgeMs,2000);
+ assert.deepEqual(summarizeProjection([entry('x',null,step,9e8)]).busy,[]);
 });
 
 test('npm package keeps runtime assets but excludes evaluation fixtures and raw evidence',async()=>{

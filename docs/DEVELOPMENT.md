@@ -376,27 +376,38 @@ npm run ui-src:build         # tsdown 构建 → dist/index.js → 覆盖 lib/ui
 
 ## dsh web 启动 / 停止（部署后的进程管理）
 
-本机 + 局域网共用一个实例（绑 `*:3080`）：
+**[2026-10-18] web profile 已升到 dsh 0.2.1-rc.1**（与桌面 App 同一运行时）。日常只用仓库脚本，别手敲 `dsh web`：
+
+```bash
+bash ~/Software/dsh-src/scripts/start-dsh-web.sh      # 幂等：先探空闲→停旧→起新→等就绪
+DSH_WEB_FORCE=1 bash ~/Software/dsh-src/scripts/start-dsh-web.sh   # 确认无任务时强推
+```
+
+脚本做的事（改前先读一遍再动）：
+
+- 起进程用 **profile 自带 host**：`node ~/.dsh/profiles/web/node_modules/@deepseek-ai/dsh/lib/bin.js web --no-open --port 3080`。
+  全局 `dsh`（pnpm global）仍是 **0.1**，只服务 headless 等未迁移 profile——用它起 web 会拿到 0.1 harness，与 profile 里的 0.2 依赖错配。
+- 重启前跑 `scripts/check-web-idle.mjs`：0.1 用 `POST /api/session.list` 的单方法 RPC；0.2 网关只有 `/api/remote.mux` 多路复用流，所以第二层改读 host 侧投影缓存 `~/.dsh/storages/session_projcache/sessions/*.json` 判「有无进行中的轮次」，**判据只用 `turnBoundary.openTurnStartSeq`**（`sessionStats.openStep` 在真实环境里有 70/486 份是崩溃残留，拿它判忙会让重启永远被拒；陈旧值只计入 `staleOpenSteps` 诊断）。两层都不可用时**fail-closed**（拒绝重启，要 `DSH_WEB_FORCE=1`）。
+- 就绪探针是 `GET /`：0.2 回环**也要鉴权**，无 token → **401**（= 服务已监听）、带 token → 200；`/management.html` 在 0.2 已不存在（404），不要再用它判活。然后还会等启动日志打印带 token 的 UI 地址，并回报 `disabled_plugin_rows`（应为 0）。
+- 只杀「监听 3080 且命令行匹配 `dsh/lib/bin.js*web*`」的那个 PID，不看 `/tmp/dsh-web.pid`（陈旧 PID 文件不等于进程身份）。
+
+其它：
+
+- 本机访问 `http://127.0.0.1:3080`；首次无 token 会 401，用启动日志里的 `?token=...` 换 cookie（`dsh-auth-*`）后正常。
+- 改完插件代码要同步进 profile 副本（进程只加载 profile 里那份）：`node scripts/deploy.mjs`（内含 `npm test` 硬门）或 `cd ~/.dsh/profiles/web && pnpm install`，然后重启 web。
+- 日志里的 `Failed to connect to SSE server at https://localhost:9876` 是 Burp MCP 桥在等 Burp 的 MCP Server 扩展（Burp 未开时属正常噪音，不影响其他功能）。
+- 注意不要同时跑两个实例指向同一 profile（会并发写同一个 sqlite）；历史遗留的 `/tmp/probe*` 实例记得 kill。
+
+### 旧版（0.1 时代）手工启动方式，仅作历史参考
 
 ```bash
 # 停止：找到监听 3080 的进程并结束
 kill $(lsof -ti TCP:3080 -sTCP:LISTEN)
 
-# 启动（后台常驻，日志落 /tmp/dsh-web-local9.log；必须用绝对路径——nohup 不继承 shell 的 export PATH；
-# < /dev/null 不能省：stdin 挂在管道上时父进程退出会让 dsh 读到 EOF 静默退出）
-nohup "$(pnpm bin)/dsh" web \   # 或 dsh 在 PATH 时直接用 nohup dsh web
-  --host 0.0.0.0 --port 3080 \
-  --trusted-host 192.0.2.7:3080 --no-open \
-  > /tmp/dsh-web-local9.log 2>&1 < /dev/null &
-
-# 验证
-lsof -nP -iTCP:3080 -sTCP:LISTEN
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3080/
+# 0.1 写法：nohup "$(pnpm bin)/dsh" web --host 0.0.0.0 --port 3080 --trusted-host <lan-ip>:3080 --no-open
 ```
 
-- 本机访问 http://127.0.0.1:3080 ；局域网访问 http://192.0.2.7:3080
-- 日志里的 `Failed to connect to SSE server at https://localhost:9876` 是 Burp MCP 代理在等 Burp 的 MCP Server 扩展（Burp 未开时属正常噪音，不影响其他功能）。
-- 注意不要同时跑两个实例指向同一 profile（会并发写同一个 sqlite）。
+- headless 等仍是 0.1 的 profile 继续用全局 `dsh`；它们没有 Web UI，不受上面 0.2 探针/鉴权变化影响。
 
 ## 0.1.0-local.6（时间线 observation 详情 + 待办 UI 写回通道）
 

@@ -11,7 +11,19 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.DSH_UI_PLAYWRIGHT ?? path.join(homedir(), '.dsh/capabilities/playwright/node_modules/playwright'));
 const output = await mkdtemp(path.join(tmpdir(), 'dsh-ui-settings-'));
-const themeSource = await readFile(path.join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'), 'utf8');
+// [2026-10-18] 主题改从**运行时实际加载**的那份取：web profile 已升到 0.2.1-rc.1，
+// 共享 farm（~/.dsh/profiles/node_modules）仍是 0.1 的主题；两边变量名相同，但对比度回归
+// 要对齐真实运行时的配色。按 profile 优先顺序取第一份能解析出默认主题的。
+const themeCandidates = [
+  path.join(homedir(), '.dsh/profiles/web/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'),
+  path.join(homedir(), '.dsh/profiles/desktop/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'),
+  path.join(homedir(), '.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'),
+];
+let themeSource = null;
+for (const candidate of themeCandidates) {
+  try { themeSource = await readFile(candidate, 'utf8'); break; } catch { /* 下一个 */ }
+}
+if (!themeSource) throw new Error(`找不到任何 dsh-client-ui-theme 客户端产物，试过：\n${themeCandidates.join('\n')}`);
 const theme = JSON.parse(themeSource.match(/var design_platform_css_default = ("[^\n]*");/)[1]);
 const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><link rel="stylesheet" href="/theme.css"><style>body{margin:0;font-family:system-ui;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}#app{height:100vh;width:100%;}*{box-sizing:border-box}</style></head><body><div id="app"></div><script src="/react.js"></script><script src="/react-dom.js"></script><script>
 window.__ModuleLoader__={load({factory}){window.plugin=factory(name=>name==='react'?React:name==='react-dom'?ReactDOM:{jsx:(t,p,k)=>React.createElement(t,{...p,key:k}),jsxs:(t,p,k)=>React.createElement(t,{...p,key:k}),Fragment:React.Fragment})}};
