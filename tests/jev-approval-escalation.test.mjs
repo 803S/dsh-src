@@ -302,3 +302,23 @@ test('[local.150] 孤儿待审卡（任务已不在账本）被同身份提案�
   assert.equal(row.status, "pending");
   assert.equal(f.sent.length, 0);
 });
+
+/* [local.150 用户拍板 2026-10-19] 「卡已经没了」的账本任务不能继续挡路：
+ * 陈旧卡被 TTL 收掉（或卡被拒/库被重置）之后，那笔 pending 任务永远等不到人（批准入口只认 pending 卡），
+ * 模型却会一直被告知“去等某个已经不存在的审批号”。撤销它并按新提案重新判定 —— 但绝不发送。 */
+test('[local.150] 卡已过期的账本任务不再挡路：撤销它、重新提案挂新卡、零发包', async (t) => {
+  const f = await fixture(t, writeHigh);
+  const session = randomUUID(), origin = "http://127.0.0.1:23457";
+  await f.manager.user.setScope(session, [origin]);
+  const url = `${origin}/index.php?m=admin&c=login&a=registerhandle`;
+  const args = { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "username=srctest_fixture&password2=fixture" };
+  let first; try { await f.manager.fetch(session, url, args); } catch (error) { first = error; }
+  assert.ok(first?.approvalId);
+  // 模拟“卡被 TTL 收掉、账本任务还没来得及撤”（进程在清扫中途退出）。
+  await f.store.updateApprovalExecution(session, first.approvalId, { status: "expired" });
+  let second; try { await f.manager.fetch(session, url, args); } catch (error) { second = error; }
+  assert.equal(second?.code, "SRC_GATE_PENDING_OR_REJECTED");
+  assert.notEqual(second.approvalId, first.approvalId, "不得把模型指回一张已过期的卡");
+  assert.equal(f.rows.get(second.approvalId)?.status, "pending", "重新提案要挂一张真正可裁决的新卡");
+  assert.equal(f.sent.length, 0, "撤销旧任务不是放行：一个字节都不发");
+});
