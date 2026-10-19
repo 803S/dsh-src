@@ -1,0 +1,31 @@
+flowchart LR
+ subgraph delegation[分工建议 · 已定位生产调用]
+  direction TB
+  I[src_add_intent<br/>新意图且为主会话] --> JD[Jev delegate]:::jev
+  JD --> DV[delegate / self / pending]
+  DV --> AR[写 delegationAdvice<br/>on 时呈现建议]
+  AR --> MAIN[主模型决定实际分工]
+  MAIN --> SPAWN[src_recon / src_audit / src_verify<br/>或 AgentTeams]
+  SPAWN --> SUB[src_submit → checkpoint<br/>完成回注 / 有界恢复]
+ end
+ subgraph skills[技能提醒 · 已定位生产调用]
+  direction TB
+  CT[建意图上下文<br/>旧 HTTP 分支也有提醒调用] --> RC[playbooks / capability / lessons<br/>关键词、文档内容、版本 identity]
+  RC --> SK[Jev skill-activate<br/>仅选择候选文档或 skip]:::jev
+  SK --> FILTER[on + 有效候选 + confidence ≥ 0.6<br/>会话去重 / 已读过滤]
+  FILTER --> HINT[返回文档提示与读取工具]
+  HINT --> READ[src_read_capability / src_read_lesson]
+  READ --> ACTION[主模型消费文档后行动<br/>推荐-读取-后续动作可关联]
+ end
+ subgraph browser[浏览器快速循环 · 导出函数与测试存在]
+  direction TB
+  OBS[snapshot → fingerprint<br/>代码提取 clickable refs]:::latent
+  OBS -.-> JB[Jev browser-index<br/>选候选 index 或 none]:::jev
+  JB -.-> GUARD[再取 snapshot<br/>指纹 / ref / URL / operation 硬检查]:::latent
+  GUARD -.-> CLICK[宿主 MCP click 或短 wait<br/>再次 snapshot + telemetry]:::latent
+ end
+ delegation ~~~ skills
+ skills ~~~ browser
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

@@ -1,0 +1,26 @@
+flowchart TB
+ P[冻结计划 + Jev 分类]:::jev --> G{宿主自动执行条件}
+ G -->|满足| A[Ledger task: active]
+ G -->|不满足| Q[task: pending<br/>SRC pending_approvals 可见]:::human
+ Q -->|补安全材料| S[新审批单<br/>旧 UI 单 superseded]
+ S --> Q
+ Q -->|用户拒绝| DEN[task: denied<br/>保留拒绝及操作约束]:::human
+ Q -->|可信 allow / 受限 allow-read| C[原单核验 + 操作锁<br/>assertExecutable / assertReviewedSafety]
+ C -->|通过| A
+ C -->|缺材料或核验失败| Q
+ A --> CL[claim 原请求额度<br/>执行时启动有效期]
+ CL --> F{已进入发送?}
+ F -->|没有发送且失败| NS[UI: failed-before-send<br/>核验零发送记录才可恢复]
+ NS -->|用户恢复原编号 + 核验| C
+ F -->|已发送| SEND[dispatch: dispatching]
+ SEND -->|确定响应| OK[dispatch: response_received<br/>UI: executed 或按回读结果 unknown]
+ SEND -->|超时 / 取消 / 进程崩溃| UN[dispatch: outcome_unknown<br/>UI: unknown / 资源与操作锁]:::human
+ UN --> REC[用户核对冻结请求及外部实际状态<br/>src-egress-reconcile]:::human
+ DEN --> REC
+ REC --> FOLLOW[核对本身不发送<br/>后续执行按有效授权与恢复条件处理]
+ RESTART[进程重启] --> LOAD[解密冻结计划 / 载入 scopes 与 Ledger]
+ LOAD -->|未发送待审仍可恢复| Q
+ LOAD -->|遗留 dispatching| UN
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

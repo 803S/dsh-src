@@ -1,0 +1,27 @@
+flowchart TB
+ A[DSH 工具执行] --> HI[host-integration.js<br/>审计工具目录 / 目标工具包装<br/>withEgressExecution 上下文]
+ HI --> HTTP[src_http / 扫描 / web_fetch<br/>目标请求与证据采集]
+ HI --> BASH[bash / curl / Python<br/>src-bash-executor.js]
+ HI --> BR[Browser Adapter<br/>browser sessions / runtime / worker]
+ HI --> BU[Burp Adapter<br/>冻结原生 HTTP/1 或 HTTP/2 参数]
+ HI --> O[其他能力<br/>capability executor / FOFA / passive lookup]
+ BASH --> OS[macOS sandbox-exec<br/>最终 spawn 限制网络与受保护文件]
+ OS --> PROXY[会话专属 MITM 代理<br/>proxy-process + mitm-addon.py]
+ BR --> PROXY
+ PROXY --> CS[本机控制服务<br/>control-server / duplex]
+ HTTP --> MG[Manager + Broker<br/>范围 / 计划 / 审批 / 配额]
+ CS --> MG
+ BU --> MG
+ MG --> J[Jev 风险判定]:::jev
+ J --> MG
+ MG -->|批准与领取| DIRECT[http-dispatch / pinned lookup]
+ MG -->|批准与领取| NATIVE[已注册 Burp 原生发送工具]
+ MG -->|逐笔验证冻结请求| PROXY
+ DIRECT --> TG[用户授权目标]
+ PROXY --> TG
+ NATIVE --> TG
+ O --> LOOK[专用适配策略<br/>公共查询 / 本地读取 / 受控能力]
+ HI -->|不在适配目录| DENY[拒绝未适配发送入口]:::human
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

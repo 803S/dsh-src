@@ -1,0 +1,57 @@
+flowchart TB
+ subgraph interaction[用户与交互层]
+  U[用户 · 目标 / 目的 / 原生命令]
+  UI[React SRC 工作台<br/>概览 · 行动中心 · 资产 · 探索图 · 报告]
+  DS[Jev 全局设置<br/>DecisionSettings.tsx]:::jev
+ end
+ subgraph host[DeepSeek Harness / Cordis 宿主]
+  S[Sessions / LLM / Tools / Commands<br/>Session Projections / Storage Domain]
+  A[SRC 主代理 · src-hunter<br/>规划 · 判断证据 · 推进研究 · 交付]
+  C[子代理与 AgentTeams<br/>recon / audit / verify<br/>checkpoint / submit / recovery]
+ end
+ subgraph domain[SRC 领域与工具层]
+  T[lib/src.js + tools/index.js<br/>目标 · 意图 · 事实 · 漏洞 · 覆盖 · 待办]
+  K[知识与能力<br/>playbooks · lessons · capability manifest]
+  V[证据准入 / fingerprint / report<br/>verification · reporting]
+ end
+ subgraph control[宿主控制面]
+  J[Jev 本地适配器<br/>jev-client.js<br/>风险 / 分工 / 技能 / 候选动作]:::jev
+  G[受控出口 Manager + Broker<br/>范围 · 冻结计划 · 硬边界 · 配额]
+  H[可信人工审批<br/>原请求绑定 · 安全材料 · 结果核对]:::human
+ end
+ subgraph persistence[持久化与投影]
+  DB[(SRC SQLite<br/>领域数据 / 提交批次)]
+  L[(Egress Ledger<br/>授权 / 发送 / 拒绝 / 未知锁)]
+  P[会话事件 → SRC projection<br/>合成事件 / committed state]
+ end
+ subgraph external[外部边界]
+  JP[Jev / SystemOne 服务<br/>配置的 endpoint]:::jev
+  X[受控传输<br/>HTTP · bash 代理 · Browser · Burp]
+  TARGET[授权目标系统]
+ end
+ U --> UI
+ U --> S
+ UI -->|用户命令| S
+ DS -->|配置命令| S
+ S --> A
+ A --> T
+ A --> C
+ C -->|src_submit| T
+ T --> K
+ T --> V
+ T --> DB
+ T -->|风险 / 建意图建议| J
+ T -->|目标请求| G
+ G -->|冻结请求评估| J
+ J <-->|脱敏决策协议| JP
+ J -->|分类结果| G
+ G -->|需要人工| H
+ H -->|审核原单| G
+ G --> L
+ G --> X --> TARGET
+ DB --> P --> UI
+ G -->|审批与观测| DB
+ C -->|完成回注| A
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

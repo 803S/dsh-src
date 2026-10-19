@@ -1,0 +1,39 @@
+sequenceDiagram
+ autonumber
+ participant A as 主/子代理工具
+ participant M as Egress Manager
+ participant B as Broker / Ledger
+ participant J as Jev adapter
+ participant P as SystemOne
+ participant U as 用户原生命令
+ participant X as 目标传输
+ A->>M: src_http / 已适配工具 / 有界计划
+ M->>M: 确认范围、排除域、scope 与凭据版本
+ alt 首次缺范围
+  M-->>A: 返回 SCOPE 审批，未发送
+  U->>M: 确认范围后再继续原任务
+ else 范围有效
+  M->>B: canonical request + bounded plan
+  B->>B: 冻结内容、排队、查测试对象归属
+  B->>J: assessEgressPlan(structuredClone(plan))
+  J->>P: 脱敏 state + choice questions
+  P-->>J: answers + confidence + probabilities
+  J-->>B: 校验后的 effect / risk / action
+  B->>B: 重查范围版本 + requiresHuman + allowsLowImpact
+  alt 自动执行条件全部满足
+   B->>B: 如有前置/回读，逐笔 Jev 审核
+   B-->>M: active 授权，原计划与配额绑定
+  else 高危 / 未知 / 失败 / 硬边界 / 材料要求
+   B-->>M: pending 冻结原单
+   M-->>A: approvalId；其他独立工作可继续
+   U->>M: /src-approve 原单
+   M->>B: 安全材料、原请求、辅助请求再次核验
+   B-->>M: 人工批准后的有效授权
+  end
+  M->>B: claim：摘要/次数/速率/期限/锁检查
+  B-->>M: 持久化 dispatching，领取本次额度
+  M->>X: 发送原请求（或前置→请求→验证）
+  X-->>M: 响应或异常
+  M->>B: response_received / outcome_unknown
+  M-->>A: 脱敏证据、状态、待处理原因
+ end

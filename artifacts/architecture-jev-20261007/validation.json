@@ -1,0 +1,62 @@
+{
+  "desktop": {
+    "diagrams": 8,
+    "overflow": false,
+    "placeholders": false,
+    "texts": [
+      {
+        "id": "dsh_system",
+        "w": 1714.71875,
+        "h": 1155.375
+      },
+      {
+        "id": "dsh_jev",
+        "w": 1112,
+        "h": 1174.890625
+      },
+      {
+        "id": "dsh_risk",
+        "w": 1140.796875,
+        "h": 1634.390625
+      },
+      {
+        "id": "dsh_approval",
+        "w": 1112,
+        "h": 1046.65625
+      },
+      {
+        "id": "dsh_transport",
+        "w": 1329.265625,
+        "h": 452.359375
+      },
+      {
+        "id": "dsh_advice",
+        "w": 1102.15625,
+        "h": 677.90625
+      },
+      {
+        "id": "dsh_data",
+        "w": 1307.25,
+        "h": 791.5625
+      },
+      {
+        "id": "dsh_wiring",
+        "w": 1112,
+        "h": 427.5625
+      }
+    ]
+  },
+  "mobile": {
+    "overflow": false,
+    "diagrams": 8
+  },
+  "zoom": "125%",
+  "expanded": true,
+  "escaped": true,
+  "errors": [],
+  "offline": {
+    "svgCount": 8,
+    "download": "dsh-jev-jev.svg",
+    "downloadFailure": null
+  }
+}

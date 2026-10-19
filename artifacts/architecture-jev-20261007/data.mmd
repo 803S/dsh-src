@@ -1,0 +1,34 @@
+flowchart TB
+ subgraph workflow[探索领域关系]
+  GO[goal] -->|spawns| IN[intent]
+  IN -->|yields| FA[fact]
+  FA -->|derived_from| IN2[新 intent]
+  IN -->|proves| FI[finding]
+  AS[assets / observations / research] --> FA
+  CO[coverage / endpoint manifests] --> IN
+  CP[checkpoints / user_todos] --> IN
+ end
+ ST[SrcStore + mutations<br/>事务性变更 / 批次提交]
+ DB[(storages/src-sessions.db<br/>src domain 的 SQLite backend)]
+ CM[src_commits / committed state<br/>权威批次与变更重放]
+ EV[src_events<br/>可配置事件旁账 / 双折叠检查]
+ SE[宿主会话事件<br/>tool call 与 synthetic events]
+ PJ[SRC session projection<br/>图 / 资产 / 覆盖 / 审批 / 待办]
+ UI[React 工作台 + 报告]
+ EG[(control/src-egress/ledger.sqlite<br/>tasks / dispatches / denials<br/>resource blocks / reconciliations)]
+ FR[AES-256-GCM 冻结计划<br/>AAD 绑定 session + digest<br/>原请求及凭据保留为密文]
+ SD[(settings/src-decision.json<br/>全局 Jev 配置与 key)]:::jev
+ MEM[Jev 进程内状态<br/>建议缓存 / 最近连接健康]:::jev
+ TEL[JSONL telemetry<br/>分类 / 延迟 / 建议采纳 / browser action]
+ GO & IN & FA & FI & AS & CO & CP --> ST --> DB
+ ST --> CM --> SE --> PJ --> UI
+ ST -.-> EV
+ EG -->|脱敏审批与发送观测| ST
+ FR --> EG
+ SD --> J[Jev adapter]:::jev
+ J --> MEM
+ J -.->|调用方记录| TEL
+ DB -->|报告读取| UI
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

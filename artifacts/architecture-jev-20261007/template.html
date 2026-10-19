@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DSH SRC · Jev 架构全景</title>
+<style>
+:root{--bg:#f5f7fb;--paper:#fff;--ink:#15243b;--muted:#54657b;--line:#dce4ed;--jev:#7035b5;--jev-bg:#f3eaff;--human:#955a13;--blue:#285e97}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:var(--ink);background:var(--bg)}a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}button{font:inherit;color:var(--ink);background:var(--paper);border:1px solid #c7d2e0;border-radius:7px;padding:5px 12px;cursor:pointer}button:hover{background:#eef2fa}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #965fdf;outline-offset:3px}.hero{background:#14243b;color:#fff;padding:52px max(28px,calc((100vw - 1440px)/2));border-bottom:5px solid #aa7be6}.hero small{letter-spacing:3px;color:#c6b3f2}.hero h1{font-size:42px;letter-spacing:-1px;margin:8px 0 14px;line-height:1.2}.hero h1 span{color:#caa6ff}.hero p{max-width:920px;color:#dbe3ef;font-size:17px;margin:12px 0}.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.meta span{font-size:12px;background:#263950;padding:4px 12px;border-radius:99px}.layout{max-width:1512px;margin:auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;padding:30px 28px 64px}aside{position:sticky;top:24px;align-self:start;font-size:13px}aside strong{display:block;margin:4px 0 12px;font-size:15px}aside a{display:block;padding:8px 0;color:var(--muted)}aside .legend{border-top:1px solid var(--line);margin-top:16px;padding-top:16px}.legend div{margin:8px 0}.swatch{display:inline-block;width:13px;height:13px;border-radius:3px;margin-right:8px;vertical-align:middle}.jev{background:#e9d3ff;border:1px solid #8952c3}.human{background:#fff0d1;border:1px solid #b47a29}.latent{background:#f2f4f8;border:1px dashed #738396}main{min-width:0}h2{font-size:24px;line-height:1.4;margin:0 0 5px}h3{font-size:17px;margin:0 0 8px}p{margin:8px 0 16px}.intro{padding:24px 26px;background:var(--paper);border:1px solid var(--line);border-radius:12px;margin-bottom:24px}.intro .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.intro strong{color:var(--jev)}.intro .boundary{border-left:3px solid #9d73d2;padding-left:15px}.section-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head p{margin:0;color:var(--muted);font-size:14px}.tools{display:flex;gap:5px;flex-wrap:wrap;flex-shrink:0}.tools button{font-size:12px;padding:5px 9px}.diagram-section{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:26px;overflow:hidden}.viewport{width:100%;overflow:auto;border:1px solid var(--line);background:#fff;border-radius:8px;padding:16px}.drawing{width:100%;min-width:0}.drawing svg{display:block;width:100%!important;height:auto!important;max-width:none!important}.note{font-size:13px;color:var(--muted);margin:14px 0 8px;line-height:1.8}.note:before{content:'阅读提示';font-weight:600;color:var(--jev);margin-right:10px}details{font-size:12px;margin-top:12px}summary{cursor:pointer;color:var(--muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f9;border-radius:6px;padding:18px;line-height:1.65;font-size:12px}code{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;vertical-align:top;padding:12px 13px;border-bottom:1px solid var(--line)}th{background:#f0f3f9;white-space:nowrap}td:first-child{font-weight:600;min-width:95px}.table-scroll{overflow:auto;margin:18px 0}.plain-section{margin:32px 0}ul{padding-left:20px}li{margin:8px 0}.banner{background:var(--jev-bg);border-left:4px solid #8750c1;padding:16px 20px;border-radius:0 8px 8px 0}.diagram-section.expanded{position:fixed;inset:16px;z-index:100;overflow:auto;margin:0;box-shadow:0 0 0 30px #14243bcc}.expanded .viewport{max-height:calc(100vh - 190px)}.footer{padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}@media(max-width:1000px){.layout{grid-template-columns:1fr}aside{position:static}aside nav{display:flex;flex-wrap:wrap;gap:8px 20px}aside .legend{display:flex;flex-wrap:wrap;gap:20px}.hero h1{font-size:34px}.section-head{align-items:flex-start;flex-direction:column}}@media(max-width:600px){.layout{padding:16px 12px}.hero{padding:30px 20px}.hero h1{font-size:30px}.intro,.diagram-section{padding:16px}.intro .grid{grid-template-columns:1fr}.viewport{padding:8px}.tools{gap:4px}h2{font-size:21px}}@media print{body{background:white}.hero{background:white;color:#15243b;padding:20px;border-bottom:2px solid #8750c1}.hero p,.hero small{color:#34455b}.meta span{background:#eee}.layout{display:block;padding:16px}aside,.tools,details{display:none}.diagram-section{break-inside:avoid;border:none;padding:0;margin-bottom:35px}.viewport{overflow:visible;border:none}.drawing{width:100%!important}.note{font-size:11px}.intro{border:none}.footer{font-size:10px}}
+</style></head><body>
+<header class="hero"><small>DSH SRC / ARCHITECTURE ATLAS</small><h1>项目架构全景<br><span>重点解剖 Jev</span></h1><p>从用户目标到探索图、从 Jev 判定到宿主执行，把调用关系、授权边界、持久化和接线状态放在同一份可追溯架构说明中。</p><div class="meta"><span>源码版本 0.1.0-local.124</span><span>HEAD 7d55c48</span><span>2026-10-07 · Asia/Shanghai</span><span>8 张分层图 · 32 个源码定位</span><span>静态源码分析 · 非运行状态探测</span></div></header>
+<div class="layout"><aside><strong>架构导航</strong><nav><a href="#system">01 · 全局架构</a><a href="#jev">02 · Jev 内部架构</a><a href="#risk">03 · 一笔请求如何经过 Jev</a><a href="#approval">04 · 审批与恢复生命周期</a><a href="#transport">05 · 目标流量执行边界</a><a href="#advice">06 · 分工、技能与浏览器三条链</a><a href="#data">07 · 领域数据、事件与 Jev 持久化</a><a href="#wiring">08 · 安装与运行接线</a><a href="#responsibilities">职责与模式矩阵</a><a href="#boundaries">关键边界与现状</a><a href="#sources">源码索引</a></nav><div class="legend"><div><i class="swatch jev"></i>紫色：Jev 相关</div><div><i class="swatch human"></i>金色：人工 / 待处理</div><div><i class="swatch latent"></i>虚线框：未定位生产接线</div></div><p>图可放大、展开与下载 SVG。放大后可横向滚动；Esc 退出展开。</p><button onclick="window.print()">打印 / 保存 PDF</button></aside>
+<main><div class="intro"><div class="grid"><div><h3>Jev 在项目中的位置</h3><p><strong>独立决策服务的本地适配层。</strong>输入是任务、真实请求或有限候选，输出是校验后的结构化分类。风险分类会被宿主执行策略消费；分工与技能是建议。</p></div><div class="boundary"><h3>实际执行权在哪里</h3><p>在 <code>Manager → Broker → Ledger → transport</code>。范围、冻结内容、硬边界、人工命令来源、额度和结果锁共同决定是否发送。Jev 不持有发送工具。</p></div></div></div>
+<section id="system" class="diagram-section"><div class="section-head"><div><h2>01 · 全局架构</h2><p>DSH 宿主、SRC 工作流、Jev 与目标执行之间的边界</p></div><div class="tools"><button data-action="minus" aria-label="缩小 01 · 全局架构">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 01 · 全局架构">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:system@@</div></div><p class="note">实线表示已定位的调用或数据关系，连线聚合了同类调用。Jev 服务处于供应商边界；用户对目标的网络授权由宿主控制。浏览器候选动作模块的生产接线状态见第 06 图。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart TB
+ subgraph interaction[用户与交互层]
+  U[用户 · 目标 / 目的 / 原生命令]
+  UI[React SRC 工作台&lt;br/&gt;概览 · 行动中心 · 资产 · 探索图 · 报告]
+  DS[Jev 全局设置&lt;br/&gt;DecisionSettings.tsx]:::jev
+ end
+ subgraph host[DeepSeek Harness / Cordis 宿主]
+  S[Sessions / LLM / Tools / Commands&lt;br/&gt;Session Projections / Storage Domain]
+  A[SRC 主代理 · src-hunter&lt;br/&gt;规划 · 判断证据 · 推进研究 · 交付]
+  C[子代理与 AgentTeams&lt;br/&gt;recon / audit / verify&lt;br/&gt;checkpoint / submit / recovery]
+ end
+ subgraph domain[SRC 领域与工具层]
+  T[lib/src.js + tools/index.js&lt;br/&gt;目标 · 意图 · 事实 · 漏洞 · 覆盖 · 待办]
+  K[知识与能力&lt;br/&gt;playbooks · lessons · capability manifest]
+  V[证据准入 / fingerprint / report&lt;br/&gt;verification · reporting]
+ end
+ subgraph control[宿主控制面]
+  J[Jev 本地适配器&lt;br/&gt;jev-client.js&lt;br/&gt;风险 / 分工 / 技能 / 候选动作]:::jev
+  G[受控出口 Manager + Broker&lt;br/&gt;范围 · 冻结计划 · 硬边界 · 配额]
+  H[可信人工审批&lt;br/&gt;原请求绑定 · 安全材料 · 结果核对]:::human
+ end
+ subgraph persistence[持久化与投影]
+  DB[(SRC SQLite&lt;br/&gt;领域数据 / 提交批次)]
+  L[(Egress Ledger&lt;br/&gt;授权 / 发送 / 拒绝 / 未知锁)]
+  P[会话事件 → SRC projection&lt;br/&gt;合成事件 / committed state]
+ end
+ subgraph external[外部边界]
+  JP[Jev / SystemOne 服务&lt;br/&gt;配置的 endpoint]:::jev
+  X[受控传输&lt;br/&gt;HTTP · bash 代理 · Browser · Burp]
+  TARGET[授权目标系统]
+ end
+ U --&gt; UI
+ U --&gt; S
+ UI --&gt;|用户命令| S
+ DS --&gt;|配置命令| S
+ S --&gt; A
+ A --&gt; T
+ A --&gt; C
+ C --&gt;|src_submit| T
+ T --&gt; K
+ T --&gt; V
+ T --&gt; DB
+ T --&gt;|风险 / 建意图建议| J
+ T --&gt;|目标请求| G
+ G --&gt;|冻结请求评估| J
+ J &lt;--&gt;|脱敏决策协议| JP
+ J --&gt;|分类结果| G
+ G --&gt;|需要人工| H
+ H --&gt;|审核原单| G
+ G --&gt; L
+ G --&gt; X --&gt; TARGET
+ DB --&gt; P --&gt; UI
+ G --&gt;|审批与观测| DB
+ C --&gt;|完成回注| A</pre></details></section><section id="jev" class="diagram-section"><div class="section-head"><div><h2>02 · Jev 内部架构</h2><p>四项产品职责，对应五种 taskType；风险包括单笔与整批计划</p></div><div class="tools"><button data-action="minus" aria-label="缩小 02 · Jev 内部架构">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 02 · Jev 内部架构">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:jev@@</div></div><p class="note">单笔正文上限 65,536 字节，审查 state 上限 1 MiB；默认超时 120 秒，可配 1–300 秒。风险不使用跨请求缓存；无供应商自动重试或切换。confidence 用于审计，不是安全概率。图中“allow”仍须经过宿主硬边界与执行检查。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart TB
+ subgraph inputs[调用入口]
+  R[risk-grade&lt;br/&gt;冻结单笔 HTTP]:::jev
+  SC[scan-plan&lt;br/&gt;有界请求集合及累计影响]:::jev
+  D[delegate&lt;br/&gt;新 intent 的任务形态]:::jev
+  K[skill-activate&lt;br/&gt;真实文档候选]:::jev
+  B[browser-index&lt;br/&gt;snapshot 与动作候选]:::latent
+ end
+ MOD[readDecisionSettings + decisionModes&lt;br/&gt;总开关 / on / shadow / off&lt;br/&gt;子会话与空候选检查]
+ CFG[(DSH_HOME/settings/src-decision.json&lt;br/&gt;每次调用读取 · 下一调用生效)]:::jev
+ SPEC[taskSpec&lt;br/&gt;state + questions + criteria&lt;br/&gt;风险追加 executionPolicy / objectClass]
+ SCRUB[reviewBody + scrub&lt;br/&gt;请求凭据与敏感字段脱敏&lt;br/&gt;JSON 原语法及重复键保留]
+ CACHE{仅 delegate / skill&lt;br/&gt;会话缓存命中?}
+ HIT[60 秒结果缓存&lt;br/&gt;最多 256 项]
+ POST[POST 配置 endpoint&lt;br/&gt;Bearer key / redirect:error&lt;br/&gt;超时与调用者取消联动]:::jev
+ PROVIDER[Jev / SystemOne&lt;br/&gt;模型默认 jev-latest]:::jev
+ VALID[validateAnswer&lt;br/&gt;合法 choice / confidence 0..1&lt;br/&gt;概率完整且和约等于 1&lt;br/&gt;choice 为最高概率类别]
+ MAP[宿主映射&lt;br/&gt;effect + objectClass → risk&lt;br/&gt;low 且 scopeChecked → allow]
+ RESULT[结构化决策&lt;br/&gt;action / effect / risk / mode&lt;br/&gt;confidence / probabilities / fallback]
+ FAIL[失败中性结果&lt;br/&gt;skill → skip；其余 → pending&lt;br/&gt;effect unknown / fallback true]:::human
+ CONSUMER[调用方策略消费&lt;br/&gt;建议是否采纳 / 是否允许自动执行]
+ R &amp; SC &amp; D &amp; K &amp; B --&gt; MOD
+ CFG --&gt; MOD
+ MOD --&gt; SPEC --&gt; SCRUB --&gt; CACHE
+ CACHE --&gt;|是| HIT --&gt; RESULT
+ CACHE --&gt;|否；风险和浏览器不缓存| POST
+ POST &lt;--&gt; PROVIDER
+ POST --&gt; VALID --&gt; MAP --&gt; RESULT --&gt; CONSUMER
+ MOD --&gt;|禁用 / 配置失败 / 不适用| FAIL
+ SCRUB --&gt;|不可审查 / 超限| FAIL
+ POST --&gt;|网络 / 超时 / JSON 错误| FAIL
+ VALID --&gt;|schema 错误| FAIL
+ FAIL --&gt; CONSUMER</pre></details></section><section id="risk" class="diagram-section"><div class="section-head"><div><h2>03 · 一笔请求如何经过 Jev</h2><p>当前托管出口主路径；扫描计划复用 Broker，但整批评估一次</p></div><div class="tools"><button data-action="minus" aria-label="缩小 03 · 一笔请求如何经过 Jev">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 03 · 一笔请求如何经过 Jev">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:risk@@</div></div><p class="note">前置条件与回读并非因 GET/HEAD 就可信；自动及人工路径共用检查并可独立调用 Jev。扫描审批不逐笔重新调用模型，但出口逐笔匹配冻结清单、次数与速率。具体执行还会检查取消信号、会话生命周期及 scope 版本。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>sequenceDiagram
+ autonumber
+ participant A as 主/子代理工具
+ participant M as Egress Manager
+ participant B as Broker / Ledger
+ participant J as Jev adapter
+ participant P as SystemOne
+ participant U as 用户原生命令
+ participant X as 目标传输
+ A-&gt;&gt;M: src_http / 已适配工具 / 有界计划
+ M-&gt;&gt;M: 确认范围、排除域、scope 与凭据版本
+ alt 首次缺范围
+  M--&gt;&gt;A: 返回 SCOPE 审批，未发送
+  U-&gt;&gt;M: 确认范围后再继续原任务
+ else 范围有效
+  M-&gt;&gt;B: canonical request + bounded plan
+  B-&gt;&gt;B: 冻结内容、排队、查测试对象归属
+  B-&gt;&gt;J: assessEgressPlan(structuredClone(plan))
+  J-&gt;&gt;P: 脱敏 state + choice questions
+  P--&gt;&gt;J: answers + confidence + probabilities
+  J--&gt;&gt;B: 校验后的 effect / risk / action
+  B-&gt;&gt;B: 重查范围版本 + requiresHuman + allowsLowImpact
+  alt 自动执行条件全部满足
+   B-&gt;&gt;B: 如有前置/回读，逐笔 Jev 审核
+   B--&gt;&gt;M: active 授权，原计划与配额绑定
+  else 高危 / 未知 / 失败 / 硬边界 / 材料要求
+   B--&gt;&gt;M: pending 冻结原单
+   M--&gt;&gt;A: approvalId；其他独立工作可继续
+   U-&gt;&gt;M: /src-approve 原单
+   M-&gt;&gt;B: 安全材料、原请求、辅助请求再次核验
+   B--&gt;&gt;M: 人工批准后的有效授权
+  end
+  M-&gt;&gt;B: claim：摘要/次数/速率/期限/锁检查
+  B--&gt;&gt;M: 持久化 dispatching，领取本次额度
+  M-&gt;&gt;X: 发送原请求（或前置→请求→验证）
+  X--&gt;&gt;M: 响应或异常
+  M-&gt;&gt;B: response_received / outcome_unknown
+  M--&gt;&gt;A: 脱敏证据、状态、待处理原因
+ end</pre></details></section><section id="approval" class="diagram-section"><div class="section-head"><div><h2>04 · 审批与恢复生命周期</h2><p>流程示意；区分任务授权、单次发送、UI 执行状态</p></div><div class="tools"><button data-action="minus" aria-label="缩小 04 · 审批与恢复生命周期">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 04 · 审批与恢复生命周期">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:approval@@</div></div><p class="note">人工等待没有默认过期时间；有界执行期限从实际启动/发送开始。已发送而结果未知不会自动重放，也不宣称 exactly-once。allow-read 只适用于宿主允许的单笔未知影响确认入口，不能用自报 read/compute 覆盖 Jev 已判定高危。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart TB
+ P[冻结计划 + Jev 分类]:::jev --&gt; G{宿主自动执行条件}
+ G --&gt;|满足| A[Ledger task: active]
+ G --&gt;|不满足| Q[task: pending&lt;br/&gt;SRC pending_approvals 可见]:::human
+ Q --&gt;|补安全材料| S[新审批单&lt;br/&gt;旧 UI 单 superseded]
+ S --&gt; Q
+ Q --&gt;|用户拒绝| DEN[task: denied&lt;br/&gt;保留拒绝及操作约束]:::human
+ Q --&gt;|可信 allow / 受限 allow-read| C[原单核验 + 操作锁&lt;br/&gt;assertExecutable / assertReviewedSafety]
+ C --&gt;|通过| A
+ C --&gt;|缺材料或核验失败| Q
+ A --&gt; CL[claim 原请求额度&lt;br/&gt;执行时启动有效期]
+ CL --&gt; F{已进入发送?}
+ F --&gt;|没有发送且失败| NS[UI: failed-before-send&lt;br/&gt;核验零发送记录才可恢复]
+ NS --&gt;|用户恢复原编号 + 核验| C
+ F --&gt;|已发送| SEND[dispatch: dispatching]
+ SEND --&gt;|确定响应| OK[dispatch: response_received&lt;br/&gt;UI: executed 或按回读结果 unknown]
+ SEND --&gt;|超时 / 取消 / 进程崩溃| UN[dispatch: outcome_unknown&lt;br/&gt;UI: unknown / 资源与操作锁]:::human
+ UN --&gt; REC[用户核对冻结请求及外部实际状态&lt;br/&gt;src-egress-reconcile]:::human
+ DEN --&gt; REC
+ REC --&gt; FOLLOW[核对本身不发送&lt;br/&gt;后续执行按有效授权与恢复条件处理]
+ RESTART[进程重启] --&gt; LOAD[解密冻结计划 / 载入 scopes 与 Ledger]
+ LOAD --&gt;|未发送待审仍可恢复| Q
+ LOAD --&gt;|遗留 dispatching| UN</pre></details></section><section id="transport" class="diagram-section"><div class="section-head"><div><h2>05 · 目标流量执行边界</h2><p>宿主工具包装、网络沙箱和各适配器共同约束实际发送</p></div><div class="tools"><button data-action="minus" aria-label="缩小 05 · 目标流量执行边界">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 05 · 目标流量执行边界">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:transport@@</div></div><p class="note">bash 网络约束当前明确仅支持 darwin，其他平台拒绝；不是跨平台能力承诺。Jev API、公共检索、目标流量属于不同用途，图中未把所有外部请求误画成同一目标审批。Burp 的范围/版本核对不等于控制 Burp 自身的 DNS 解析；手工 Burp 与未适配扩展行为不在该链路内。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart TB
+ A[DSH 工具执行] --&gt; HI[host-integration.js&lt;br/&gt;审计工具目录 / 目标工具包装&lt;br/&gt;withEgressExecution 上下文]
+ HI --&gt; HTTP[src_http / 扫描 / web_fetch&lt;br/&gt;目标请求与证据采集]
+ HI --&gt; BASH[bash / curl / Python&lt;br/&gt;src-bash-executor.js]
+ HI --&gt; BR[Browser Adapter&lt;br/&gt;browser sessions / runtime / worker]
+ HI --&gt; BU[Burp Adapter&lt;br/&gt;冻结原生 HTTP/1 或 HTTP/2 参数]
+ HI --&gt; O[其他能力&lt;br/&gt;capability executor / FOFA / passive lookup]
+ BASH --&gt; OS[macOS sandbox-exec&lt;br/&gt;最终 spawn 限制网络与受保护文件]
+ OS --&gt; PROXY[会话专属 MITM 代理&lt;br/&gt;proxy-process + mitm-addon.py]
+ BR --&gt; PROXY
+ PROXY --&gt; CS[本机控制服务&lt;br/&gt;control-server / duplex]
+ HTTP --&gt; MG[Manager + Broker&lt;br/&gt;范围 / 计划 / 审批 / 配额]
+ CS --&gt; MG
+ BU --&gt; MG
+ MG --&gt; J[Jev 风险判定]:::jev
+ J --&gt; MG
+ MG --&gt;|批准与领取| DIRECT[http-dispatch / pinned lookup]
+ MG --&gt;|批准与领取| NATIVE[已注册 Burp 原生发送工具]
+ MG --&gt;|逐笔验证冻结请求| PROXY
+ DIRECT --&gt; TG[用户授权目标]
+ PROXY --&gt; TG
+ NATIVE --&gt; TG
+ O --&gt; LOOK[专用适配策略&lt;br/&gt;公共查询 / 本地读取 / 受控能力]
+ HI --&gt;|不在适配目录| DENY[拒绝未适配发送入口]:::human</pre></details></section><section id="advice" class="diagram-section"><div class="section-head"><div><h2>06 · 分工、技能与浏览器三条链</h2><p>实线为生产调用；虚线框表示已有实现但未发现生产入口接线</p></div><div class="tools"><button data-action="minus" aria-label="缩小 06 · 分工、技能与浏览器三条链">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 06 · 分工、技能与浏览器三条链">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:advice@@</div></div><p class="note">全仓调用检索只发现 browser-loop.js 导出与测试使用，未发现 lib/src、preset 或 UI 的生产调用点；实际浏览器出站适配已存在，但不能据此认定 Jev 快速循环已接入。托管 src_http 在 Manager 路径提前返回，不经过旧 HTTP 分支里的技能提醒。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart LR
+ subgraph delegation[分工建议 · 已定位生产调用]
+  direction TB
+  I[src_add_intent&lt;br/&gt;新意图且为主会话] --&gt; JD[Jev delegate]:::jev
+  JD --&gt; DV[delegate / self / pending]
+  DV --&gt; AR[写 delegationAdvice&lt;br/&gt;on 时呈现建议]
+  AR --&gt; MAIN[主模型决定实际分工]
+  MAIN --&gt; SPAWN[src_recon / src_audit / src_verify&lt;br/&gt;或 AgentTeams]
+  SPAWN --&gt; SUB[src_submit → checkpoint&lt;br/&gt;完成回注 / 有界恢复]
+ end
+ subgraph skills[技能提醒 · 已定位生产调用]
+  direction TB
+  CT[建意图上下文&lt;br/&gt;旧 HTTP 分支也有提醒调用] --&gt; RC[playbooks / capability / lessons&lt;br/&gt;关键词、文档内容、版本 identity]
+  RC --&gt; SK[Jev skill-activate&lt;br/&gt;仅选择候选文档或 skip]:::jev
+  SK --&gt; FILTER[on + 有效候选 + confidence ≥ 0.6&lt;br/&gt;会话去重 / 已读过滤]
+  FILTER --&gt; HINT[返回文档提示与读取工具]
+  HINT --&gt; READ[src_read_capability / src_read_lesson]
+  READ --&gt; ACTION[主模型消费文档后行动&lt;br/&gt;推荐-读取-后续动作可关联]
+ end
+ subgraph browser[浏览器快速循环 · 导出函数与测试存在]
+  direction TB
+  OBS[snapshot → fingerprint&lt;br/&gt;代码提取 clickable refs]:::latent
+  OBS -.-&gt; JB[Jev browser-index&lt;br/&gt;选候选 index 或 none]:::jev
+  JB -.-&gt; GUARD[再取 snapshot&lt;br/&gt;指纹 / ref / URL / operation 硬检查]:::latent
+  GUARD -.-&gt; CLICK[宿主 MCP click 或短 wait&lt;br/&gt;再次 snapshot + telemetry]:::latent
+ end
+ delegation ~~~ skills
+ skills ~~~ browser</pre></details></section><section id="data" class="diagram-section"><div class="section-head"><div><h2>07 · 领域数据、事件与 Jev 持久化</h2><p>界面状态、执行授权与供应商配置分开存放</p></div><div class="tools"><button data-action="minus" aria-label="缩小 07 · 领域数据、事件与 Jev 持久化">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 07 · 领域数据、事件与 Jev 持久化">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:data@@</div></div><p class="note">路径均相对 DSH_HOME，未读取本机运行配置或凭据。SQLite 领域数据与出口 Ledger 是两个存储边界；src_events 是可配置旁账，不能把它单独描述成全部业务状态的唯一来源。Telemetry 失败不阻塞执行。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart TB
+ subgraph workflow[探索领域关系]
+  GO[goal] --&gt;|spawns| IN[intent]
+  IN --&gt;|yields| FA[fact]
+  FA --&gt;|derived_from| IN2[新 intent]
+  IN --&gt;|proves| FI[finding]
+  AS[assets / observations / research] --&gt; FA
+  CO[coverage / endpoint manifests] --&gt; IN
+  CP[checkpoints / user_todos] --&gt; IN
+ end
+ ST[SrcStore + mutations&lt;br/&gt;事务性变更 / 批次提交]
+ DB[(storages/src-sessions.db&lt;br/&gt;src domain 的 SQLite backend)]
+ CM[src_commits / committed state&lt;br/&gt;权威批次与变更重放]
+ EV[src_events&lt;br/&gt;可配置事件旁账 / 双折叠检查]
+ SE[宿主会话事件&lt;br/&gt;tool call 与 synthetic events]
+ PJ[SRC session projection&lt;br/&gt;图 / 资产 / 覆盖 / 审批 / 待办]
+ UI[React 工作台 + 报告]
+ EG[(control/src-egress/ledger.sqlite&lt;br/&gt;tasks / dispatches / denials&lt;br/&gt;resource blocks / reconciliations)]
+ FR[AES-256-GCM 冻结计划&lt;br/&gt;AAD 绑定 session + digest&lt;br/&gt;原请求及凭据保留为密文]
+ SD[(settings/src-decision.json&lt;br/&gt;全局 Jev 配置与 key)]:::jev
+ MEM[Jev 进程内状态&lt;br/&gt;建议缓存 / 最近连接健康]:::jev
+ TEL[JSONL telemetry&lt;br/&gt;分类 / 延迟 / 建议采纳 / browser action]
+ GO &amp; IN &amp; FA &amp; FI &amp; AS &amp; CO &amp; CP --&gt; ST --&gt; DB
+ ST --&gt; CM --&gt; SE --&gt; PJ --&gt; UI
+ ST -.-&gt; EV
+ EG --&gt;|脱敏审批与发送观测| ST
+ FR --&gt; EG
+ SD --&gt; J[Jev adapter]:::jev
+ J --&gt; MEM
+ J -.-&gt;|调用方记录| TEL
+ DB --&gt;|报告读取| UI</pre></details></section><section id="wiring" class="diagram-section"><div class="section-head"><div><h2>08 · 安装与运行接线</h2><p>npm bundle 通过 patch 与 preset 组合进宿主</p></div><div class="tools"><button data-action="minus" aria-label="缩小 08 · 安装与运行接线">−</button><button data-action="fit">适应宽度</button><button data-action="plus" aria-label="放大 08 · 安装与运行接线">＋</button><button data-action="svg">下载 SVG</button><button data-action="expand">展开</button></div></div><div class="viewport" tabindex="0" aria-label="可横向滚动的架构图"><div class="drawing">@@SVG:wiring@@</div></div><p class="note">本包是 DeepSeek Harness 插件 bundle，不是独立 Web 后端。业务逻辑主要在 lib/src.js 与 lib/src/；UI 可编辑源在 src/dsh-client-ui-src，lib/ui-src.client.js 为构建产物。图中的宿主服务来自 peer 依赖。</p><details><summary>查看可编辑 Mermaid 源码</summary><pre>flowchart LR
+ PKG[package.json&lt;br/&gt;@lihua_dis/dsh-src&lt;br/&gt;0.1.0-local.124] --&gt; PATCH[cordis.patch.yml]
+ PKG --&gt; EX[exports 子路径]
+ PATCH --&gt; UI[ui-src&lt;br/&gt;浏览器加载 client bundle]
+ UI --&gt; TS[src/dsh-client-ui-src&lt;br/&gt;React + @xyflow/react + tsdown]
+ TS --&gt; BUILD[lib/ui-src.client.js]
+ PATCH --&gt; SQLITE[storage-src-sqlite&lt;br/&gt;src domain 路由覆盖]
+ PATCH --&gt; DA[src-domain-admin&lt;br/&gt;域数据命令 + Jev 配置命令]:::jev
+ PATCH --&gt; EP[src-egress&lt;br/&gt;惰性 Manager 单例]
+ PATCH --&gt; BE[src-bash-executor&lt;br/&gt;替换原 bash-sandbox row]
+ PATCH --&gt; PR[preset-root&lt;br/&gt;注册包内预设根]
+ PR --&gt; PRE[src-hunter preset&lt;br/&gt;agent.cordis.yml]
+ PRE --&gt; SRC[src plugin&lt;br/&gt;工具、指令、投影、命令]
+ PRE --&gt; CHILD[src-subagent&lt;br/&gt;recon / audit / verify]
+ SRC --&gt; EP
+ BE --&gt; EP
+ DA --&gt; SET[Jev 全局配置&lt;br/&gt;相同 DSH_HOME 下共用]:::jev
+ EX --&gt; ENTRY[lib/index.js / lib/ui-src.js&lt;br/&gt;空 apply 占位入口]</pre></details></section>
+<section id="responsibilities" class="plain-section"><h2>职责与模式矩阵</h2><p>以下为当前代码能力，不推断本机配置是否开启。</p><div class="table-scroll"><table><thead><tr><th>职责</th><th>taskType</th><th>实际调用位置</th><th>适用会话</th><th>输出与权限</th></tr></thead><tbody><tr><td>风险 · 单笔</td><td>risk-grade</td><td>Manager → Broker → advisor；旧 src_http 另有直调</td><td>主、子会话均可</td><td>effect/objectClass → risk/action；最终权限由宿主决定</td></tr><tr><td>风险 · 扫描</td><td>scan-plan</td><td>有界计划提交 → Broker → advisor</td><td>主、子会话均可</td><td>整体评估；逐笔执行靠冻结计划、配额与硬检查</td></tr><tr><td>分工</td><td>delegate</td><td>src_add_intent 新意图</td><td>主会话</td><td>on 时返回建议；不会自行 spawn</td></tr><tr><td>技能</td><td>skill-activate</td><td>建意图；旧 HTTP 分支</td><td>主会话</td><td>on + confidence≥0.6 + 去重才提示；不会自动执行文档</td></tr><tr><td>浏览器</td><td>browser-index</td><td>browser-loop 导出模块与测试</td><td>适配器允许子会话</td><td>候选 index；生产循环入口未定位</td></tr></tbody></table></div><h3>开关如何影响行为</h3><div class="table-scroll"><table><thead><tr><th>模式</th><th>行为</th><th>阅读边界</th></tr></thead><tbody><tr><td>总开关 disabled</td><td>不调用 Jev（显式合成 probe 除外）</td><td>设置保留；默认 disabled，不代表本机实际启用状态。</td></tr><tr><td>risk = on</td><td>允许宿主消费 Jev 的低风险结论</td><td>还须范围、请求硬边界、归属、配额、安全材料等全部通过。</td></tr><tr><td>risk = shadow</td><td>允许评估但不提供托管自动授权</td><td>旧 httpDecisionPolicy 返回 legacy-rules；托管 allowsLowImpact 明确要求 on。</td></tr><tr><td>risk = off / 服务失败</td><td>没有有效 Jev 低风险授权</td><td>托管路径挂人工；旧 HTTP 分支按原规则。</td></tr><tr><td>delegate / skill = shadow</td><td>只评估与记录</td><td>不把建议作为 on 模式提示交给主模型。</td></tr><tr><td>browser 设置</td><td>配置与客户端分派已实现</td><td>未定位生产 runBrowserLoop 接线；不将设置开关描述成完整上线证明。</td></tr></tbody></table></div></section>
+<section id="boundaries" class="plain-section"><h2>关键边界与当前接线状态</h2><ul>
+<li><strong>两条 HTTP 路径：</strong>受控上下文存在时，<code>src_http</code> 在 Manager 分支直接返回；后面的 <code>httpDecisionPolicy</code> 是仍保留的非托管分支。不能把两者画成每笔请求连续经过的双重 Jev 审核。</li>
+<li><strong>风险审查不是漏洞定级：</strong>Jev 识别本次验证的实际副作用；漏洞成立与严重度由证据准入、研究数据和主/复核代理流程处理。</li>
+<li><strong>文件测试例外：</strong>新测试文件及已验证自有测试文件有受限自动路径。后者需精确 URL、强 ETag / If-Match、账户和 scope/credential 版本等宿主证据；自称“自己的资源”不够。</li>
+<li><strong>浏览器两层能力：</strong>Browser 出站适配有生产代码；Jev <code>runBrowserLoop</code> 目前只定位到模块与测试。设置页的 browser 选项不等于快速循环已在生产调用。</li>
+<li><strong>Laya 历史命名：</strong><code>laya-client.js</code>、历史环境变量及 telemetry 字段保留，但 Jev 主调用点导入 <code>jev-client.js</code>。不存在已证实的 Jev 失败后自动回退 Laya 链路。</li>
+<li><strong>配置与数据隔离：</strong>全局 Jev 设置独立于目标会话 infra、领域数据删除和会话投影。原目标请求凭据在本地注入，发送给 Jev 的审查材料会脱敏；冻结原请求存 Ledger 密文。</li>
+<li><strong>浏览器置信度与风险置信度不同：</strong>技能提示有 0.6 消费阈值；风险策略没有附加“0.9 才安全”的阈值。不能将 confidence 当作经过校准的安全概率。</li>
+<li><strong>观察范围：</strong>本说明依据当前工作区源码与静态调用搜索；没有启动 DSH、连接 Jev、访问目标、读取运行凭据或重新验证生产部署。测试文件只作为调用与边界的佐证，不等于本次重新跑过全部业务测试。</li>
+</ul><div class="banner">最重要的阅读顺序：全局图 → Jev 内部图 → 请求时序 → 审批恢复。第 05–08 图用于深入追踪执行边界、其他职责、数据和部署。</div></section>
+<section id="sources" class="plain-section"><h2>源码索引</h2><p>位置按本次工作区标注。链接相对仓库目录；分享单个 HTML 后仍保留文件名和行号，但源码链接需原目录结构。</p><div class="table-scroll"><table><thead><tr><th>组件</th><th>源码位置</th><th>阅读内容</th></tr></thead><tbody><tr><td>安装组合</td><td><a href="../../cordis.patch.yml" title="源码第 24 行"><code>cordis.patch.yml:24</code></a></td><td>UI、SQLite 路由、域管理、preset、出口与 bash 执行器的组合入口。</td></tr><tr><td>SRC 组合根</td><td><a href="../../lib/src.js" title="源码第 56 行"><code>lib/src.js:56</code></a></td><td>工具、领域 schema、命令与会话 projection；不是一个仅含工具的薄文件。</td></tr><tr><td>托管 HTTP 分支</td><td><a href="../../lib/src/tools/index.js" title="源码第 1837 行"><code>lib/src/tools/index.js:1837</code></a></td><td>有托管上下文即进入 Manager 并提前返回；后面才是旧策略路径。</td></tr><tr><td>Jev 请求入口</td><td><a href="../../lib/src/decision/jev-client.js" title="源码第 43 行"><code>lib/src/decision/jev-client.js:43</code></a></td><td>调用适用性、配置、脱敏、缓存、请求、响应校验及分类映射。</td></tr><tr><td>Jev 任务协议</td><td><a href="../../lib/src/decision/jev-client.js" title="源码第 21 行"><code>lib/src/decision/jev-client.js:21</code></a></td><td>五种 taskType 的 state、criteria 和判定说明。</td></tr><tr><td>供应商响应校验</td><td><a href="../../lib/src/decision/jev-client.js" title="源码第 33 行"><code>lib/src/decision/jev-client.js:33</code></a></td><td>confidence、所有候选概率、概率和以及最大值一致性。</td></tr><tr><td>全局设置</td><td><a href="../../lib/src/decision/service-settings.js" title="源码第 7 行"><code>lib/src/decision/service-settings.js:7</code></a></td><td>默认 disabled；endpoint 为空；model=jev-latest；原子写入与文件权限。</td></tr><tr><td>用户设置命令</td><td><a href="../../lib/src/decision/service-commands.js" title="源码第 4 行"><code>lib/src/decision/service-commands.js:4</code></a></td><td>status / save / test；recordInput:false，不注册为模型工具。</td></tr><tr><td>风险评估路由</td><td><a href="../../lib/src/egress/advisor.js" title="源码第 6 行"><code>lib/src/egress/advisor.js:6</code></a></td><td>单笔走 risk-grade，多请求走 scan-plan。</td></tr><tr><td>批准策略</td><td><a href="../../lib/src/egress/decision-policy.js" title="源码第 6 行"><code>lib/src/egress/decision-policy.js:6</code></a></td><td>mode=on、low/allow 与请求方法、测试对象归属等联合检查。</td></tr><tr><td>Broker</td><td><a href="../../lib/src/egress/broker.js" title="源码第 64 行"><code>lib/src/egress/broker.js:64</code></a></td><td>排队、范围重验、对象归属、Jev 评估、自动审批条件、冻结落账。</td></tr><tr><td>辅助请求审查</td><td><a href="../../lib/src/egress/broker.js" title="源码第 51 行"><code>lib/src/egress/broker.js:51</code></a></td><td>前置/回读逐笔审查；自动及人工执行共享。</td></tr><tr><td>出口协调器</td><td><a href="../../lib/src/egress/manager.js" title="源码第 23 行"><code>lib/src/egress/manager.js:23</code></a></td><td>范围、待审、会话代理、原生发送、操作锁、恢复与核对。</td></tr><tr><td>Ledger</td><td><a href="../../lib/src/egress/ledger.js" title="源码第 6 行"><code>lib/src/egress/ledger.js:6</code></a></td><td>独立 SQLite；事务领取；崩溃时把 dispatching 标为 outcome_unknown。</td></tr><tr><td>冻结密文</td><td><a href="../../lib/src/egress/frozen-plan.js" title="源码第 6 行"><code>lib/src/egress/frozen-plan.js:6</code></a></td><td>AES-256-GCM；AAD 绑定会话和计划摘要。</td></tr><tr><td>安全材料</td><td><a href="../../lib/src/egress/safety-plan.js" title="源码第 44 行"><code>lib/src/egress/safety-plan.js:44</code></a></td><td>读写语义、备份、前置和回读哈希、不可逆外发确认。</td></tr><tr><td>实际执行顺序</td><td><a href="../../lib/src/egress/safety-plan.js" title="源码第 86 行"><code>lib/src/egress/safety-plan.js:86</code></a></td><td>前置条件→发送→回读；没有自动重放或补偿。</td></tr><tr><td>用户命令来源验证</td><td><a href="../../lib/src/egress/user-commands.js" title="源码第 6 行"><code>lib/src/egress/user-commands.js:6</code></a></td><td>要求真实 command/run 的 source.kind=user；模型执行上下文不可批准。</td></tr><tr><td>工具总边界</td><td><a href="../../lib/src/egress/host-integration.js" title="源码第 22 行"><code>lib/src/egress/host-integration.js:22</code></a></td><td>审计工具目录、MCP/Browser/Burp/能力适配与上下文包装。</td></tr><tr><td>OS 网络约束</td><td><a href="../../lib/src/egress/executor.js" title="源码第 6 行"><code>lib/src/egress/executor.js:6</code></a></td><td>darwin sandbox-exec；限制最终进程启动时网络。</td></tr><tr><td>旧 HTTP 策略</td><td><a href="../../lib/src/decision/http-policy.js" title="源码第 19 行"><code>lib/src/decision/http-policy.js:19</code></a></td><td>非托管分支仍在；off/shadow 使用旧规则，DELETE 等保留硬边界。</td></tr><tr><td>分工建议调用</td><td><a href="../../lib/src/tools/index.js" title="源码第 2232 行"><code>lib/src/tools/index.js:2232</code></a></td><td>新 intent 才评估；仅主会话；on 才写入建议。</td></tr><tr><td>知识候选</td><td><a href="../../lib/src/decision/knowledge-recall.js" title="源码第 34 行"><code>lib/src/decision/knowledge-recall.js:34</code></a></td><td>遍历真实知识库和 lessons，按上下文词与文档版本构造候选。</td></tr><tr><td>技能去重</td><td><a href="../../lib/src/decision/skill-recall.js" title="源码第 92 行"><code>lib/src/decision/skill-recall.js:92</code></a></td><td>推荐、读取、后续动作关联，进程内会话去重。</td></tr><tr><td>浏览器循环</td><td><a href="../../lib/src/decision/browser-loop.js" title="源码第 137 行"><code>lib/src/decision/browser-loop.js:137</code></a></td><td>候选选择与硬检查已有实现；仓库内仅定位到测试调用。</td></tr><tr><td>SRC 存储</td><td><a href="../../lib/src/store.js" title="源码第 24 行"><code>lib/src/store.js:24</code></a></td><td>领域写入、提交批次与恢复。</td></tr><tr><td>领域表定义</td><td><a href="../../lib/src.js" title="源码第 1542 行"><code>lib/src.js:1542</code></a></td><td>目标、意图、事实、漏洞、资产、覆盖、研究、审批、待办等表。</td></tr><tr><td>事件旁账</td><td><a href="../../lib/src/event-store.js" title="源码第 9 行"><code>lib/src/event-store.js:9</code></a></td><td>事件幂等与可配置双折叠，不能替代现有 projection 契约。</td></tr><tr><td>SQLite 后端</td><td><a href="../../lib/storage-sqlite.js" title="源码第 3 行"><code>lib/storage-sqlite.js:3</code></a></td><td>node:sqlite 实现 storage-domain KV unit。</td></tr><tr><td>Jev 设置 UI</td><td><a href="../../src/dsh-client-ui-src/src/client/DecisionSettings.tsx" title="源码第 16 行"><code>src/dsh-client-ui-src/src/client/DecisionSettings.tsx:16</code></a></td><td>全局连接配置与四项职责设置。</td></tr><tr><td>人工审批 UI</td><td><a href="../../src/dsh-client-ui-src/src/client/ActionCenter.tsx" title="源码第 121 行"><code>src/dsh-client-ui-src/src/client/ActionCenter.tsx:121</code></a></td><td>待审、allow-read 与未发送恢复的交互。</td></tr><tr><td>最近生命周期修复</td><td><a href="../../docs/implementation/approval-lifecycle-audit-20261007.md" title="源码第 1 行"><code>docs/implementation/approval-lifecycle-audit-20261007.md:1</code></a></td><td>local.124 文档；作为背景佐证，架构以当前源码为准。</td></tr></tbody></table></div></section>
+<footer class="footer">交付包含单文件离线 HTML、8 张独立 SVG、Mermaid 源文件和 Markdown 架构说明。图为当前实现的逻辑架构，不表示所有模块是独立进程，也不表示各分支同时执行。</footer>
+</main></div><script>
+document.querySelectorAll('.diagram-section').forEach(section=>{
+ const drawing=section.querySelector('.drawing');
+ let scale=1;
+ const svg=drawing.querySelector('svg');
+ const available=section.querySelector('.viewport').clientWidth-32;
+ const natural=svg.viewBox.baseVal.width;
+ if(natural*.8>available){scale=natural*.8/available;drawing.style.width=(scale*100)+'%';}
+ else if(natural<available){scale=natural/available;drawing.style.width=(scale*100)+'%';}
+ section.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',()=>{
+  const action=button.dataset.action;
+  if(action==='plus'||action==='minus'||action==='fit'){scale=action==='fit'?1:Math.max(.25,Math.min(16,scale+(action==='plus'?.25:-.25)));drawing.style.width=(scale*100)+'%';section.querySelector('[data-action="fit"]').textContent=scale===1?'适应宽度':Math.round(scale*100)+'%';}
+  if(action==='expand'){section.classList.toggle('expanded');button.textContent=section.classList.contains('expanded')?'收起':'展开';button.setAttribute('aria-expanded',String(section.classList.contains('expanded')));}
+  if(action==='svg'){const blob=new Blob([drawing.querySelector('svg').outerHTML],{type:'image/svg+xml;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='dsh-jev-'+section.id+'.svg';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+ }));
+});document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.expanded').forEach(s=>{s.classList.remove('expanded');s.querySelector('[data-action="expand"]').textContent='展开';s.querySelector('[data-action="expand"]').setAttribute('aria-expanded','false');});});
+</script></body></html>

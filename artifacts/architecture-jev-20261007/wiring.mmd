@@ -1,0 +1,21 @@
+flowchart LR
+ PKG[package.json<br/>@lihua_dis/dsh-src<br/>0.1.0-local.124] --> PATCH[cordis.patch.yml]
+ PKG --> EX[exports 子路径]
+ PATCH --> UI[ui-src<br/>浏览器加载 client bundle]
+ UI --> TS[src/dsh-client-ui-src<br/>React + @xyflow/react + tsdown]
+ TS --> BUILD[lib/ui-src.client.js]
+ PATCH --> SQLITE[storage-src-sqlite<br/>src domain 路由覆盖]
+ PATCH --> DA[src-domain-admin<br/>域数据命令 + Jev 配置命令]:::jev
+ PATCH --> EP[src-egress<br/>惰性 Manager 单例]
+ PATCH --> BE[src-bash-executor<br/>替换原 bash-sandbox row]
+ PATCH --> PR[preset-root<br/>注册包内预设根]
+ PR --> PRE[src-hunter preset<br/>agent.cordis.yml]
+ PRE --> SRC[src plugin<br/>工具、指令、投影、命令]
+ PRE --> CHILD[src-subagent<br/>recon / audit / verify]
+ SRC --> EP
+ BE --> EP
+ DA --> SET[Jev 全局配置<br/>相同 DSH_HOME 下共用]:::jev
+ EX --> ENTRY[lib/index.js / lib/ui-src.js<br/>空 apply 占位入口]
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

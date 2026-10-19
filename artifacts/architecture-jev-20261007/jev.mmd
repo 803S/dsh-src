@@ -1,0 +1,36 @@
+flowchart TB
+ subgraph inputs[调用入口]
+  R[risk-grade<br/>冻结单笔 HTTP]:::jev
+  SC[scan-plan<br/>有界请求集合及累计影响]:::jev
+  D[delegate<br/>新 intent 的任务形态]:::jev
+  K[skill-activate<br/>真实文档候选]:::jev
+  B[browser-index<br/>snapshot 与动作候选]:::latent
+ end
+ MOD[readDecisionSettings + decisionModes<br/>总开关 / on / shadow / off<br/>子会话与空候选检查]
+ CFG[(DSH_HOME/settings/src-decision.json<br/>每次调用读取 · 下一调用生效)]:::jev
+ SPEC[taskSpec<br/>state + questions + criteria<br/>风险追加 executionPolicy / objectClass]
+ SCRUB[reviewBody + scrub<br/>请求凭据与敏感字段脱敏<br/>JSON 原语法及重复键保留]
+ CACHE{仅 delegate / skill<br/>会话缓存命中?}
+ HIT[60 秒结果缓存<br/>最多 256 项]
+ POST[POST 配置 endpoint<br/>Bearer key / redirect:error<br/>超时与调用者取消联动]:::jev
+ PROVIDER[Jev / SystemOne<br/>模型默认 jev-latest]:::jev
+ VALID[validateAnswer<br/>合法 choice / confidence 0..1<br/>概率完整且和约等于 1<br/>choice 为最高概率类别]
+ MAP[宿主映射<br/>effect + objectClass → risk<br/>low 且 scopeChecked → allow]
+ RESULT[结构化决策<br/>action / effect / risk / mode<br/>confidence / probabilities / fallback]
+ FAIL[失败中性结果<br/>skill → skip；其余 → pending<br/>effect unknown / fallback true]:::human
+ CONSUMER[调用方策略消费<br/>建议是否采纳 / 是否允许自动执行]
+ R & SC & D & K & B --> MOD
+ CFG --> MOD
+ MOD --> SPEC --> SCRUB --> CACHE
+ CACHE -->|是| HIT --> RESULT
+ CACHE -->|否；风险和浏览器不缓存| POST
+ POST <--> PROVIDER
+ POST --> VALID --> MAP --> RESULT --> CONSUMER
+ MOD -->|禁用 / 配置失败 / 不适用| FAIL
+ SCRUB -->|不可审查 / 超限| FAIL
+ POST -->|网络 / 超时 / JSON 错误| FAIL
+ VALID -->|schema 错误| FAIL
+ FAIL --> CONSUMER
+classDef jev fill:#f0e3ff,stroke:#8551b9,stroke-width:2px,color:#45206d;
+classDef human fill:#fff1d8,stroke:#b88436,color:#61410f;
+classDef latent fill:#f4f6fa,stroke:#7c899b,stroke-dasharray:5 4,color:#485970;

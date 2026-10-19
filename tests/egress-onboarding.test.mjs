@@ -9,15 +9,19 @@ import {capabilityPolicyRoots} from '../lib/src/egress/host-integration.js';
 import {startGuardedTransport} from '../lib/src/egress/duplex.js';
 import {withEgressExecution} from '../lib/src/egress/runtime.js';
 
-test('duplex worker seam requires live context and keeps native policy and final-spawn guard',()=>{
+test('duplex worker seam requires live context and keeps native policy and final-spawn guard',async()=>{
  const start=startGuardedTransport;
- assert.throws(()=>start.call({},{}),{code:'SRC_GATE_MISSING_EXECUTION_CONTEXT'});
+ await assert.rejects(async()=>start.call({},{}),{code:'SRC_GATE_MISSING_EXECUTION_CONTEXT'});
  const context={exec:{agent:{session:{id:'fixture-session'}}}};
- assert.throws(()=>withEgressExecution({...context,shellTaskId:'scan'},()=>start.call({},{})),{code:'SRC_GATE_TRANSPORT_SCAN_PLAN_FORBIDDEN'});
- for(const mode of ['workspace-write','danger-full-access']){
+ await assert.rejects(async()=>withEgressExecution({...context,shellTaskId:'scan'},()=>start.call({},{})),{code:'SRC_GATE_TRANSPORT_SCAN_PLAN_FORBIDDEN'});
+ // 0.1 resolved confinement synchronously, 0.2 resolves it from a promise; the
+ // seam must accept both or the final-spawn guard sees an empty argv and fails
+ // closed with SRC_GATE_UNKNOWN_EXECUTOR (capability probe + confined browser dead).
+ for(const [mode,asyncConfine] of [['workspace-write',false],['danger-full-access',false],['workspace-write',true]]){
   const calls=[],policy={mode,sessionId:'fixture-session'},signal=new AbortController().signal;
-  const fake={ctx:{sandboxPolicy:{resolve:({session})=>{assert.equal(session,context.exec.agent.session);return policy;}},subprocess:{spawn:spec=>{calls.push(spec);return spec;}}},resolve:r=>r,confine:(command,p)=>{assert.equal(p,policy);return {argv:['sandbox-exec','-p','native-policy','bash','-c',command]};},spawnSpec:(spec,argv,maxBytes,sig)=>{assert.equal(spec.sandboxPolicy,policy);assert.equal(sig,signal);assert.equal(argv[0],mode==='workspace-write'?'sandbox-exec':'bash');return {argv:['final-guard',...argv],signal:sig,env:{native:'preserved'},stdio:{stdin:'ignore',stdout:{maxBytes:20},stderr:{maxBytes:20}}};}};
-  const result=withEgressExecution(context,()=>start.call(fake,{command:'fixture',signal,sandboxPolicy:{mode:'untrusted'}}));
+  const confined={argv:['sandbox-exec','-p','native-policy','bash','-c','fixture']};
+  const fake={ctx:{sandboxPolicy:{resolve:({session})=>{assert.equal(session,context.exec.agent.session);return policy;}},subprocess:{spawn:spec=>{calls.push(spec);return spec;}}},resolve:r=>r,confine:(command,p,sig)=>{assert.equal(p,policy);if(asyncConfine)assert.equal(sig,signal);return asyncConfine?Promise.resolve(confined):confined;},spawnSpec:(spec,argv,maxBytes,sig)=>{assert.equal(spec.sandboxPolicy,policy);assert.equal(sig,signal);assert.equal(argv[0],mode==='workspace-write'?'sandbox-exec':'bash');return {argv:['final-guard',...argv],signal:sig,env:{native:'preserved'},stdio:{stdin:'ignore',stdout:{maxBytes:20},stderr:{maxBytes:20}}};}};
+  const result=await withEgressExecution(context,()=>start.call(fake,{command:'fixture',signal,sandboxPolicy:{mode:'untrusted'}}));
   assert.equal(calls.length,1);assert.equal(result.argv[0],'final-guard');assert.equal(result.signal,signal);assert.deepEqual(result.env,{native:'preserved'});assert.deepEqual(result.stdio,{stdin:'pipe',stdout:'pipe',stderr:{maxBytes:20}});
  }
 });
