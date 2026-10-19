@@ -45,11 +45,13 @@ async function fixture(t, advice) {
     addPendingApproval: async (session, data) => { const row = { ...data, id: `approval-${rows.size + 1}`, status: "pending", sessionId: session, createdAt: Date.now() }; rows.set(row.id, row); return row; },
     getPendingApproval: async (s, id) => rows.get(id)?.sessionId === s ? rows.get(id) : undefined,
     listScopeApprovals: async (s) => [...rows.values()].filter((row) => row.sessionId === s && row.category === "egress/scope"),
+    listTaskApprovals: async (s) => [...rows.values()].filter((row) => row.sessionId === s && row.method === "TASK"),
+    sessionsWithPendingTaskApprovals: async () => [...new Set([...rows.values()].filter((row) => row.method === "TASK" && row.status === "pending").map((row) => row.sessionId))],
     updateApprovalExecution: async (s, id, patch) => Object.assign(rows.get(id), patch)
   };
   const manager = await createEgressManager({ home, allowLoopbackFixtures: true, storeFor: async () => store, assess: async () => advice, directFetch: async (url, init) => { sent.push({ url, method: init.method }); return new Response("ok"); } });
   t.after(async () => { await manager.close(); await rm(home, { recursive: true, force: true }); });
-  return { manager, rows, sent };
+  return { manager, rows, sent, store };
 }
 
 test("单笔写入待审：审批卡与错误都给出可执行人类选项，并要求子代理升级 approvalId", async (t) => {
@@ -233,4 +235,70 @@ test("会话自述默认不进判定服务；开关打开才提供，且只提�
   assert.equal(context.intentTitle, "未授权接口面");
   assert.equal(context.goalTarget, "fixture.test");
   assert.equal(context.authorization, "仅 fixture.test");
+});
+
+/* [local.150 用户拍板 2026-10-19] 人工卡不是永久债务：未裁决的卡超过 TTL（默认 24h）自动过期。
+ * 现场事实：host 车道人工卡的 manifest.expiresAt=null，10-18 22:4x 的 6 张卡挂了一整夜收不掉，
+ * 用户看到的「待审核」里全是没人能决定的历史条目。过期只改状态 + 撤销账本任务，**从不自动发送**。 */
+test("[local.150] 陈旧人工卡超时自动过期：只改状态、绝不出网、行仍留库供审计", async (t) => {
+  process.env.DSH_SRC_PENDING_APPROVAL_TTL_MS = "3600000";
+  t.after(() => { delete process.env.DSH_SRC_PENDING_APPROVAL_TTL_MS; });
+  const f = await fixture(t, unknownDeferred);
+  const session = randomUUID(), origin = "http://127.0.0.1:23457";
+  await f.manager.user.setScope(session, [origin]);
+  const cardFor = async (path) => {
+    try { await f.manager.fetch(session, `${origin}${path}`, { method: "GET" }); }
+    catch (error) { return error.approvalId; }
+    throw new Error("预期挂起：判定服务未定 + 带查询串的读取不得自动放行");
+  };
+  const stale = await cardFor("/catalog?op=verify");
+  const fresh = await cardFor("/report?op=verify");
+  assert.ok(stale && fresh && stale !== fresh);
+  assert.equal(f.sent.length, 0, "待审期间零发包");
+  f.rows.get(stale).createdAt = Date.now() - 2 * 3600000;
+  assert.deepEqual(await f.manager.expireStaleApprovals(session), [stale]);
+  assert.equal(f.rows.get(stale).status, "expired");
+  assert.equal(f.rows.get(fresh).status, "pending", "未超时的卡不动");
+  assert.match(f.rows.get(stale).note, /自动过期/);
+  assert.match(f.rows.get(stale).note, /从未发出/);
+  assert.equal(f.sent.length, 0, "过期绝不自动发送");
+  // 审计留痕：行不删除，仍可按会话列出（“从未发出的证据”）。
+  assert.ok((await f.store.listTaskApprovals(session)).some((row) => row.id === stale));
+  // 启动清扫（reapStaleApprovals）走同一套判据：GUI/网关重启后待办列表里不留过期卡。
+  f.rows.get(fresh).createdAt = Date.now() - 3 * 3600000;
+  assert.deepEqual(await f.manager.reapStaleApprovals(), [{ session, ids: [fresh] }]);
+  assert.equal(f.rows.get(fresh).status, "expired");
+  assert.equal(f.sent.length, 0);
+  // TTL 关掉（<=0）时不清扫：现场可临时停用而无需改代码。
+  process.env.DSH_SRC_PENDING_APPROVAL_TTL_MS = "0";
+  const another = await cardFor("/history?op=verify");
+  f.rows.get(another).createdAt = Date.now() - 30 * 3600000;
+  assert.deepEqual(await f.manager.expireStaleApprovals(session), []);
+  assert.equal(f.rows.get(another).status, "pending");
+});
+
+/* [local.150 用户拍板 2026-10-19] 卡片去重是**安全网**：账本里那笔任务已经不在（进程重启、
+ * 任务被撤销、库被清），但卡还挂在待办列表里时，同一笔请求再次提案必须复用那张卡 ——
+ * 否则每重试一次就多一张永远没人能决定的卡（现场 32 张僵尸卡、10-18 的 6 张就是这么来的）。 */
+test('[local.150] 孤儿待审卡（任务已不在账本）被同身份提案回收复用：同一 approvalId、重指到新任务', async (t) => {
+  const f = await fixture(t, unknownDeferred);
+  const session = randomUUID(), origin = "http://127.0.0.1:23458";
+  await f.manager.user.setScope(session, [origin]);
+  // 造一张“卡还在、任务已没”的孤儿卡：url 指向一个账本里不存在的任务。
+  const ghost = `src-egress://${randomUUID()}`;
+  f.rows.set("approval-orphan", {
+    id: "approval-orphan", sessionId: session, method: "TASK", url: ghost, path: "/", headers: "",
+    body: JSON.stringify([{ maxRequests: 1, request: { method: "GET", url: `${origin}/catalog?op=verify`, headers: {}, body: "" } }]),
+    category: "egress/task", reason: "旧卡的说明", status: "pending", createdAt: Date.now(),
+  });
+  let held;
+  try { await f.manager.fetch(session, `${origin}/catalog?op=verify`, { method: "GET" }); }
+  catch (error) { held = error; }
+  assert.equal(held?.approvalId, "approval-orphan", "同身份提案必须复用那张孤儿卡，而不是再挂一张");
+  assert.equal([...f.rows.values()].filter((row) => row.method === "TASK").length, 1);
+  const row = f.rows.get("approval-orphan");
+  assert.notEqual(row.url, ghost, "复用卡要重指到本次真实任务，否则用户批准的是一笔不存在的任务");
+  assert.notEqual(row.reason, "旧卡的说明", "显示内容要刷新成本次提案");
+  assert.equal(row.status, "pending");
+  assert.equal(f.sent.length, 0);
 });

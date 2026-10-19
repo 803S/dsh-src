@@ -198,8 +198,9 @@ test('[local.106] 判定计量纯逻辑：折叠有界、延迟四元组、采�
 test('[local.106] 判定计量落入权威域：脏行不污染 wire、随目标归零、不进会话日志',async t=>{
  await sandbox(t);const h=harness(),sid='quality-jev';
  await h.store.initGoal(sid,{target:'fixture.invalid',objective:'test',authorization:'fixture'});
- /* 域版本 17 且两张计量表已声明（迁移依赖 defineDomain 的新增表语义） */
- assert.equal(srcDomainSpec.version,17);
+ /* 域版本 18：v17 起两张计量表已声明（迁移依赖 defineDomain 的新增表语义）；
+  * v18 只加 pending_approvals.status 的枚举值 expired（陈旧人工卡清扫写状态，旧行由 zod default 读取时补齐）。 */
+ assert.equal(srcDomainSpec.version,18);
  assert.equal(Object.keys(srcDomainSpec.tables).includes('decision_stats'),true);
  assert.equal(Object.keys(srcDomainSpec.tables).includes('decision_recent'),true);
  assert.deepEqual((await h.store.view(sid)).jev,{stats:null,recent:[]},'新目标必须是零值空态');

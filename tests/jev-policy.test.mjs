@@ -61,3 +61,32 @@ test('[local.138] 判定服务未启用时，写类无本地豁免的请求（�
  assert.equal(httpDecisionPolicy(bucketPut,{...low,effect:'write'},'on',{method:'PUT',path:'/assets/report.txt'}).authority,'jev-low-risk');
  assert.equal(httpDecisionPolicy(bucketPut,{...low,effect:'write'},'on',{method:'PUT',path:'/assets/report.txt'}).require,false);
 });
+
+/* [local.150 用户拍板 2026-10-19] 「无输入只读」（无正文/无查询串/无资源 id/无强删改词/无影响类语义词）
+ * 不再挂人工卡：判定服务说不清（unknown/pending/服务失败，包括调用方没申报用途）不是用户的事 ——
+ * 发出去、记账、把「未申报用途」记为调用方缺陷。判定服务仍然能否决（reject / high / write|external|destructive）。 */
+test('[local.150] 无输入只读不挂人工卡；带输入、影响类语义词或判定服务否决仍挂人工',()=>{
+ const rule={require:true,category:'只读疑义',reason:'GET /extra/create：读方法命中可疑语义词（create）'};
+ const ctx={method:'GET',path:'/extra/create',url:'https://fixture.invalid/extra/create',rule,impactFree:{impactFree:true,reason:'GET /extra/create：读方法 + 无正文 + 无查询串 + 无资源 id —— 与浏览器加载表单页逐字节相同'}};
+ for(const patch of [{risk:'unknown'},{action:'pending'},{effect:'unknown'},{fallback:true,errorType:'timeout'}]){
+  const decision=httpDecisionPolicy(rule,{...low,...patch},'on',ctx);
+  assert.equal(decision.require,false,JSON.stringify(patch));
+  assert.equal(decision.authority,'read-suspicion-auto',JSON.stringify(patch));
+  assert.match(decision.reason,/不改变本地事实/);
+  assert.match(decision.reason,/未申报用途|调用方/);
+ }
+ // 注意 effect=write + risk=low + allow 在单笔车道本来就自动（旧规则，先于本分支）；
+ // 这里锁的是「判定服务说这是真影响」的那种形态：拒绝/高风险/说不清但点名 write|external|destructive。
+ for(const patch of [{action:'reject'},{risk:'high'},{action:'pending',effect:'write'},{action:'pending',effect:'external'},{action:'pending',effect:'destructive'}]){
+  const decision=httpDecisionPolicy(rule,{...low,...patch},'on',ctx);
+  assert.equal(decision.require,true,JSON.stringify(patch));
+  assert.notEqual(decision.authority,'read-suspicion-auto',JSON.stringify(patch));
+ }
+ // 不是「无输入」只读（带查询串/正文/资源 id）→ 不豁免，仍然挂人工卡。
+ for(const reason of ['带查询串（?id=1）','带请求正文','路径含资源 id']){
+  assert.equal(httpDecisionPolicy(rule,{...low,effect:'unknown'},'on',{...ctx,impactFree:{impactFree:false,reason}}).require,true,reason);
+ }
+ // 本地硬边界先于本分支返回，判定服务与豁免都不能覆盖。
+ const hard=httpDecisionPolicy({...rule,hardBoundary:true,category:'破坏性写入'},low,'on',ctx);
+ assert.equal(hard.require,true);assert.equal(hard.authority,'hard-boundary');
+});

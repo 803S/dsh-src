@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { canonicalRequest, normalizePlan, requiresHuman, readClearRequest } from '../lib/src/egress/plan.js';
-import { classifyHttpRequest } from '../lib/src/security.js';
+import { classifyHttpRequest, impactFreeRead } from '../lib/src/security.js';
 import { createEgressBroker } from '../lib/src/egress/broker.js';
 import { createAssessmentQueue } from '../lib/src/egress/assessment-queue.js';
 import { constrainSpawnSpec } from '../lib/src/egress/executor.js';
@@ -1014,4 +1014,49 @@ for(const evidence of ['used','dispatch'])test('未发送恢复不信任面板�
  db.close();Object.assign(row,{status:'approved',userDecision:'allow',executionState:'failed-before-send',executionError:'SRC_GATE_RESOURCE_REQUIRES_REVIEW'});
  let sends=0;const next=await createEgressManager({home:f.home,storeFor:async()=>f.store,allowLoopbackFixtures:true,directFetch:async()=>{sends++;return new Response('must not send');}});t.after(()=>next.close());
  await assert.rejects(next.user.decide('s',row.id,'allow-read'));assert.equal(sends,0);
+});
+
+/* [local.150 用户拍板 2026-10-19] 「无输入只读」本地事实（security.js#impactFreeRead）：
+ * 无正文 + 无查询串 + 无资源 id + 无强删改词 + 无影响类语义词 ≡ 浏览器加载一个表单页。
+ * 现场（10-18 22:49）就是 GET /extra/create 两笔这样的报文被判定服务判 unknown，转成用户的待审卡。 */
+test('无输入只读不再挂人工（判定服务说不清也不改变本地事实），带输入或影响类语义词仍挂人工',async t=>{
+ const unclear={fallback:false,mode:'on',action:'pending',effect:'unknown',risk:'unknown',confidence:.4};
+ const f=fixture(t,{assess:()=>structuredClone(unclear)});
+ const single=url=>input({entries:[{request:request({url}),maxRequests:1}],maxRequests:1});
+ // ① 表单页形态（无正文/无查询/无 id）：自动放行，且真的可派发。
+ const form=request({url:'https://fixture.invalid/extra/create'});
+ const active=await f.broker.propose('impact-free',single('https://fixture.invalid/extra/create'));
+ assert.equal(active.state,'active');
+ assert.equal(active.review.authority,'read-suspicion-auto');
+ assert.equal(f.broker.dataPlane.claim('impact-free',active.id,form).taskId,active.id);
+ // ② 同样的路径带查询串：有输入 → 挂人工。GET/HEAD 带正文在计划校验层就被拒（READ_BODY），
+ // 所以车道里「无输入」只有一种含义：无正文（GET/HEAD 结构上不可能有）+ 无查询串 + 无资源 id。
+ const withQuery=await f.broker.propose('impact-free-input',single('https://fixture.invalid/extra/create?id=1'));
+ assert.equal(withQuery.state,'pending');
+ await assert.rejects(()=>f.broker.propose('impact-free-body',input({entries:[{request:request({url:'https://fixture.invalid/extra/create',bodyBase64:Buffer.from('a=1').toString('base64')}),maxRequests:1}],maxRequests:1})),code('READ_BODY'));
+ // ③ 影响类语义词（外发/审批/认证）即使无输入也仍挂人工。
+ for(const url of ['https://fixture.invalid/mail/send','https://fixture.invalid/user/approve','https://fixture.invalid/account/verify']){
+  const pending=await f.broker.propose('impact-words',single(url));
+  assert.equal(pending.state,'pending',url);
+ }
+ // ④ 判定服务否决（高风险/拒绝）→ 无输入只读也挂人工。
+ const denied=fixture(t,{assess:()=>({fallback:false,mode:'on',action:'reject',effect:'read',risk:'high',confidence:.9})});
+ const rejected=await denied.broker.propose('impact-denied',single('https://fixture.invalid/extra/create'));
+ assert.equal(rejected.state,'pending');
+});
+test('impactFreeRead 判据自证：表单页豁免、输入/影响词/硬边界不豁免',()=>{
+ const free=(req)=>impactFreeRead(req).impactFree;
+ // 「页面构造类」语义词必须仍是可疑词（否则本豁免等于关掉了分类器）——逐个用分类器自证。
+ for(const word of ['create','update','edit','modify','save','generate']){
+  assert.equal(classifyHttpRequest({method:'GET',path:`/x/${word}`,query:'',headers:{},body:''}).verdict,'needs-judgement',word);
+ }
+ for(const url of ['https://t/extra/create','https://t/users/create','https://t/dashboard','https://t/admin/new']){
+  assert.equal(free({method:'GET',url,body:''}),true,url);
+ }
+ for(const [url,why] of [['https://t/users/2/reset','强删改词'],['https://t/users/5/edit','路径资源 id'],['https://t/extra/create?id=1','查询串'],['https://t/mail/send','外发语义词'],['https://t/user/approve','审批语义词'],['https://t/account/verify','认证语义词']]){
+  assert.equal(free({method:'GET',url,body:''}),false,`${url}（${why}）`);
+ }
+ assert.equal(free({method:'POST',url:'https://t/users/create',body:'a=1'}),false,'写方法');
+ assert.equal(free({method:'GET',url:'https://t/users/create',body:'a=1'}),false,'带正文');
+ assert.equal(free({method:'OPTIONS',url:'https://t/users'}),true,'CORS 预检本身无输入');
 });

@@ -77,6 +77,7 @@ async function setup(t,{assess=()=>low,send,read,home,prior,now}={}){
  const store={domain:async()=>domain,async addPendingApproval(sessionId,row){const value={...row,sessionId,status:'pending',createdAt:Date.now(),id:'approval-'+(rows.size+1)};rows.set(value.id,value);return value;},
   async getPendingApproval(session,id){const row=rows.get(id);return row?.sessionId===session?row:undefined;},
   async listScopeApprovals(session){return [...rows.values()].filter(row=>row.sessionId===session&&row.method==='SCOPE');},
+  async listTaskApprovals(session){return [...rows.values()].filter(row=>row.sessionId===session&&row.method==='TASK');},
   async updateApprovalExecution(session,id,patch){const row=await this.getPendingApproval(session,id);assert.ok(row);Object.assign(row,patch);},
   async upsertObservation(session,row){observations.push(row);return {id:'observation-'+observations.length};}};
  let adviceCalls=0,restore;
@@ -255,4 +256,32 @@ test('旧unknown Burp单可由人类确认低影响后原样发送一次，不�
  assert.equal(f.sent.length,0);await f.manager.user.decide('s',held.approvalId,'allow');
  await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow-read'));assert.deepEqual(f.sent[0].args,copy);assert.equal(f.reads.length,0);assert.equal(f.calls(),1);
  await assert.rejects(f.manager.user.decide('s',held.approvalId,'allow-read'));assert.equal(f.sent.length,1);
+});
+
+/* [local.150 用户拍板 2026-10-19] 同一笔请求的身份 = 方法 + URL + 正文 + 头（去掉客户端口味头）。
+ * 旧卡去重键是 `src-egress://<taskId>`（每任务唯一）→ 永不命中；这条钉住“不因偏好头差异刷重复卡”，
+ * 并钉住“凭据不同 = 不同操作，各自一张卡”。 */
+test('[local.150] 客户端偏好头不制造重复卡、凭据不同不合并；卡片与线上报文逐字节一致',async t=>{
+ const f=await setup(t,{assess:()=>({...low,risk:'unknown',action:'pending'})});
+ const plain=args();
+ const first=pending(await f.run(plain));
+ assert.equal([...f.rows.values()].filter(row=>row.method==='TASK').length,1);
+ // 同一 URL/方法/正文，只多一个 User-Agent（客户端口味头）→ 同一笔请求 → 同一张卡，列表不增条目。
+ const withAgent=args();withAgent.content=withAgent.content.replace('Host: 127.0.0.1:49123','User-Agent: fixture-client\r\nHost: 127.0.0.1:49123');
+ const second=pending(await f.run(withAgent));
+ assert.equal(second.approvalId,first.approvalId);
+ assert.equal([...f.rows.values()].filter(row=>row.method==='TASK').length,1);
+ assert.equal(f.sent.length,0);
+ // 凭据不同（多一条 Cookie）＝ 影响面不同 → 两笔操作、两张卡，各自裁决。
+ const withCookie=args();withCookie.content=withCookie.content.replace('Host: 127.0.0.1:49123','Cookie: sid=fixture\r\nHost: 127.0.0.1:49123');
+ const other=pending(await f.run(withCookie));
+ assert.notEqual(other.approvalId,first.approvalId);
+ assert.equal([...f.rows.values()].filter(row=>row.method==='TASK').length,2);
+ // 批准第一张卡：发出去的就是卡片上那份冻结报文（原生调用摘要一致），且只发一次。
+ assert.equal((await f.manager.user.decide('s',first.approvalId,'allow')).executionState,'executed');
+ assert.equal(f.sent.length,1);
+ assert.equal(JSON.parse(f.rows.get(first.approvalId).body).transport.digest,inspectBurpRequest(h1,plain).digest);
+ assert.equal(f.sent[0].args.content,plain.content);
+ await assert.rejects(f.manager.user.decide('s',first.approvalId,'allow'));
+ assert.equal(f.sent.length,1);
 });
