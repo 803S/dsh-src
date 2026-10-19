@@ -6965,6 +6965,48 @@ test("[local.106] Jev 面板：判定出口写权威域→投影（面板唯一�
   }
 });
 
+/* [local.148] 判定计量归账（2026-10-19 审计缺陷）：bash/curl 经出口闸代理车道发起的判定，
+   exec 是合成对象（只有 egressTaskId/deferAssessment/srcSessionId，**没有 agent.session**）。
+   旧 sink 直接调 sessionIdOf(exec) → 抛 "src_* tools require an owning agent session" → 被 catch 吞掉，
+   于是该车道的判定一条都不入权威域（现场：3 笔自动放行 + 1 笔挂卡，历史里什么都查不到）。
+   这里锁的是两件事：①有会话印章就入计量；②没印章时静默跳过且不影响判定结果（计量永远是旁路）。 */
+test("[local.148] 判定计量归账：代理/脚本车道的判定（exec 没有 agent）也必须入权威域，无印章时静默跳过", async () => {
+  const { __resetSharedDomainOpensForTests } = await import("../lib/src.js");
+  const { jevDecide } = await import("../lib/src/decision/jev-client.js");
+  const { saveDecisionSettings } = await import("../lib/src/decision/service-settings.js");
+  __resetSharedDomainOpensForTests();
+  const h = harness();
+  const sid = "jev-panel-attribution";
+  const parent = h.exec(sid);
+  const prevFetch = globalThis.fetch;
+  try {
+    await h.run("src_add_goal", { target: "https://example.test", objective: "归账", authorization: "SRC" }, parent);
+    await saveDecisionSettings({ enabled: true, riskMode: "on", skillMode: "off", delegateMode: "off", endpoint: "https://jev-panel-attribution.test/v1/systemone" });
+    globalThis.fetch = async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      return new Response(JSON.stringify(jevPanelAnswer("read", Object.keys(payload.questions.decision.criteria))));
+    };
+    /* 代理车道形状：没有 agent，只有权威域里的会话印章。 */
+    const advice = await jevDecide({ taskType: "risk-grade", method: "POST", url: "https://fixture.invalid/session/forgetpassword", scopeChecked: true }, { egressTaskId: "task-proxy-lane", deferAssessment: true, srcSessionId: sid });
+    assert.equal(advice.fallback, false, "归账修复不得改变判定结果");
+    const stored = await settle(() => decisionStatsRows(h, sid)[0], "代理车道判定落库");
+    assert.equal(stored.total, 1, "代理车道的判定必须入计量");
+    assert.equal(stored.byTask["risk-grade"], 1);
+    assert.equal(stored.decisionSeq, 1);
+    assert.equal(decisionRecentRows(h, sid).length, 1);
+    assert.equal(decisionRecentRows(h, sid)[0].subject, "POST fixture.invalid/session/forgetpassword");
+    /* 负例：既无 agent 又无印章时不记账，也不影响判定（静默跳过，不再靠 catch 吞异常）。 */
+    const orphan = await jevDecide({ taskType: "risk-grade", method: "POST", url: "https://fixture.invalid/users/create", scopeChecked: true }, { egressTaskId: "task-orphan", deferAssessment: true });
+    assert.equal(orphan.fallback, false, "拿不到会话名不得影响判定结果");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(decisionStatsRows(h, sid)[0].total, 1, "无归账身份不得凭空多记一笔");
+    assert.equal(decisionRecentRows(h, sid).length, 1);
+  } finally {
+    globalThis.fetch = prevFetch;
+    await saveDecisionSettings({ enabled: false });
+  }
+});
+
 /* [local.106] 冷加载复核（真 0.2 桌面探针里实测到的缺陷）：会话重开时宿主以 header 调 `init`，
    而那一刻域句柄还没解析。旧实现直接返回空态——投影只能靠日志 fold，而 Jev 计量/域笔记不在日志里，
    面板冷启动后显示 0/空。新契约：init 不假装权威，登记待播种，域就绪后补发一次权威 poke。 */
