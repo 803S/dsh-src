@@ -85,7 +85,16 @@
   （`broker.commandPlane.revoke`）；**行保留在库中**作为「从未发出的证据」；TTL 由
   `DSH_SRC_PENDING_APPROVAL_TTL_MS` 控制（默认 24h，`0` 关闭清扫）。
 - `reapStaleApprovals()`：对所有会话跑一遍，`lib/src-egress.js` 的 `ready()` 启动时调用（失败只记日志）。
-- `publishPendingRow` 开头也顺带清扫本会话，避免「用着用着列表又长出僵尸」。
+- 触发点（清扫只发生在这些时刻，判据只有一份 `staleApprovalTtl`/`staleApprovalIds`）：
+  1. **进程启动**（`lib/src-egress.js` 的 `apply`）：先只读问「有没有陈旧卡」，没有就完全不动出口账本/代理
+     （保持本插件的惰性）；有才起 manager 清扫；
+  2. **SRC 会话被接管**（`service.own(session)`，每会话每进程一次）；
+  3. **发布新卡时**（`publishPendingRow` 开头）顺带清扫本会话。
+- **自愈**：账本里那笔 pending 任务若其卡已不是 `pending`（被 TTL 收掉、被拒、库被重置），
+  `authorize` 会撤销它并按**新提案**重新走判定（`manager.js`：`bound && card.status!=='pending'`）。
+  没有这条，模型会一直被告知「去等某个已经不存在的审批号」。撤销不是放行：
+  重新提案最多再挂一张新卡，一个字节都不发。
+- 自动改状态留可见审计痕迹（`ctx.logger?.info`，不存在时退回 `console.info('[dsh-src] …')`）。
 - 域 schema 版本 `17 → 18`（`srcPendingApprovalSchema.status` 枚举加 `expired`；旧行由 zod default 补齐，
   无需改写行数据）；`lib/storage-sqlite.js` 迁移注释补 v18 行；UI 一律按 `status==='pending'` 过滤 →
   `expired` 行自动从面板消失。
@@ -121,19 +130,24 @@
 |---|---|
 | 身份判据 | `tests/egress-approval-identity.test.mjs`（偏好头不参与、凭据/正文/方法/URL 参与、不可解析返回 null、多笔计划顺序敏感） |
 | 无输入只读 | `tests/jev-policy.test.mjs:68`（说不清四态 → 豁免并标 `read-suspicion-auto`；否决态/带输入/语义词 → 照挂；hardBoundary 优先）；`tests/egress-gate.test.mjs:1022`（端到端：`GET /extra/create` 真能派发、带查询串或写语义仍 `pending`） |
-| 陈旧卡 TTL | `tests/jev-approval-escalation.test.mjs`（老化 2h 收掉、未超时不动、`note` 含「自动过期/从未发出」、`f.sent.length===0`、行仍在库、`reapStaleApprovals()` 返回受影响会话、TTL=0 关闭） |
+| 陈旧卡 TTL | `tests/jev-approval-escalation.test.mjs`（老化 2h 收掉、未超时不动、`note` 含「自动过期/从未发出」、`f.sent.length===0`、行仍在库、`reapStaleApprovals()` 返回受影响会话、TTL=0 关闭；**卡已过期的账本任务不再挡路**：撤销它、重新提案挂新卡、零发包） |
 | 去重复用 | `tests/egress-burp-passive.test.mjs`（偏好头不制造重复卡、凭据不同两张卡、**卡片与线上报文逐字节一致**）；`tests/jev-approval-escalation.test.mjs`（孤儿卡：任务已不在账本时同身份提案回收复用） |
 | 域版本 | `tests/quality-contracts.test.mjs`（`srcDomainSpec.version === 18`） |
 
-- 全量 `npm test`：**696/696 pass**（`tests/egress-approval-identity.test.mjs` 已并入 `npm test` 清单）。
+- 全量 `npm test`：**699/699 pass**（`tests/egress-approval-identity.test.mjs` 已并入 `npm test` 清单）。
+- **真实库实测**（web 进程启动即清扫，`~/.dsh/storages/src-sessions.db`，2026-10-20 00:45）：
+  用户会话 `session-c8341c79-…` 的 6 张 10-18 22:44–22:49 卡**全部置 `expired`**（note 为「待审超过 24 小时未裁决，
+  自动过期；该请求从未发出」），10-18 13:39–13:43 那批 5 张同样收掉；10-19 20:42/20:48 的两张仍在 24h 内，
+  保持 `pending`（该由人裁决的现存工作不被误收）。
 - `node scripts/check-source-hygiene.mjs` 通过。
 - 版本 `0.1.0-local.150`；`npm pack` → `~/Downloads/dsh-plugins/lihua_dis-dsh-src-0.1.0-local.150.tgz`；
   `node scripts/deploy.mjs` 同步 web/headless（并显式同步 desktop profile），web 重启。
 
 ## 5. 用户侧唯一动作
 
-重启桌面 App（GUI 进程只能由用户重启）→ 载入 local.150。重启时会触发启动清扫，把 10-18 那批
-`expiresAt=null` 的陈旧卡置 `expired`（只改状态、不发请求），待办列表应当只剩「真的需要人」的条目。
+重启桌面 App（GUI 进程只能由用户重启）→ 载入 local.150。陈旧卡已经由 web 进程在启动清扫里收掉
+（见 §4 实测），App 重启后加载 local.150 即可拿到新的判定/去重逻辑；若列表里仍显示旧卡，那只是 App 侧的
+投影缓存，切一下会话或刷新即按库中真实状态显示。
 
 ## 6. 没有放宽的边界（明确列出）
 
