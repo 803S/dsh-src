@@ -13,6 +13,9 @@ import {execFileSync} from 'node:child_process';
 test('proxy strips only benign single-hop persistence headers before both claim and send',()=>{
   execFileSync('python3',[new URL('./egress-hop-headers.py',import.meta.url).pathname],{timeout:10000});
 });
+test('proxy denial body always carries the real reason code',()=>{
+  assert.equal(execFileSync('python3',[new URL('./egress-deny-body.py',import.meta.url).pathname],{timeout:10000}).toString().trim(),'deny-body-ok');
+});
 const scope = { origins: ['https://fixture.invalid'], revision: 'user-scope-1', credentialRevision: 'account-1' };
 const low = { fallback: false, mode: 'on', action: 'allow', effect: 'read', risk: 'low', confidence: .98 };
 // 夹具请求：读方法 + 可疑语义词（op=verify）——本地规则不豁免、交判定服务，旧契约（每个托管请求都调 Jev）仍被覆盖。
@@ -280,6 +283,46 @@ test('proxy control API binds session/task on server, cannot approve or finish a
   assert.equal((await post('/finish', { dispatchId: 'dispatch-one', outcome: 'response_received' })).status, 200);
   assert.equal((await post('/finish', { dispatchId: 'dispatch-one', outcome: 'response_received' })).status, 403);
   assert.equal(claimed, 1); assert.equal(finished, 1);
+});
+
+test('proxy control rejects with a code and an actionable hint, never a bare 25-byte body', async t => {
+  const { createProxyControlServer } = await import('../lib/src/egress/control-server.js');
+  const { deniedBodyHint } = await import('../lib/src/egress/deny-hints.js');
+  const token = randomBytes(32).toString('hex');
+  const server = createProxyControlServer({ token, sessionId: 'fixed-session', taskId: 'fixed-task', dataPlane: {
+    claim() { throw Object.assign(new Error('SRC_GATE_REQUEST_NOT_APPROVED'), { code: 'SRC_GATE_REQUEST_NOT_APPROVED' }); },
+    finish() {},
+  } });
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const response = await fetch(origin + '/claim', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(request()) });
+  const body = await response.json();
+  assert.equal(response.status, 403);
+  assert.equal(body.error, 'SRC_GATE_REQUEST_NOT_APPROVED');
+  assert.equal(body.hint, deniedBodyHint('SRC_GATE_REQUEST_NOT_APPROVED'));
+  assert.match(body.hint, /src_http|src_egress_plan/);
+  assert.equal(body.approvalId, undefined);
+  // 未知原因码不得伪造提示，但仍必须给出可识别的失败码。
+  const { createProxyControlServer: other } = await import('../lib/src/egress/control-server.js');
+  const second = other({ token, sessionId: 'fixed-session', taskId: 'fixed-task', dataPlane: { claim() { throw new Error('unknown'); }, finish() {} } });
+  await new Promise((resolve, reject) => { second.once('error', reject); second.listen(0, '127.0.0.1', resolve); });
+  t.after(() => new Promise(resolve => { second.closeAllConnections(); second.close(resolve); }));
+  const opaque = await fetch(`http://127.0.0.1:${second.address().port}/claim`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(request()) });
+  assert.deepEqual(await opaque.json(), { error: 'SRC_GATE_CONTROL_FAILURE', hint: deniedBodyHint('SRC_GATE_CONTROL_FAILURE') });
+});
+
+test('模型手写的无头部计划无法匹配 bash/curl 自动添加的客户端偏好头（拒绝必须自解释且不带审批卡）', async t => {
+  const f = fixture(t);
+  const url = 'https://fixture.invalid/session/forgetpassword';
+  // step24 的真实形状：src_egress_plan 条目只有 method+url，没有 headers。
+  const plan = await f.broker.propose('s1', input({ entries: [{ request: { url, method: 'GET', headers: [], bodyBase64: '' }, maxRequests: 2 }], maxRequests: 2 }));
+  assert.equal(plan.state, 'active');
+  assert.equal(plan.review.authority, 'hard-rules');
+  // curl 车道：线上请求带 User-Agent/Accept → 冻结条目里没有这个头部集合。
+  assert.throws(() => f.broker.dataPlane.claim('s1', plan.id, { url, method: 'GET', headers: [['accept', '*/*'], ['user-agent', 'curl/8.4.0']], bodyBase64: '' }), error => error.code === 'SRC_GATE_REQUEST_NOT_APPROVED' && error.approvalId === undefined);
+  // src_http 车道按申报原样发送 → 命中同一条冻结条目。
+  assert.ok(f.broker.dataPlane.claim('s1', plan.id, { url, method: 'GET', headers: [], bodyBase64: '' }).dispatchId);
 });
 
 // Manager seams use only loopback synthetic targets and an in-memory UI store.

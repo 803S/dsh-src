@@ -20,7 +20,8 @@ export async function shellChildProbe({call,manager,agent,ctx,origin,log}){
  if(followup.stdout?.text!=='synthetic')throw new Error('Independent child-era read failed');
  const collected=await call('bash',{description:'Collect bounded background fixture result',command:'for i in $(seq 1 200); do test -f child-probe.done && break; sleep 0.1; done; test -f child-probe.done && cat child-probe.out'});
  const output=collected.stdout?.text??'';
- if(output!=='SRC_GATE_BLOCKED_NOT_SENT\nnew-exit=7\nsynthetic\n')throw new Error('Child confinement or remaining budget regression '+JSON.stringify(collected));
+ // 拒绝必须自解释：正文不再是裸的 SRC_GATE_BLOCKED_NOT_SENT，而要带真实原因码。
+ if(!/^SRC_GATE_BLOCKED_NOT_SENT\nSRC_GATE_[A-Z_]+\n?[^]*\nnew-exit=7\nsynthetic\n$/.test(output))throw new Error('Child confinement or remaining budget regression '+JSON.stringify(collected));
  // One whole-plan assessment plus one independent normal read; neither escape
  // attempt nor the second planned request may get a new model decision.
  if(ctx.srcEgress.assessments-before!==2)throw new Error('Unexpected child reassessment');

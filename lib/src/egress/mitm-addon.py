@@ -40,6 +40,8 @@ class GateDenied(ValueError):
         self.approval_id = candidate if isinstance(candidate, str) and re.fullmatch(r"approval-\d+", candidate) else None
         self.scope = details.get("kind") == "scope"
         self.rejected = details.get("state") in ("denied", "rejected")
+        hint = details.get("hint")
+        self.hint = hint if isinstance(hint, str) and 0 < len(hint) <= 400 else None
 
 def control(endpoint, value):
     conn = UnixConnection("localhost", timeout=CONTROL_TIMEOUT_SECONDS)
@@ -81,12 +83,17 @@ def client_disconnected(client):
 
 def deny(flow, reason="SRC_GATE_POLICY_DENIED", details=None):
     reason = reason if re.fullmatch(r"SRC_GATE_[A-Z_]+", reason) else "SRC_GATE_ADAPTER_FAILURE"
-    body = b"SRC_GATE_BLOCKED_NOT_SENT"
+    # 拒绝正文必须自解释：真实原因码永远随“未发送”一起写出，不再让执行方只看到
+    # 25 字节的 SRC_GATE_BLOCKED_NOT_SENT 并自己猜（x-src-gate-reason 头常在管道里丢失）。
+    body = "SRC_GATE_BLOCKED_NOT_SENT\n" + reason
+    hint = details.hint if isinstance(details, GateDenied) else None
     if isinstance(details, GateDenied) and details.approval_id:
         action = "User rejected this operation. Stop; do not retry or switch channels." if details.rejected else "Wait for the user to handle the pending approval. Do not repeat requests."
         kind = "scope confirmation (not traffic authorization)" if details.scope else "request approval"
-        body += f"\n{reason}\n{kind}: {details.approval_id}\n{action}".encode("utf-8")
-    flow.response = http.Response.make(403, body, {
+        body += f"\n{kind}: {details.approval_id}\n{action}"
+    elif hint:
+        body += "\n" + hint
+    flow.response = http.Response.make(403, body.encode("utf-8"), {
         "content-type": "text/plain", "x-src-gate": "not-sent", "x-src-gate-reason": reason
     })
 
