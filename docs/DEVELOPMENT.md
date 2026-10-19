@@ -395,6 +395,11 @@ DSH_WEB_FORCE=1 bash ~/Software/dsh-src/scripts/start-dsh-web.sh   # 确认无�
 
 - 本机访问 `http://127.0.0.1:3080`；首次无 token 会 401，用启动日志里的 `?token=...` 换 cookie（`dsh-auth-*`）后正常。
 - 改完插件代码要同步进 profile 副本（进程只加载 profile 里那份）：`node scripts/deploy.mjs`（内含 `npm test` 硬门）或 `cd ~/.dsh/profiles/web && pnpm install`，然后重启 web。
+- **别漏桌面 App**：App 只加载 `~/.dsh/profiles/desktop/node_modules/@lihua_dis/dsh-src`，而 `scripts/deploy.mjs` 的默认目标只有 web/headless。要同步它得显式加目标：
+  `node scripts/deploy.mjs ~/.dsh/profiles/desktop/node_modules/@lihua_dis/dsh-src`，然后由用户重启 App（GUI 进程我自己重启不了）。
+  先备份（例：`cp -R <插件目录>/. ~/.dsh/backups/desktop-profile-plugin-pre-<版本>-<时间戳>/`）。
+  注意该 profile 的 `package.json` 里 pin 的是 `file:~/Downloads/dsh-plugins/lihua_dis-dsh-src-<版本>.tgz`：若 App 启动时按 pin 重装，刚才同步的内容会被换回旧版本，
+  这种情况用 App 的插件管理器装新 tgz（实测 2026-10-19：desktop 停在 local.146，web/headless 已是 local.148 → 用户实际用的运行时落后两版）。
 - 日志里的 `Failed to connect to SSE server at https://localhost:9876` 是 Burp MCP 桥在等 Burp 的 MCP Server 扩展（Burp 未开时属正常噪音，不影响其他功能）。
 - 注意不要同时跑两个实例指向同一 profile（会并发写同一个 sqlite）；历史遗留的 `/tmp/probe*` 实例记得 kill。
 
